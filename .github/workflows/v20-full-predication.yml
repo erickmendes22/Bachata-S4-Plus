@@ -1,4 +1,4 @@
-name: V20 Full Predication ARM64/FEX
+name: V20B Full Predication + New Presenter Baseline ARM64/FEX
 
 on:
   workflow_dispatch:
@@ -26,11 +26,11 @@ jobs:
         with:
           path: control
 
-      - name: Checkout real shadPS4 ARM64 source
+      - name: Checkout newer shadPS4 ARM64 source
         uses: actions/checkout@v4
         with:
           repository: zenithblue-oss/shadps4-arm64
-          ref: be6bc2e9c60799e071dd2fafa6216e8d80ec619c
+          ref: 388cff5177f82e75a667d529212d34f3c255b7fc
           fetch-depth: 0
           submodules: false
           path: source
@@ -59,10 +59,10 @@ jobs:
 
               git -C "$root" -c submodule.recurse=false submodule sync -- "$path" || true
 
-              if ! git -C "$root" -c submodule.recurse=false                     submodule update --init --depth 1 -- "$path"; then
+              if ! git -C "$root" -c submodule.recurse=false submodule update --init --depth 1 -- "$path"; then
                 rm -rf "$target"
                 if [[ -n "$branch" ]]; then
-                  git clone --depth 1 --branch "$branch" "$url" "$target" ||                   git clone --depth 1 "$url" "$target"
+                  git clone --depth 1 --branch "$branch" "$url" "$target" || git clone --depth 1 "$url" "$target"
                 else
                   git clone --depth 1 "$url" "$target"
                 fi
@@ -70,31 +70,30 @@ jobs:
 
               [[ -d "$target" ]] && hydrate_repo "$target" "$((depth + 1))" || true
             done < <(
-              git -C "$root" config -f .gitmodules                 --get-regexp '^submodule\..*\.path$' 2>/dev/null || true
+              git -C "$root" config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null || true
             )
           }
 
           hydrate_repo "." 0
 
-      - name: Apply reviewed ARM64 predication port
+      - name: Apply V20B predication port without regressing newer renderer
         shell: bash
         working-directory: source
         run: |
           bash ../control/runtime/v20/apply-full-predication.sh
           git diff --cached --stat
 
-      - name: Build V20 AArch64/FEX
+      - name: Build V20B AArch64/FEX
         shell: bash
         run: |
-          docker run --rm             -v "$GITHUB_WORKSPACE/source:/workspace"             -w /workspace             -e BACHATA_INSIDE_DEBIAN_CONTAINER=1             debian:trixie             bash -lc '
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/source:/workspace" \
+            -w /workspace \
+            -e BACHATA_INSIDE_DEBIAN_CONTAINER=1 \
+            debian:trixie \
+            bash -lc '
               set -euo pipefail
-
-              # Install Git and the compiler before invoking either.
               bash runtime/scripts/install-debian-runtime-deps.sh
-
-              # The GitHub runner owns the bind-mounted repositories, while the
-              # Debian container builds as root. Git otherwise rejects nested
-              # repos such as externals/ffmpeg-core as "dubious ownership".
               git config --global --add safe.directory "*"
               bash runtime/scripts/build-shadps4-arm64.sh
             '
@@ -111,25 +110,24 @@ jobs:
           grep -Eq 'Class:[[:space:]]+ELF64' <<< "$HEADER"
           grep -Eq 'Machine:[[:space:]]+AArch64' <<< "$HEADER"
           cp "$CORE" "$GITHUB_WORKSPACE/shadps4-arm64-fex"
-          cp runtime/build/shadps4-arm64-stage/needed.txt "$GITHUB_WORKSPACE/V20-needed.txt"
-          sha256sum "$GITHUB_WORKSPACE/shadps4-arm64-fex" \
-            | tee "$GITHUB_WORKSPACE/V20-shadps4-arm64-fex.sha256"
+          cp runtime/build/shadps4-arm64-stage/needed.txt "$GITHUB_WORKSPACE/V20B-needed.txt"
+          sha256sum "$GITHUB_WORKSPACE/shadps4-arm64-fex" | tee "$GITHUB_WORKSPACE/V20B-shadps4-arm64-fex.sha256"
           {
             echo "source_commit=$(git rev-parse HEAD)"
             echo "control_commit=${{ github.sha }}"
             echo "predication_upstream=3559530df5aec4067a95912af13ef14896b65ada"
+            echo "official_021_binary_build_id=4ae158bf466fa2fe6d80e13b5538a302af90fbb2"
             sha256sum ../control/runtime/v20/full-predication-arm64.patch
-          } > "$GITHUB_WORKSPACE/V20-build-info.txt"
+          } > "$GITHUB_WORKSPACE/V20B-build-info.txt"
 
-      - name: Upload V20 compiled core
+      - name: Upload V20B compiled core
         uses: actions/upload-artifact@v7
         with:
-          name: GOW3-V20-FULL-PREDICATION-shadps4-arm64-fex
+          name: GOW3-V20B-NEWBASE-FULL-PREDICATION-shadps4-arm64-fex
           path: |
             shadps4-arm64-fex
-            V20-shadps4-arm64-fex.sha256
-            V20-needed.txt
-            V20-build-info.txt
+            V20B-shadps4-arm64-fex.sha256
+            V20B-needed.txt
+            V20B-build-info.txt
           if-no-files-found: error
           retention-days: 7
-
