@@ -1,4 +1,4 @@
-name: V20B Full Predication + New Presenter Baseline ARM64/FEX
+name: V20E Predication + Black Screen Recovery ARM64/FEX
 
 on:
   workflow_dispatch:
@@ -12,11 +12,16 @@ permissions:
   contents: read
 
 concurrency:
-  group: gow3-v20-${{ github.ref }}
+  group: gow3-v20e-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build-v20:
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [blankfix, parent-presenter-texture]
+    name: build-${{ matrix.variant }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
 
@@ -26,11 +31,11 @@ jobs:
         with:
           path: control
 
-      - name: Checkout newer shadPS4 ARM64 source
+      - name: Checkout hardened buildable ARM64/FEX source
         uses: actions/checkout@v4
         with:
           repository: zenithblue-oss/shadps4-arm64
-          ref: 388cff5177f82e75a667d529212d34f3c255b7fc
+          ref: be6bc2e9c60799e071dd2fafa6216e8d80ec619c
           fetch-depth: 0
           submodules: false
           path: source
@@ -51,14 +56,12 @@ jobs:
               local name="${key#submodule.}"
               name="${name%.path}"
               local url branch target
-
               url="$(git -C "$root" config -f .gitmodules --get "submodule.$name.url" || true)"
               branch="$(git -C "$root" config -f .gitmodules --get "submodule.$name.branch" || true)"
               target="$root/$path"
               [[ -n "$url" ]] || continue
 
               git -C "$root" -c submodule.recurse=false submodule sync -- "$path" || true
-
               if ! git -C "$root" -c submodule.recurse=false submodule update --init --depth 1 -- "$path"; then
                 rm -rf "$target"
                 if [[ -n "$branch" ]]; then
@@ -67,7 +70,6 @@ jobs:
                   git clone --depth 1 "$url" "$target"
                 fi
               fi
-
               [[ -d "$target" ]] && hydrate_repo "$target" "$((depth + 1))" || true
             done < <(
               git -C "$root" config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null || true
@@ -76,14 +78,16 @@ jobs:
 
           hydrate_repo "." 0
 
-      - name: Apply V20B predication port without regressing newer renderer
+      - name: Apply V20E hybrid renderer + real predication
         shell: bash
         working-directory: source
+        env:
+          V20_VARIANT: ${{ matrix.variant }}
         run: |
           bash ../control/runtime/v20/apply-full-predication.sh
           git diff --cached --stat
 
-      - name: Build V20B AArch64/FEX
+      - name: Build V20E AArch64/FEX
         shell: bash
         run: |
           docker run --rm \
@@ -98,8 +102,10 @@ jobs:
               bash runtime/scripts/build-shadps4-arm64.sh
             '
 
-      - name: Locate and verify compiled FEX core
+      - name: Locate verify and fingerprint compiled FEX core
         shell: bash
+        env:
+          V20_VARIANT: ${{ matrix.variant }}
         run: |
           set -euo pipefail
           cd source
@@ -109,25 +115,31 @@ jobs:
           HEADER="$(readelf -h "$CORE")"
           grep -Eq 'Class:[[:space:]]+ELF64' <<< "$HEADER"
           grep -Eq 'Machine:[[:space:]]+AArch64' <<< "$HEADER"
+
           cp "$CORE" "$GITHUB_WORKSPACE/shadps4-arm64-fex"
-          cp runtime/build/shadps4-arm64-stage/needed.txt "$GITHUB_WORKSPACE/V20B-needed.txt"
-          sha256sum "$GITHUB_WORKSPACE/shadps4-arm64-fex" | tee "$GITHUB_WORKSPACE/V20B-shadps4-arm64-fex.sha256"
+          cp runtime/build/shadps4-arm64-stage/needed.txt "$GITHUB_WORKSPACE/V20E-needed.txt"
+          sha256sum "$GITHUB_WORKSPACE/shadps4-arm64-fex" | tee "$GITHUB_WORKSPACE/V20E-shadps4-arm64-fex.sha256"
+
           {
+            echo "variant=$V20_VARIANT"
             echo "source_commit=$(git rev-parse HEAD)"
             echo "control_commit=${{ github.sha }}"
             echo "predication_upstream=3559530df5aec4067a95912af13ef14896b65ada"
+            echo "parent_renderer=388cff5177f82e75a667d529212d34f3c255b7fc"
             echo "official_021_binary_build_id=4ae158bf466fa2fe6d80e13b5538a302af90fbb2"
-            sha256sum ../control/runtime/v20/full-predication-arm64.patch
-          } > "$GITHUB_WORKSPACE/V20B-build-info.txt"
+            readelf -n "$CORE" | grep -m1 'Build ID:' || true
+            echo '--- key symbol sizes ---'
+            nm -S -C "$CORE" | grep -E 'Presenter::(PrepareFrame|Present\(|PrepareBlankFrame)|TextureCache::(RefreshImage|FindImage|ResolveOverlap)|VideoOutDriver::SubmitFlipInternal' || true
+          } > "$GITHUB_WORKSPACE/V20E-build-info.txt"
 
-      - name: Upload V20B compiled core
+      - name: Upload V20E compiled core
         uses: actions/upload-artifact@v7
         with:
-          name: GOW3-V20B-NEWBASE-FULL-PREDICATION-shadps4-arm64-fex
+          name: GOW3-V20E-${{ matrix.variant }}-shadps4-arm64-fex
           path: |
             shadps4-arm64-fex
-            V20B-shadps4-arm64-fex.sha256
-            V20B-needed.txt
-            V20B-build-info.txt
+            V20E-shadps4-arm64-fex.sha256
+            V20E-needed.txt
+            V20E-build-info.txt
           if-no-files-found: error
           retention-days: 7
