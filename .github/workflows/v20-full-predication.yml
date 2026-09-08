@@ -1,4 +1,4 @@
-name: V20F Predication + Frame Format Isolation ARM64/FEX
+name: V20G Predication + Texture/VideoOut Isolation ARM64/FEX
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: gow3-v20f-${{ github.ref }}
+  group: gow3-v20g-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [formatonly, format-blankfix]
+        variant: [parent-texture, parent-videoout]
     name: build-${{ matrix.variant }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -45,22 +45,17 @@ jobs:
         working-directory: source
         run: |
           set -euo pipefail
-
           hydrate_repo() {
-            local root="$1"
-            local depth="$2"
+            local root="$1"; local depth="$2"
             (( depth > 5 )) && return 0
             [[ -f "$root/.gitmodules" ]] || return 0
-
             while read -r key path; do
-              local name="${key#submodule.}"
-              name="${name%.path}"
+              local name="${key#submodule.}"; name="${name%.path}"
               local url branch target
               url="$(git -C "$root" config -f .gitmodules --get "submodule.$name.url" || true)"
               branch="$(git -C "$root" config -f .gitmodules --get "submodule.$name.branch" || true)"
               target="$root/$path"
               [[ -n "$url" ]] || continue
-
               git -C "$root" -c submodule.recurse=false submodule sync -- "$path" || true
               if ! git -C "$root" -c submodule.recurse=false submodule update --init --depth 1 -- "$path"; then
                 rm -rf "$target"
@@ -71,14 +66,11 @@ jobs:
                 fi
               fi
               [[ -d "$target" ]] && hydrate_repo "$target" "$((depth + 1))" || true
-            done < <(
-              git -C "$root" config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null || true
-            )
+            done < <(git -C "$root" config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null || true)
           }
-
           hydrate_repo "." 0
 
-      - name: Apply V20F minimal frame-output port + real predication
+      - name: Apply V20G isolated renderer path + real predication
         shell: bash
         working-directory: source
         env:
@@ -87,7 +79,7 @@ jobs:
           bash ../control/runtime/v20/apply-full-predication.sh
           git diff --cached --stat
 
-      - name: Build V20F AArch64/FEX
+      - name: Build V20G AArch64/FEX
         shell: bash
         run: |
           docker run --rm \
@@ -115,30 +107,28 @@ jobs:
           HEADER="$(readelf -h "$CORE")"
           grep -Eq 'Class:[[:space:]]+ELF64' <<< "$HEADER"
           grep -Eq 'Machine:[[:space:]]+AArch64' <<< "$HEADER"
-
           cp "$CORE" "$GITHUB_WORKSPACE/shadps4-arm64-fex"
-          cp runtime/build/shadps4-arm64-stage/needed.txt "$GITHUB_WORKSPACE/V20F-needed.txt"
-          sha256sum "$GITHUB_WORKSPACE/shadps4-arm64-fex" | tee "$GITHUB_WORKSPACE/V20F-shadps4-arm64-fex.sha256"
-
+          cp runtime/build/shadps4-arm64-stage/needed.txt "$GITHUB_WORKSPACE/V20G-needed.txt"
+          sha256sum "$GITHUB_WORKSPACE/shadps4-arm64-fex" | tee "$GITHUB_WORKSPACE/V20G-shadps4-arm64-fex.sha256"
           {
             echo "variant=$V20_VARIANT"
             echo "source_commit=$(git rev-parse HEAD)"
             echo "control_commit=${{ github.sha }}"
+            echo "parent_source=388cff5177f82e75a667d529212d34f3c255b7fc"
             echo "predication_upstream=3559530df5aec4067a95912af13ef14896b65ada"
-            echo "official_021_binary_build_id=4ae158bf466fa2fe6d80e13b5538a302af90fbb2"
             readelf -n "$CORE" | grep -m1 'Build ID:' || true
             echo '--- key symbol sizes ---'
             nm -S -C "$CORE" | grep -E 'Presenter::(PrepareFrame|Present\(|PrepareBlankFrame)|TextureCache::(RefreshImage|FindImage|ResolveOverlap)|VideoOutDriver::SubmitFlipInternal' || true
-          } > "$GITHUB_WORKSPACE/V20F-build-info.txt"
+          } > "$GITHUB_WORKSPACE/V20G-build-info.txt"
 
-      - name: Upload V20F compiled core
+      - name: Upload V20G compiled core
         uses: actions/upload-artifact@v7
         with:
-          name: GOW3-V20F-${{ matrix.variant }}-shadps4-arm64-fex
+          name: GOW3-V20G-${{ matrix.variant }}-shadps4-arm64-fex
           path: |
             shadps4-arm64-fex
-            V20F-shadps4-arm64-fex.sha256
-            V20F-needed.txt
-            V20F-build-info.txt
+            V20G-shadps4-arm64-fex.sha256
+            V20G-needed.txt
+            V20G-build-info.txt
           if-no-files-found: error
           retention-days: 7
