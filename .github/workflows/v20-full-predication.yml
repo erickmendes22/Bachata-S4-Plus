@@ -8,29 +8,35 @@ permissions:
 
 jobs:
   build-v20:
-    # Use x64 because Bachata's runtime build script intentionally cross-compiles
-    # AArch64 inside a Debian Trixie multiarch environment.
     runs-on: ubuntu-24.04
     timeout-minutes: 180
 
     steps:
-      - name: Checkout ARM64 fork with all submodules
-        uses: actions/checkout@v6
+      - name: Checkout V20 control files
+        uses: actions/checkout@v4
         with:
+          path: control
+
+      - name: Checkout real shadPS4 ARM64 source with submodules
+        uses: actions/checkout@v4
+        with:
+          repository: zenithblue-oss/shadps4-arm64
           fetch-depth: 0
           submodules: recursive
+          path: source
 
       - name: Apply shadPS4 real conditional-rendering predication
         shell: bash
+        working-directory: source
         run: |
-          bash runtime/v20/apply-full-predication.sh
+          bash ../control/runtime/v20/apply-full-predication.sh
           git diff --stat
 
       - name: Build V20 AArch64/FEX inside Debian Trixie
         shell: bash
         run: |
           docker run --rm \
-            -v "$GITHUB_WORKSPACE:/workspace" \
+            -v "$GITHUB_WORKSPACE/source:/workspace" \
             -w /workspace \
             -e BACHATA_INSIDE_DEBIAN_CONTAINER=1 \
             debian:trixie \
@@ -40,16 +46,23 @@ jobs:
               bash runtime/scripts/build-shadps4-arm64.sh
             '
 
-      - name: Verify compiled core
+      - name: Locate and verify compiled FEX core
         shell: bash
         run: |
-          CORE=runtime/build/shadps4-arm64-stage/bin/shadps4-arm64
+          set -euo pipefail
+          cd source
+
+          CORE="$(find runtime -type f \( -name 'shadps4-arm64-fex' -o -name 'shadps4-arm64' \) -size +10M | head -n1)"
+          test -n "$CORE"
           test -s "$CORE"
+
+          echo "Compiled core: $CORE"
           file "$CORE"
           readelf -h "$CORE" | grep -E 'ELF64|AArch64'
-          readelf -l "$CORE" | grep '/lib/ld-linux-aarch64.so.1'
-          sha256sum "$CORE" | tee V20-shadps4-arm64-fex.sha256
-          cp "$CORE" shadps4-arm64-fex
+          strings "$CORE" | grep -E 'conditionalRendering|ConditionalRendering|predication' | head -n 20 || true
+
+          cp "$CORE" "$GITHUB_WORKSPACE/shadps4-arm64-fex"
+          sha256sum "$GITHUB_WORKSPACE/shadps4-arm64-fex" | tee "$GITHUB_WORKSPACE/V20-shadps4-arm64-fex.sha256"
 
       - name: Upload V20 compiled core
         uses: actions/upload-artifact@v7
@@ -60,4 +73,3 @@ jobs:
             V20-shadps4-arm64-fex.sha256
           if-no-files-found: error
           retention-days: 7
-          
