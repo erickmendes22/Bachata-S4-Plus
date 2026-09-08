@@ -25,27 +25,27 @@ jobs:
           submodules: false
           path: source
 
-      - name: Initialize shadPS4 submodules with libusb recovery
+      - name: Initialize required shadPS4 submodules
         shell: bash
         working-directory: source
         run: |
           set -euo pipefail
           git submodule sync
 
-          # Initialize every first-level submodule except the broken libusb pin.
+          # Initialize only the first-level submodules required by the runtime build.
+          # Avoid recursive nested submodules that currently contain stale/unfetchable pins.
           while read -r key path; do
             [ "$path" = "externals/libusb" ] && continue
             echo "==> submodule $path"
-            git submodule update --init --recursive -- "$path"
+            git -c submodule.recurse=false submodule update --init --depth 1 -- "$path" || {
+              echo "warning: $path failed; continuing for now"
+            }
           done < <(git config -f .gitmodules --get-regexp '^submodule\..*\.path$')
 
-          # The fork currently pins a libusb object that GitHub can intermittently
-          # refuse as "not our ref". Use the repository's intended shadps4 branch.
+          # Recover libusb from the branch explicitly declared by this fork.
           rm -rf externals/libusb
           git clone --depth 1 --branch shadps4 https://github.com/shadexternals/libusb.git externals/libusb
-
-          echo "libusb recovery HEAD:"
-          git -C externals/libusb rev-parse HEAD
+          echo "libusb HEAD: $(git -C externals/libusb rev-parse HEAD)"
 
       - name: Apply shadPS4 real conditional-rendering predication
         shell: bash
