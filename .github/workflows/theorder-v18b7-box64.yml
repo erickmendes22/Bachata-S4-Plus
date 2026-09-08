@@ -69,7 +69,11 @@ jobs:
         working-directory: source
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build clang cmake pkg-config libx11-dev libxext-dev libwayland-dev libxkbcommon-dev libpulse-dev libasound2-dev libudev-dev libunwind-dev libssl-dev libzstd-dev libedit-dev libgl-dev libvulkan-dev
+          sudo apt-get install -y \
+            ninja-build clang cmake pkg-config \
+            libx11-dev libxext-dev libxcursor-dev libxrandr-dev libxi-dev libxinerama-dev \
+            libwayland-dev libxkbcommon-dev libpulse-dev libasound2-dev libudev-dev \
+            libunwind-dev libssl-dev libzstd-dev libedit-dev libgl-dev libvulkan-dev
 
       - name: Build x86-64 Bachata core with AUX-GS
         shell: bash
