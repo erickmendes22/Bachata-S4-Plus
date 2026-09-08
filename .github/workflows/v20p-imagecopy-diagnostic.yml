@@ -1,0 +1,124 @@
+name: V20P GOW3 ImageCopy Diagnostic ARM64/FEX
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/gow3-v20p-build]
+    paths:
+      - .github/workflows/v20p-imagecopy-diagnostic.yml
+      - runtime/v20p/**
+      - runtime/v20h/**
+      - runtime/v20/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gow3-v20p-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-v20p:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout V20P control
+        uses: actions/checkout@v4
+        with:
+          path: control
+
+      - name: Checkout hardened ARM64/FEX source
+        uses: actions/checkout@v4
+        with:
+          repository: zenithblue-oss/shadps4-arm64
+          ref: be6bc2e9c60799e071dd2fafa6216e8d80ec619c
+          fetch-depth: 0
+          submodules: false
+          path: source
+
+      - name: Hydrate submodules
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          hydrate_repo() {
+            local root="$1" depth="$2"
+            (( depth > 5 )) && return 0
+            [[ -f "$root/.gitmodules" ]] || return 0
+            while read -r key path; do
+              local name="${key#submodule.}" url branch target
+              name="${name%.path}"
+              url="$(git -C "$root" config -f .gitmodules --get "submodule.$name.url" || true)"
+              branch="$(git -C "$root" config -f .gitmodules --get "submodule.$name.branch" || true)"
+              target="$root/$path"
+              [[ -n "$url" ]] || continue
+              git -C "$root" -c submodule.recurse=false submodule sync -- "$path" || true
+              if ! git -C "$root" -c submodule.recurse=false submodule update --init --depth 1 -- "$path"; then
+                rm -rf "$target"
+                if [[ -n "$branch" ]]; then
+                  git clone --depth 1 --branch "$branch" "$url" "$target" || git clone --depth 1 "$url" "$target"
+                else
+                  git clone --depth 1 "$url" "$target"
+                fi
+              fi
+              [[ -d "$target" ]] && hydrate_repo "$target" "$((depth+1))" || true
+            done < <(git -C "$root" config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null || true)
+          }
+          hydrate_repo . 0
+
+      - name: Apply V20P
+        shell: bash
+        working-directory: source
+        run: |
+          bash ../control/runtime/v20p/apply-imagecopy-diagnostic.sh
+          git diff --cached --stat
+          grep -n 'P20 COPY id=' src/video_core/texture_cache/image.cpp
+
+      - name: Build V20P AArch64/FEX
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/source:/workspace" \
+            -w /workspace \
+            -e BACHATA_INSIDE_DEBIAN_CONTAINER=1 \
+            debian:trixie \
+            bash -lc '
+              set -euo pipefail
+              bash runtime/scripts/install-debian-runtime-deps.sh
+              git config --global --add safe.directory "*"
+              bash runtime/scripts/build-shadps4-arm64.sh
+            '
+
+      - name: Verify and package V20P core
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd source
+          CORE=runtime/build/shadps4-arm64-stage/bin/shadps4-arm64
+          test -s "$CORE"
+          file "$CORE"
+          readelf -h "$CORE" | grep -Eq 'Class:[[:space:]]+ELF64'
+          readelf -h "$CORE" | grep -Eq 'Machine:[[:space:]]+AArch64'
+          cp "$CORE" "$GITHUB_WORKSPACE/shadps4-arm64-fex"
+          cp runtime/build/shadps4-arm64-stage/needed.txt "$GITHUB_WORKSPACE/V20P-needed.txt"
+          sha256sum "$GITHUB_WORKSPACE/shadps4-arm64-fex" > "$GITHUB_WORKSPACE/V20P-shadps4-arm64-fex.sha256"
+          {
+            echo 'variant=V20P-imagecopy-diagnostic-zpass-failopen'
+            echo "source_commit=$(git rev-parse HEAD)"
+            echo "control_commit=${{ github.sha }}"
+            echo 'copy_sync=V20I-style-no-forced-EndRendering-or-Finish'
+            echo 'markers=P20 COPY FORMAT_MISMATCH ASPECT_MISMATCH LAYER_MISMATCH MIP_MISMATCH SAMPLE_MISMATCH COLOR_DEPTH_COPY STENCIL_STRIPPED 2D_TO_3D 3D_TO_2D EXTENT_MISMATCH ALIAS_BACKING SAME_ADDRESS_DIFFERENT_TILING RANGE_OOB'
+            readelf -n "$CORE" | grep -m1 'Build ID:' || true
+          } > "$GITHUB_WORKSPACE/V20P-build-info.txt"
+
+      - name: Upload V20P core
+        uses: actions/upload-artifact@v7
+        with:
+          name: GOW3-V20P-IMAGECOPY-DIAG-ZPASS-FAILOPEN
+          path: |
+            shadps4-arm64-fex
+            V20P-shadps4-arm64-fex.sha256
+            V20P-needed.txt
+            V20P-build-info.txt
+          if-no-files-found: error
+          retention-days: 7
