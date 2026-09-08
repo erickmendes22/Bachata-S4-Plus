@@ -39,9 +39,26 @@ jobs:
             7db6e4ba56b98841624ab776aaa56763f10bdc89 \
             1a393198193e8f373dc6c0ce928cd2d7494802a5 \
             a5ecab35b216663e0e8400383a931efc2a0a44e5
-          git -c submodule.recurse=false cherry-pick 7db6e4ba56b98841624ab776aaa56763f10bdc89
-          git -c submodule.recurse=false cherry-pick 1a393198193e8f373dc6c0ce928cd2d7494802a5
-          git -c submodule.recurse=false cherry-pick a5ecab35b216663e0e8400383a931efc2a0a44e5
+
+          cherry_pick_theirs_on_conflict() {
+            local c="$1"
+            if ! git -c submodule.recurse=false cherry-pick "$c"; then
+              mapfile -t conflicted < <(git diff --name-only --diff-filter=U)
+              printf 'Resolving conflicts for %s with The Order implementation:\n' "$c"
+              printf '  %s\n' "${conflicted[@]}"
+              test "${#conflicted[@]}" -gt 0
+              for f in "${conflicted[@]}"; do
+                git checkout --theirs -- "$f"
+                git add "$f"
+              done
+              git -c core.editor=true cherry-pick --continue
+            fi
+          }
+
+          cherry_pick_theirs_on_conflict 7db6e4ba56b98841624ab776aaa56763f10bdc89
+          cherry_pick_theirs_on_conflict 1a393198193e8f373dc6c0ce928cd2d7494802a5
+          cherry_pick_theirs_on_conflict a5ecab35b216663e0e8400383a931efc2a0a44e5
+
           git status --short
           grep -R -n 'CanPerVertexInterp' src/shader_recompiler src/video_core
           grep -R -n -- '--bachata-socket' src/main.cpp
