@@ -1,0 +1,1408 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e56c54a142c5c1dbee1818574dfaf20ae4724408..0de5e9152b0661c0a89bc236b5a989e30010dfe1 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1154,6 +1154,8 @@ set(VIDEO_CORE src/video_core/amdgpu/cb_db_extent.h
+                src/video_core/renderer_vulkan/vk_pipeline_serialization.h
+                src/video_core/renderer_vulkan/vk_platform.cpp
+                src/video_core/renderer_vulkan/vk_platform.h
++               src/video_core/renderer_vulkan/vk_predication.cpp
++               src/video_core/renderer_vulkan/vk_predication.h
+                src/video_core/renderer_vulkan/vk_presenter.cpp
+                src/video_core/renderer_vulkan/vk_presenter.h
+                src/video_core/renderer_vulkan/vk_rasterizer.cpp
+diff --git a/src/video_core/amdgpu/liverpool.cpp b/src/video_core/amdgpu/liverpool.cpp
+index 6aeedcfd76bc5df41124a2ad0cd3f5c81fe14a57..58116bdf5621d41e8e879724fc15d4a3cfc8fbfe 100644
+--- a/src/video_core/amdgpu/liverpool.cpp
++++ b/src/video_core/amdgpu/liverpool.cpp
+@@ -88,6 +88,28 @@ static std::span<const u32> NextPacket(std::span<const u32> span, size_t offset)
+     return span.subspan(offset);
+ }
+ 
++static bool ShouldSkipCondExec(const PM4CmdCondExec& packet) {
++    if (packet.command.Value() != 0) {
++        LOG_WARNING(Render, "IT_COND_EXEC used a reserved command");
++    }
++    const VAddr address = packet.Address();
++    auto* memory = Core::Memory::Instance();
++    if (address != 0 && memory->IsValidMapping(address, sizeof(u32))) {
++        return *reinterpret_cast<const u32*>(address) == 0;
++    }
++    LOG_WARNING(Render, "IT_COND_EXEC: invalid BOOL32 address {:#x}", address);
++    return false;
++}
++
++void Liverpool::RestorePredicatedIndexBase() {
++    if (!saved_index_base) {
++        return;
++    }
++    regs.index_base_address.base_addr_lo = saved_index_base->first;
++    regs.index_base_address.base_addr_hi = saved_index_base->second;
++    saved_index_base.reset();
++}
++
+ Liverpool::Liverpool() {
+     num_counter_pairs = Libraries::Kernel::sceKernelIsNeoMode() ? 16 : 8;
+     process_thread = std::jthread{std::bind_front(&Liverpool::Process, this)};
+@@ -317,6 +339,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
+     }
+     const bool host_markers_enabled = rasterizer && EmulatorSettings.IsVkHostMarkersEnabled();
+     const bool guest_markers_enabled = rasterizer && EmulatorSettings.IsVkGuestMarkersEnabled();
++    auto* const predication = rasterizer ? &rasterizer->GetPredication() : nullptr;
+ 
+     const auto base_addr = reinterpret_cast<uintptr_t>(dcb.data());
+     while (!dcb.empty()) {
+@@ -373,6 +396,20 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
+ #ifdef ENABLE_BACHATA_RUNTIME
+             debug_last_opcode = static_cast<u32>(opcode);
+ #endif
++
++            packet_predicated = header->type3.predicate == PM4Predicate::PredEnable;
++            if (packet_predicated && predication && predication->ShouldSkipPredicatedPacket()) {
++                // Only possible when the predicate value is already final; draws under a
++                // GPU-side predicate are skipped by conditional rendering instead.
++                u32 skip_count = count + 1;
++                if (opcode == PM4ItOpcode::PredExec) {
++                    const auto* pred_exec = reinterpret_cast<const PM4CmdPredExec*>(header);
++                    skip_count += pred_exec->exec_count.Value();
++                }
++                dcb = NextPacket(dcb, skip_count);
++                continue;
++            }
++
+             switch (opcode) {
+             case PM4ItOpcode::Nop: {
+                 const auto* nop = reinterpret_cast<const PM4CmdNop*>(header);
+@@ -529,7 +566,35 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
+                 break;
+             }
+             case PM4ItOpcode::SetPredication: {
+-                LOG_WARNING(Render, "Unimplemented IT_SET_PREDICATION");
++                const auto* set_pred = reinterpret_cast<const PM4CmdSetPredication*>(header);
++                RestorePredicatedIndexBase();
++                if (!predication) {
++                    break;
++                }
++                const auto pred_op = set_pred->pred_op.Value();
++                const bool draw_visible = set_pred->draw_visible.Value() != 0;
++                const bool combine = set_pred->continue_predication.Value() != 0;
++                switch (pred_op) {
++                case PredicationOp::Clear:
++                    predication->Disable();
++                    break;
++                case PredicationOp::Zpass:
++                    predication->EnableFromZpass(set_pred->Address(), num_counter_pairs,
++                                                 draw_visible, combine);
++                    break;
++                case PredicationOp::Bool64:
++                case PredicationOp::Bool32:
++                    predication->EnableFromBool(set_pred->Address(),
++                                                pred_op == PredicationOp::Bool64, draw_visible,
++                                                combine);
++                    break;
++                default:
++                    // PRIMCOUNT and unknown ops fail open so draws are never wrongly hidden.
++                    LOG_WARNING(Render, "Unimplemented IT_SET_PREDICATION op {} addr={:#x}",
++                                static_cast<u32>(pred_op), set_pred->Address());
++                    predication->Disable();
++                    break;
++                }
+                 break;
+             }
+             case PM4ItOpcode::IndexType: {
+@@ -539,6 +604,18 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
+             }
+             case PM4ItOpcode::DrawIndex2: {
+                 const auto* draw_index = reinterpret_cast<const PM4CmdDrawIndex2*>(header);
++                // A GPU-predicated draw may be skipped on the GPU, in which case hardware would
++                // also skip its index base update. Save the previous base so packets outside the
++                // predicate do not inherit a base from a draw that possibly never executed.
++                if (packet_predicated && predication && predication->IsGpuPredicationActive()) {
++                    if (!saved_index_base) {
++                        saved_index_base.emplace(
++                            static_cast<u32>(regs.index_base_address.base_addr_lo),
++                            static_cast<u32>(regs.index_base_address.base_addr_hi));
++                    }
++                } else {
++                    saved_index_base.reset();
++                }
+                 regs.max_index_size = draw_index->max_size;
+                 regs.index_base_address.base_addr_lo = draw_index->index_base_lo;
+                 regs.index_base_address.base_addr_hi = draw_index->index_base_hi;
+@@ -772,6 +849,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
+             }
+             case PM4ItOpcode::IndexBase: {
+                 const auto* index_base = reinterpret_cast<const PM4CmdDrawIndexBase*>(header);
++                saved_index_base.reset();
+                 regs.index_base_address.base_addr_lo = index_base->addr_lo;
+                 regs.index_base_address.base_addr_hi = index_base->addr_hi;
+                 break;
+@@ -796,15 +874,36 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
+                     // TODO: handle proper synchronization, for now signal that update is done
+                     // immediately
+                     regs.cp_strmout_cntl.offset_update_done = 1;
+-                } else if (event->event_index.Value() == EventIndex::ZpassDone) {
+-                    if (event->event_type.Value() == EventType::PixelPipeStatDump) {
++                } else if (event->event_type.Value() == EventType::PixelPipeStatReset) {
++                    if (predication) {
++                        predication->ResetZpassCounting();
++                    }
++                } else if (event->event_type.Value() == EventType::PixelPipeStatControl) {
++                    if (predication) {
++                        predication->ControlZpassCounting();
++                    }
++                } else if (event->event_index.Value() == EventIndex::ZpassDone &&
++                           event->event_type.Value() == EventType::PixelPipeStatDump) {
++                    const VAddr address = event->Address<VAddr>();
++                    if (predication) {
++                        predication->DumpZpassCounters(address, num_counter_pairs);
++                    } else {
+                         static constexpr u64 OcclusionCounterValidMask = 0x8000000000000000ULL;
+-                        static constexpr u64 OcclusionCounterStep = 0x2FFFFFFULL;
+-                        u64* results = event->Address<u64*>();
+-                        for (s32 i = 0; i < num_counter_pairs; ++i, results += 2) {
+-                            *results = pixel_counter | OcclusionCounterValidMask;
++                        const u64 counter = OcclusionCounterValidMask;
++                        auto* memory = Core::Memory::Instance();
++                        const u64 result_size = u64(num_counter_pairs) * sizeof(u64) * 2;
++                        if (!memory->IsValidMapping(address, result_size)) {
++                            LOG_WARNING(Render,
++                                        "Pixel-pipe stats writeback address is invalid: {:#x}",
++                                        address);
++                            break;
++                        }
++                        for (u32 i = 0; i < num_counter_pairs; ++i) {
++                            auto* dst = reinterpret_cast<void*>(address + i * sizeof(u64) * 2);
++                            if (!memory->TryWriteBacking(dst, &counter, sizeof(counter))) {
++                                std::memcpy(dst, &counter, sizeof(counter));
++                            }
+                         }
+-                        pixel_counter += OcclusionCounterStep;
+                     }
+                 }
+                 break;
+@@ -1051,18 +1150,27 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
+                 LOG_WARNING(Render_Vulkan, "Unimplemented IT_GET_LOD_STATS");
+                 break;
+             }
++            case PM4ItOpcode::PredExec: {
++                const auto* pred_exec = reinterpret_cast<const PM4CmdPredExec*>(header);
++                if (predication && predication->ShouldSkipPredicatedPacket()) {
++                    dcb = NextPacket(dcb,
++                                     header->type3.NumWords() + 1 + pred_exec->exec_count.Value());
++                    continue;
++                }
++                // With a GPU-side predicate the CPU cannot evaluate the condition; fail open.
++                if (predication && predication->IsGpuPredicationActive()) {
++                    LOG_WARNING(Render, "IT_PRED_EXEC under a GPU-side predicate; executing");
++                }
++                break;
++            }
+             case PM4ItOpcode::CondExec: {
+                 const auto* cond_exec = reinterpret_cast<const PM4CmdCondExec*>(header);
+-                if (cond_exec->command.Value() != 0) {
+-                    LOG_WARNING(Render, "IT_COND_EXEC used a reserved command");
+-                }
+-                if (!Pm4GuestPointerUsable(cond_exec->Address())) {
++                if (!Pm4GuestPointerUsable(reinterpret_cast<const void*>(cond_exec->Address()))) {
+                     LOG_ERROR(Lib_GnmDriver, "IT_COND_EXEC null predicate — skipping remainder");
+                     dcb = {};
+                     break;
+                 }
+-                const auto skip = *cond_exec->Address() == false;
+-                if (skip) {
++                if (ShouldSkipCondExec(*cond_exec)) {
+                     dcb = NextPacket(dcb,
+                                      header->type3.NumWords() + 1 + cond_exec->exec_count.Value());
+                     continue;
+@@ -1199,6 +1307,9 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
+         debug_last_opcode = static_cast<u32>(opcode);
+ #endif
+ 
++        // Draw predication belongs to the graphics queue; compute queue packets execute as-is.
++        packet_predicated = false;
++
+         const auto* it_body = reinterpret_cast<const u32*>(header) + 1;
+         switch (opcode) {
+         case PM4ItOpcode::Nop: {
+@@ -1304,6 +1415,18 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
+                         set_data->vqid.Value(), set_data->reg_offset.Value());
+             break;
+         }
++        case PM4ItOpcode::PredExec: {
++            // Compute-queue predication is not implemented; execute the region.
++            LOG_WARNING(Render, "Compute IT_PRED_EXEC ignored; executing region");
++            break;
++        }
++        case PM4ItOpcode::CondExec: {
++            const auto* cond_exec = reinterpret_cast<const PM4CmdCondExec*>(header);
++            if (ShouldSkipCondExec(*cond_exec)) {
++                next_dw_off += cond_exec->exec_count.Value();
++            }
++            break;
++        }
+         case PM4ItOpcode::DispatchDirect: {
+             const auto* dispatch_direct = reinterpret_cast<const PM4CmdDispatchDirect*>(header);
+             if (auto it = std::ranges::find(indirect_patches, header, &IndirectPatch::header);
+diff --git a/src/video_core/amdgpu/liverpool.h b/src/video_core/amdgpu/liverpool.h
+index ba5dbfab8b1fd4cc3b01870c0ee85b0f2a3bded1..601b68be909ddd361199a81d3114cb3e2afca641 100644
+--- a/src/video_core/amdgpu/liverpool.h
++++ b/src/video_core/amdgpu/liverpool.h
+@@ -9,6 +9,7 @@
+ #include <exception>
+ #include <mutex>
+ #include <utility>
++#include <optional>
+ #include <semaphore>
+ #include <span>
+ #include <thread>
+@@ -112,6 +113,11 @@ public:
+         submit_cv.notify_one();
+     }
+ 
++    /// Returns true when the PM4 packet currently being processed has the predicate bit set.
++    bool IsPacketPredicated() const {
++        return packet_predicated;
++    }
++
+     template <bool wait_done = false>
+     void SendCommand(auto&& func) {
+         if (std::this_thread::get_id() == gpu_id) {
+@@ -203,6 +209,9 @@ private:
+     void ProcessCommands();
+     void Process(std::stop_token stoken);
+ 
++    /// Restores the index base staged by a GPU-predicated DrawIndex2 (see the draw handler).
++    void RestorePredicatedIndexBase();
++
+     struct GpuQueue {
+         std::mutex m_access{};
+         std::atomic<u32> dcb_buffer_offset;
+@@ -217,7 +226,8 @@ private:
+ 
+     VAddr indirect_args_addr{};
+     u32 num_counter_pairs{};
+-    u64 pixel_counter{};
++    bool packet_predicated{};
++    std::optional<std::pair<u32, u32>> saved_index_base{};
+ 
+     struct ConstantEngine {
+         void Reset() {
+diff --git a/src/video_core/amdgpu/pm4_cmds.h b/src/video_core/amdgpu/pm4_cmds.h
+index abf58ad897daeed2bc9226e8ea81850dd2523b0d..1ce90ee5d41cc76f40cf0926033e61770aebe125 100644
+--- a/src/video_core/amdgpu/pm4_cmds.h
++++ b/src/video_core/amdgpu/pm4_cmds.h
+@@ -1215,9 +1215,47 @@ struct PM4CmdCondExec {
+                                          ///< if bool pointed to is zero
+     };
+ 
+-    bool* Address() const {
+-        return std::bit_cast<bool*>(u64(bool_addr_hi.Value()) << 32 | u64(bool_addr_lo.Value())
+-                                                                          << 2);
++    VAddr Address() const {
++        return (u64(bool_addr_hi.Value()) << 32) | (u64(bool_addr_lo.Value()) << 2);
++    }
++};
++
++struct PM4CmdPredExec {
++    PM4Type3Header header;
++    union {
++        u32 control;
++        BitField<0, 14, u32> exec_count; ///< Number of following DWords controlled by predicate.
++        BitField<24, 8, u32> device_select;
++    };
++};
++
++enum class PredicationOp : u32 {
++    Clear = 0,
++    Zpass = 1,
++    PrimCount = 2,
++    Bool64 = 3,
++    Bool32 = 4,
++};
++
++enum class PredicationHint : u32 {
++    Wait = 0,
++    NowaitDraw = 1,
++};
++
++struct PM4CmdSetPredication {
++    PM4Type3Header header;
++    u32 start_addr_lo;
++    union {
++        u32 pred_properties;
++        BitField<0, 8, u32> start_addr_hi;
++        BitField<8, 1, u32> draw_visible;
++        BitField<12, 2, PredicationHint> hint;
++        BitField<16, 3, PredicationOp> pred_op;
++        BitField<31, 1, u32> continue_predication;
++    };
++
++    VAddr Address() const {
++        return (u64(start_addr_hi.Value()) << 32) | (u64(start_addr_lo) & 0xfffffff0ULL);
+     }
+ };
+ 
+diff --git a/src/video_core/host_shaders/CMakeLists.txt b/src/video_core/host_shaders/CMakeLists.txt
+index 4aae78776ba28d75174c892c8858d91347399b72..d86de5d3045b7a36949c039ed9bcc2d73c3c17ab 100644
+--- a/src/video_core/host_shaders/CMakeLists.txt
++++ b/src/video_core/host_shaders/CMakeLists.txt
+@@ -16,6 +16,7 @@ set(SHADER_FILES
+     fault_buffer_process.comp
+     fs_tri.vert
+     fsr.comp
++    occlusion_predicate.comp
+     post_process.frag
+     tiling.comp
+ )
+diff --git a/src/video_core/host_shaders/occlusion_predicate.comp b/src/video_core/host_shaders/occlusion_predicate.comp
+new file mode 100644
+index 0000000000000000000000000000000000000000..47fa0133f49003e0dc2442f06c579f08127bbc98
+--- /dev/null
++++ b/src/video_core/host_shaders/occlusion_predicate.comp
+@@ -0,0 +1,32 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#version 450
++
++layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
++
++// 64-bit occlusion query results (or boolean predicate values) split in dword pairs.
++layout(std430, binding = 0) readonly buffer CounterBuffer {
++    uvec2 counters[];
++};
++
++layout(std430, binding = 1) buffer PredicateBuffer {
++    uint predicates[];
++};
++
++layout(push_constant) uniform PushConstants {
++    uint src_index;
++    uint count;
++    uint dst_index;
++    uint combine;
++};
++
++void main() {
++    uint bits = 0u;
++    for (uint i = 0u; i < count; ++i) {
++        const uvec2 counter = counters[src_index + i];
++        bits |= counter.x | counter.y;
++    }
++    const uint visible = bits != 0u ? 1u : 0u;
++    predicates[dst_index] = combine != 0u ? (predicates[dst_index] | visible) : visible;
++}
+diff --git a/src/video_core/renderer_vulkan/vk_instance.cpp b/src/video_core/renderer_vulkan/vk_instance.cpp
+index a0977668776228f87f3d47e4d838942a5c284cbe..3d0479c03e7651fb3525c711d7a9724bbcf63896 100644
+--- a/src/video_core/renderer_vulkan/vk_instance.cpp
++++ b/src/video_core/renderer_vulkan/vk_instance.cpp
+@@ -208,7 +208,8 @@ bool Instance::CreateDevice() {
+                           vk::PhysicalDevicePrimitiveTopologyListRestartFeaturesEXT,
+                           vk::PhysicalDeviceShaderAtomicFloat2FeaturesEXT,
+                           vk::PhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR,
+-                          vk::PhysicalDeviceImage2DViewOf3DFeaturesEXT>();
++                          vk::PhysicalDeviceImage2DViewOf3DFeaturesEXT,
++                          vk::PhysicalDeviceConditionalRenderingFeaturesEXT>();
+     features = feature_chain.get().features;
+     LOG_INFO(Render_Vulkan, "GPU_ClipCull: clip={} cull={} combined={} featClip={} featCull={}",
+              properties.limits.maxClipDistances, properties.limits.maxCullDistances,
+@@ -355,6 +356,14 @@ bool Instance::CreateDevice() {
+         LOG_INFO(Render_Vulkan, "- sampler2DViewOf3D: {}",
+                  image_2d_view_of_3d_features.sampler2DViewOf3D);
+     }
++    conditional_rendering = add_extension(VK_EXT_CONDITIONAL_RENDERING_EXTENSION_NAME);
++    if (conditional_rendering) {
++        const auto conditional_rendering_features =
++            feature_chain.get<vk::PhysicalDeviceConditionalRenderingFeaturesEXT>();
++        conditional_rendering = conditional_rendering_features.conditionalRendering;
++        LOG_INFO(Render_Vulkan, "- conditionalRendering: {}",
++                 conditional_rendering_features.conditionalRendering);
++    }
+     supports_memory_budget = add_extension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+     const bool calibrated_timestamps =
+         TRACY_GPU_ENABLED ? add_extension(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME) : false;
+@@ -524,6 +533,9 @@ bool Instance::CreateDevice() {
+             .image2DViewOf3D = image_2d_view_of_3d_features.image2DViewOf3D,
+             .sampler2DViewOf3D = image_2d_view_of_3d_features.sampler2DViewOf3D,
+         },
++        vk::PhysicalDeviceConditionalRenderingFeaturesEXT{
++            .conditionalRendering = true,
++        },
+     };
+ 
+     if (!custom_border_color) {
+@@ -575,6 +587,9 @@ bool Instance::CreateDevice() {
+     if (!image_2d_view_of_3d) {
+         device_chain.unlink<vk::PhysicalDeviceImage2DViewOf3DFeaturesEXT>();
+     }
++    if (!conditional_rendering) {
++        device_chain.unlink<vk::PhysicalDeviceConditionalRenderingFeaturesEXT>();
++    }
+ 
+     auto [device_result, dev] = physical_device.createDeviceUnique(device_chain.get());
+     if (device_result != vk::Result::eSuccess) {
+diff --git a/src/video_core/renderer_vulkan/vk_instance.h b/src/video_core/renderer_vulkan/vk_instance.h
+index 4afd72631f81f243d4a08bf69c1d542cc6246414..29cae58b7a11294b76d27fc196ddfed7923b3407 100644
+--- a/src/video_core/renderer_vulkan/vk_instance.h
++++ b/src/video_core/renderer_vulkan/vk_instance.h
+@@ -89,6 +89,16 @@ public:
+         return features.depthBounds;
+     }
+ 
++    /// Returns true if query pools can be reset from the host.
++    bool IsHostQueryResetSupported() const {
++        return vk12_features.hostQueryReset;
++    }
++
++    /// Returns true when VK_EXT_conditional_rendering is supported
++    bool IsConditionalRenderingSupported() const {
++        return conditional_rendering;
++    }
++
+     /// Returns true if 16-bit floats are supported in shaders
+     bool IsShaderFloat16Supported() const {
+         return vk12_features.shaderFloat16;
+@@ -548,6 +558,7 @@ private:
+     bool maintenance_8{};
+     bool attachment_feedback_loop{};
+     bool image_2d_view_of_3d{};
++    bool conditional_rendering{};
+     bool supports_memory_budget{};
+     bool supports_block_texel_view{};
+     u64 total_memory_budget{};
+diff --git a/src/video_core/renderer_vulkan/vk_predication.cpp b/src/video_core/renderer_vulkan/vk_predication.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..9d773c75d0c2154915baed8d70f6df4b18bea372
+--- /dev/null
++++ b/src/video_core/renderer_vulkan/vk_predication.cpp
+@@ -0,0 +1,640 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#include <algorithm>
++#include <span>
++#include <boost/container/small_vector.hpp>
++
++#include "common/assert.h"
++#include "common/logging/log.h"
++#include "core/memory.h"
++#include "video_core/buffer_cache/buffer_cache.h"
++#include "video_core/renderer_vulkan/vk_instance.h"
++#include "video_core/renderer_vulkan/vk_platform.h"
++#include "video_core/renderer_vulkan/vk_predication.h"
++#include "video_core/renderer_vulkan/vk_scheduler.h"
++#include "video_core/renderer_vulkan/vk_shader_util.h"
++
++#include "video_core/host_shaders/occlusion_predicate_comp.h"
++
++namespace Vulkan {
++
++static constexpr u64 OcclusionCounterValidMask = 0x8000000000000000ULL;
++
++struct ReducePushConstants {
++    u32 src_index;
++    u32 count;
++    u32 dst_index;
++    u32 combine;
++};
++
++static vk::BufferMemoryBarrier2 MakeBufferBarrier(
++    vk::Buffer buffer, vk::PipelineStageFlags2 src_stage, vk::AccessFlags2 src_access,
++    vk::PipelineStageFlags2 dst_stage, vk::AccessFlags2 dst_access, vk::DeviceSize offset = 0,
++    vk::DeviceSize size = VK_WHOLE_SIZE) {
++    return {
++        .srcStageMask = src_stage,
++        .srcAccessMask = src_access,
++        .dstStageMask = dst_stage,
++        .dstAccessMask = dst_access,
++        .buffer = buffer,
++        .offset = offset,
++        .size = size,
++    };
++}
++
++static void RecordBufferBarrier(vk::CommandBuffer cmdbuf, const vk::BufferMemoryBarrier2& barrier) {
++    cmdbuf.pipelineBarrier2(vk::DependencyInfo{
++        .bufferMemoryBarrierCount = 1,
++        .pBufferMemoryBarriers = &barrier,
++    });
++}
++
++template <typename Callback>
++static void ForEachContiguousRun(std::span<const u32> slots, Callback&& callback) {
++    for (size_t i = 0; i < slots.size();) {
++        u32 run = 1;
++        while (i + run < slots.size() && slots[i + run] == slots[i] + run) {
++            ++run;
++        }
++        callback(slots[i], run, i);
++        i += run;
++    }
++}
++
++static u64 ReadQuerySamples(vk::Device device, vk::QueryPool query_pool,
++                            std::span<const u32> slots) {
++    boost::container::small_vector<u64, 64> results(slots.size());
++    u64 samples = 0;
++    ForEachContiguousRun(slots, [&](u32 first, u32 count, size_t offset) {
++        u64* const run_results = results.data() + offset;
++        const auto batch_result =
++            device.getQueryPoolResults(query_pool, first, count, count * sizeof(u64), run_results,
++                                       sizeof(u64), vk::QueryResultFlagBits::e64);
++        if (batch_result == vk::Result::eSuccess) {
++            for (u32 i = 0; i < count; ++i) {
++                samples += run_results[i];
++            }
++            return;
++        }
++
++        // Preserve the original per-query path as a driver-safe fallback. Besides handling
++        // unusual implementations, this also lets any available query in a rejected run
++        // contribute to the guest counter.
++        for (u32 i = 0; i < count; ++i) {
++            u64 result{};
++            const u32 slot = first + i;
++            const auto query_result =
++                device.getQueryPoolResults(query_pool, slot, 1, sizeof(result), &result,
++                                           sizeof(result), vk::QueryResultFlagBits::e64);
++            if (query_result == vk::Result::eSuccess) {
++                samples += result;
++            } else {
++                LOG_WARNING(Render_Vulkan, "ZPASS query {} unavailable at writeback: {}", slot,
++                            vk::to_string(query_result));
++            }
++        }
++    });
++    return samples;
++}
++
++static vk::BufferUsageFlags PredicateBufferUsage(const Instance& instance) {
++    vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eStorageBuffer |
++                                 vk::BufferUsageFlagBits::eTransferSrc |
++                                 vk::BufferUsageFlagBits::eTransferDst;
++    if (instance.IsConditionalRenderingSupported()) {
++        usage |= vk::BufferUsageFlagBits::eConditionalRenderingEXT;
++    }
++    return usage;
++}
++
++PredicationManager::PredicationManager(const Instance& instance_, Scheduler& scheduler_,
++                                       VideoCore::BufferCache& buffer_cache_)
++    : instance{instance_}, scheduler{scheduler_}, buffer_cache{buffer_cache_},
++      supported{instance_.IsConditionalRenderingSupported()},
++      predicate_buffer{instance_,
++                       scheduler_,
++                       VideoCore::MemoryUsage::DeviceLocal,
++                       0,
++                       PredicateBufferUsage(instance_),
++                       NumPredicateSlots * sizeof(u32)},
++      counter_scratch{instance_,
++                      scheduler_,
++                      VideoCore::MemoryUsage::DeviceLocal,
++                      0,
++                      vk::BufferUsageFlagBits::eStorageBuffer |
++                          vk::BufferUsageFlagBits::eTransferDst,
++                      NumScratchQwords * sizeof(u64)} {
++    const auto device = instance.GetDevice();
++    const vk::QueryPoolCreateInfo query_pool_info = {
++        .queryType = vk::QueryType::eOcclusion,
++        .queryCount = QueryPoolSize,
++    };
++    query_pool = Check(device.createQueryPoolUnique(query_pool_info));
++    SetObjectName(device, *query_pool, "ZPASS Query Pool");
++    if (instance.IsHostQueryResetSupported()) {
++        // Slots are reset up front and again in bulk as they are released, keeping the
++        // per-draw acquisition path free of driver calls.
++        device.resetQueryPool(*query_pool, 0, QueryPoolSize);
++    }
++    SetObjectName(device, predicate_buffer.Handle(), "Predicate Buffer");
++    SetObjectName(device, counter_scratch.Handle(), "Predicate Counter Scratch");
++
++    const std::array<vk::DescriptorSetLayoutBinding, 2> bindings = {{
++        {
++            .binding = 0,
++            .descriptorType = vk::DescriptorType::eStorageBuffer,
++            .descriptorCount = 1,
++            .stageFlags = vk::ShaderStageFlagBits::eCompute,
++        },
++        {
++            .binding = 1,
++            .descriptorType = vk::DescriptorType::eStorageBuffer,
++            .descriptorCount = 1,
++            .stageFlags = vk::ShaderStageFlagBits::eCompute,
++        },
++    }};
++    const vk::DescriptorSetLayoutCreateInfo desc_layout_ci = {
++        .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
++        .bindingCount = static_cast<u32>(bindings.size()),
++        .pBindings = bindings.data(),
++    };
++    reduce_desc_layout = Check(device.createDescriptorSetLayoutUnique(desc_layout_ci));
++
++    const auto module =
++        Compile(HostShaders::OCCLUSION_PREDICATE_COMP, vk::ShaderStageFlagBits::eCompute, device);
++    SetObjectName(device, module, "Occlusion Predicate Reduce");
++
++    const vk::PushConstantRange push_range = {
++        .stageFlags = vk::ShaderStageFlagBits::eCompute,
++        .offset = 0,
++        .size = sizeof(ReducePushConstants),
++    };
++    const vk::PipelineLayoutCreateInfo layout_info = {
++        .setLayoutCount = 1U,
++        .pSetLayouts = &(*reduce_desc_layout),
++        .pushConstantRangeCount = 1U,
++        .pPushConstantRanges = &push_range,
++    };
++    reduce_pipeline_layout = Check(device.createPipelineLayoutUnique(layout_info));
++
++    const vk::ComputePipelineCreateInfo pipeline_info = {
++        .stage =
++            vk::PipelineShaderStageCreateInfo{
++                .stage = vk::ShaderStageFlagBits::eCompute,
++                .module = module,
++                .pName = "main",
++            },
++        .layout = *reduce_pipeline_layout,
++    };
++    reduce_pipeline = Check(device.createComputePipelineUnique({}, pipeline_info));
++    SetObjectName(device, *reduce_pipeline, "Occlusion Predicate Reduce Pipeline");
++    device.destroyShaderModule(module);
++
++    if (!supported) {
++        LOG_WARNING(Render_Vulkan,
++                    "VK_EXT_conditional_rendering is unavailable; PM4 predication will fail open");
++    }
++}
++
++void PredicationManager::ControlZpassCounting() {
++    counting_enabled = !counting_enabled;
++}
++
++void PredicationManager::ResetZpassCounting() {
++    zpass_counter = 0;
++    if (!active_queries.empty()) {
++        ReleaseQuerySlotsWhenDone(std::move(active_queries));
++        active_queries.clear();
++    }
++    active_poisoned = false;
++}
++
++void PredicationManager::DumpZpassCounters(VAddr address, u32 num_counter_pairs) {
++    if (address == 0 || num_counter_pairs == 0) {
++        return;
++    }
++
++    auto record = std::make_shared<DumpRecord>(DumpRecord{
++        .address = address,
++        .num_counter_pairs = num_counter_pairs,
++        .queries = std::move(active_queries),
++        .poisoned = active_poisoned,
++    });
++    active_queries.clear();
++    active_poisoned = false;
++    records[address] = record;
++
++    scheduler.DeferOperation([this, record] {
++        ResolveRecord(*record);
++        if (const auto it = records.find(record->address);
++            it != records.end() && it->second == record) {
++            records.erase(it);
++        }
++        // Predicate copies can only reference these slots while the record is reachable, so
++        // any such copy is recorded by now; free the slots once the work queued so far is done.
++        if (!record->queries.empty()) {
++            ReleaseQuerySlotsWhenDone(std::move(record->queries));
++        }
++    });
++}
++
++void PredicationManager::EnableFromZpass(VAddr address, u32 num_counter_pairs, bool draw_visible,
++                                         bool combine) {
++    if (address == 0) {
++        SetStatic(std::nullopt, draw_visible, combine);
++        return;
++    }
++
++    // The predicate covers the window between the begin dump (at address) and the end dump
++    // (at address + 8); the end dump captured exactly the queries recorded in between.
++    const auto it = records.find(address + sizeof(u64));
++    if (it == records.end()) {
++        // No live measurement window. If a previous window already resolved, the guest block
++        // holds final counters and can be read without waiting; otherwise fail open.
++        SetStatic(ReadGuestZpass(address, num_counter_pairs), draw_visible, combine);
++        return;
++    }
++
++    const DumpRecord& record = *it->second;
++    if (!supported || record.poisoned || record.queries.size() > NumScratchQwords) {
++        SetStatic(std::nullopt, draw_visible, combine);
++        return;
++    }
++    if (record.queries.empty()) {
++        // An empty window cannot have passed any samples.
++        SetStatic(false, draw_visible, combine);
++        return;
++    }
++    BuildFromQueries(record.queries, draw_visible, combine);
++}
++
++void PredicationManager::EnableFromBool(VAddr address, bool is_64bit, bool draw_visible,
++                                        bool combine) {
++    if (!supported || address == 0) {
++        SetStatic(std::nullopt, draw_visible, combine);
++        return;
++    }
++
++    // The boolean may be produced by GPU work queued earlier in this very command stream, so
++    // it must be sampled on the GPU timeline rather than at parse time. Obtain the guest
++    // buffer before touching the command buffer: the cache lookup may flush the scheduler.
++    const u32 width = is_64bit ? sizeof(u64) : sizeof(u32);
++    const auto [buffer, offset] = buffer_cache.ObtainBuffer(address, width, false);
++    scheduler.EndRendering();
++    const auto cmdbuf = scheduler.CommandBuffer();
++    const u32 qword = AllocScratchQwords(1);
++
++    if (!is_64bit) {
++        // Zero the full qword so the 32-bit copy below leaves the high dword clear.
++        cmdbuf.fillBuffer(counter_scratch.Handle(), qword * sizeof(u64), sizeof(u64), 0);
++        RecordBufferBarrier(cmdbuf, MakeBufferBarrier(counter_scratch.Handle(),
++                                                      vk::PipelineStageFlagBits2::eAllTransfer,
++                                                      vk::AccessFlagBits2::eTransferWrite,
++                                                      vk::PipelineStageFlagBits2::eAllTransfer,
++                                                      vk::AccessFlagBits2::eTransferWrite,
++                                                      qword * sizeof(u64), sizeof(u64)));
++    }
++    if (const auto barrier = buffer->GetBarrier(vk::AccessFlagBits2::eTransferRead,
++                                                vk::PipelineStageFlagBits2::eAllTransfer)) {
++        RecordBufferBarrier(cmdbuf, *barrier);
++    }
++    const vk::BufferCopy copy = {
++        .srcOffset = offset,
++        .dstOffset = qword * sizeof(u64),
++        .size = width,
++    };
++    cmdbuf.copyBuffer(buffer->Handle(), counter_scratch.Handle(), copy);
++
++    bool combine_on_gpu = false;
++    const u32 slot = SelectPredicateSlot(cmdbuf, combine, combine_on_gpu);
++    ReducePredicate(qword, 1, slot, combine_on_gpu);
++    ActivateGpuPredicate(slot, draw_visible);
++}
++
++void PredicationManager::Disable() {
++    mode = Mode::Disabled;
++    static_visible.reset();
++    static_execute = true;
++}
++
++std::optional<u32> PredicationManager::PrepareDrawQuery() {
++    if (!counting_enabled) {
++        return std::nullopt;
++    }
++
++    if (active_queries.size() >= QueryPoolSize / 2) {
++        // A window that never dumps must not exhaust the pool; drop the oldest half. The
++        // window can no longer produce an exact count, so its predicate fails open.
++        const auto mid = active_queries.begin() + active_queries.size() / 2;
++        std::vector<u32> stale(active_queries.begin(), mid);
++        active_queries.erase(active_queries.begin(), mid);
++        active_poisoned = true;
++        ReleaseQuerySlotsWhenDone(std::move(stale));
++    }
++
++    const auto slot = AcquireQuerySlot();
++    if (!slot) {
++        LOG_WARNING(Render_Vulkan, "ZPASS query pool exhausted; predicate will fail open");
++        active_poisoned = true;
++        return std::nullopt;
++    }
++
++    if (!instance.IsHostQueryResetSupported()) {
++        // Without host query reset the slot must be reset on the GPU timeline before use, and
++        // vkCmdResetQueryPool is invalid while dynamic rendering is active. With host reset,
++        // free slots were already reset in bulk when they were released.
++        scheduler.EndRendering();
++        scheduler.CommandBuffer().resetQueryPool(*query_pool, *slot, 1);
++    }
++    return slot;
++}
++
++void PredicationManager::BeginDraw(vk::CommandBuffer cmdbuf, std::optional<u32> query,
++                                   bool packet_predicated) {
++    if (packet_predicated && mode == Mode::Gpu) {
++        vk::ConditionalRenderingFlagsEXT flags{};
++        if (gpu_inverted) {
++            flags |= vk::ConditionalRenderingFlagBitsEXT::eInverted;
++        }
++        const vk::ConditionalRenderingBeginInfoEXT info = {
++            .buffer = predicate_buffer.Handle(),
++            .offset = gpu_slot * sizeof(u32),
++            .flags = flags,
++        };
++        cmdbuf.beginConditionalRenderingEXT(info);
++    }
++    if (query) {
++        cmdbuf.beginQuery(*query_pool, *query, {});
++    }
++}
++
++void PredicationManager::EndDraw(vk::CommandBuffer cmdbuf, std::optional<u32> query,
++                                 bool packet_predicated) {
++    if (query) {
++        cmdbuf.endQuery(*query_pool, *query);
++        active_queries.emplace_back(*query);
++    }
++    if (packet_predicated && mode == Mode::Gpu) {
++        cmdbuf.endConditionalRenderingEXT();
++    }
++}
++
++std::optional<u32> PredicationManager::AcquireQuerySlot() {
++    for (u32 attempt = 0; attempt < QueryPoolSize; ++attempt) {
++        const u32 slot = (query_cursor + attempt) % QueryPoolSize;
++        if (!query_busy[slot]) {
++            query_busy[slot] = true;
++            query_cursor = slot + 1;
++            return slot;
++        }
++    }
++    return std::nullopt;
++}
++
++void PredicationManager::ReleaseQuerySlotsWhenDone(std::vector<u32>&& slots) {
++    scheduler.DeferOperation([this, slots = std::move(slots)]() mutable {
++        for (const u32 slot : slots) {
++            query_busy[slot] = false;
++        }
++        if (!instance.IsHostQueryResetSupported()) {
++            return;
++        }
++        // The GPU tick containing the last use of these slots has completed, so they can be
++        // host-reset here in contiguous runs instead of one driver call per draw at acquire.
++        if (!std::ranges::is_sorted(slots)) {
++            std::ranges::sort(slots);
++        }
++        const auto device = instance.GetDevice();
++        ForEachContiguousRun(slots, [&](u32 first, u32 count, size_t) {
++            device.resetQueryPool(*query_pool, first, count);
++        });
++    });
++}
++
++void PredicationManager::ResolveRecord(const DumpRecord& record) {
++    const auto device = instance.GetDevice();
++    const u64 samples = ReadQuerySamples(device, *query_pool, record.queries);
++    zpass_counter += samples;
++    WriteGuestCounters(record.address, record.num_counter_pairs, zpass_counter);
++}
++
++void PredicationManager::WriteGuestCounters(VAddr address, u32 num_counter_pairs,
++                                            u64 counter) const {
++    const u64 value = counter | OcclusionCounterValidMask;
++    auto* memory = Core::Memory::Instance();
++    const u64 result_size = u64(num_counter_pairs) * sizeof(u64) * 2;
++    if (!memory->IsValidMapping(address, result_size)) {
++        LOG_WARNING(Render_Vulkan, "Pixel-pipe stats writeback address is invalid: {:#x}", address);
++        return;
++    }
++    for (u32 i = 0; i < num_counter_pairs; ++i) {
++        auto* dst = reinterpret_cast<void*>(address + i * sizeof(u64) * 2);
++        if (!memory->TryWriteBacking(dst, &value, sizeof(value))) {
++            std::memcpy(dst, &value, sizeof(value));
++        }
++    }
++}
++
++std::optional<bool> PredicationManager::ReadGuestZpass(VAddr address, u32 num_counter_pairs) const {
++    auto* memory = Core::Memory::Instance();
++    const u64 result_size = u64(num_counter_pairs) * sizeof(u64) * 2;
++    if (!memory->IsValidMapping(address, result_size)) {
++        return std::nullopt;
++    }
++    const auto* results = reinterpret_cast<const u64*>(address);
++    bool visible = false;
++    for (u32 i = 0; i < num_counter_pairs; ++i) {
++        const u64 begin = results[i * 2];
++        const u64 end = results[i * 2 + 1];
++        if ((begin & end & OcclusionCounterValidMask) == 0) {
++            return std::nullopt;
++        }
++        visible |= (begin & ~OcclusionCounterValidMask) != (end & ~OcclusionCounterValidMask);
++    }
++    return visible;
++}
++
++void PredicationManager::SetStatic(std::optional<bool> visible, bool draw_visible, bool combine) {
++    if (combine) {
++        if (mode == Mode::Gpu && !visible.value_or(true)) {
++            // OR-ing a false term leaves the previous GPU predicate as the result.
++            gpu_inverted = !draw_visible;
++            return;
++        }
++        if (mode == Mode::Static) {
++            if (static_visible.has_value() && visible.has_value()) {
++                visible = *static_visible || *visible;
++            } else {
++                visible.reset();
++            }
++        }
++    }
++    mode = Mode::Static;
++    static_visible = visible;
++    static_execute = visible.has_value() ? (draw_visible ? *visible : !*visible) : true;
++}
++
++void PredicationManager::BuildFromQueries(const std::vector<u32>& queries, bool draw_visible,
++                                          bool combine) {
++    scheduler.EndRendering();
++    const auto cmdbuf = scheduler.CommandBuffer();
++
++    if (queries.size() == 1 && !combine) {
++        // Fast path for the canonical one-proxy-draw window: copy the low 32 bits of the query
++        // result straight into the predicate slot. A non-zero sample count means visible, so no
++        // reduction pass is needed; a count of exactly 2^32 is not reachable in practice.
++        const u32 slot = AllocPredicateSlot();
++        RecordBufferBarrier(
++            cmdbuf,
++            MakeBufferBarrier(predicate_buffer.Handle(), vk::PipelineStageFlagBits2::eAllCommands,
++                              vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
++                              vk::PipelineStageFlagBits2::eAllTransfer,
++                              vk::AccessFlagBits2::eTransferWrite));
++        cmdbuf.copyQueryPoolResults(*query_pool, queries.front(), 1, predicate_buffer.Handle(),
++                                    slot * sizeof(u32), sizeof(u32),
++                                    vk::QueryResultFlagBits::eWait);
++        RecordBufferBarrier(cmdbuf,
++                            MakeBufferBarrier(predicate_buffer.Handle(),
++                                              vk::PipelineStageFlagBits2::eAllTransfer,
++                                              vk::AccessFlagBits2::eTransferWrite,
++                                              vk::PipelineStageFlagBits2::eConditionalRenderingEXT |
++                                                  vk::PipelineStageFlagBits2::eAllTransfer,
++                                              vk::AccessFlagBits2::eConditionalRenderingReadEXT |
++                                                  vk::AccessFlagBits2::eTransferRead));
++        ActivateGpuPredicate(slot, draw_visible);
++        return;
++    }
++
++    // Copy the query results into the scratch buffer as contiguous runs. The GPU waits for
++    // result availability itself (kPredicationZPassHintWait semantics), so the CPU never does.
++    std::vector<u32> sorted_storage;
++    std::span<const u32> sorted = queries;
++    if (!std::ranges::is_sorted(queries)) {
++        sorted_storage.assign(queries.begin(), queries.end());
++        std::ranges::sort(sorted_storage);
++        sorted = sorted_storage;
++    }
++    const u32 count = static_cast<u32>(sorted.size());
++    const u32 base = AllocScratchQwords(count);
++    u32 dst = base;
++    ForEachContiguousRun(sorted, [&](u32 first, u32 run, size_t) {
++        cmdbuf.copyQueryPoolResults(*query_pool, first, run, counter_scratch.Handle(),
++                                    dst * sizeof(u64), sizeof(u64),
++                                    vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
++        dst += run;
++    });
++
++    bool combine_on_gpu = false;
++    const u32 slot = SelectPredicateSlot(cmdbuf, combine, combine_on_gpu);
++    ReducePredicate(base, count, slot, combine_on_gpu);
++    ActivateGpuPredicate(slot, draw_visible);
++}
++
++u32 PredicationManager::SelectPredicateSlot(vk::CommandBuffer cmdbuf, bool combine,
++                                            bool& combine_on_gpu) {
++    if (combine && mode == Mode::Gpu) {
++        combine_on_gpu = true;
++        return gpu_slot;
++    }
++    const u32 slot = AllocPredicateSlot();
++    if (combine && mode == Mode::Static && static_visible.has_value()) {
++        // Seed the slot with the previous visibility so the reduction ORs into it.
++        cmdbuf.fillBuffer(predicate_buffer.Handle(), slot * sizeof(u32), sizeof(u32),
++                          *static_visible ? 1u : 0u);
++        combine_on_gpu = true;
++    }
++    return slot;
++}
++
++void PredicationManager::ActivateGpuPredicate(u32 slot, bool draw_visible) {
++    mode = Mode::Gpu;
++    gpu_slot = slot;
++    gpu_inverted = !draw_visible;
++}
++
++u32 PredicationManager::AllocPredicateSlot() {
++    // Slots are recycled ring-style; with 1024 slots and a handful of predications per frame a
++    // slot is only reused many frames after its last conditional-rendering read.
++    return predicate_cursor++ % NumPredicateSlots;
++}
++
++u32 PredicationManager::AllocScratchQwords(u32 count) {
++    ASSERT(count <= NumScratchQwords);
++    if (scratch_cursor + count > NumScratchQwords) {
++        scratch_cursor = 0;
++    }
++    const u32 base = scratch_cursor;
++    scratch_cursor += count;
++    return base;
++}
++
++void PredicationManager::ReducePredicate(u32 src_index, u32 count, u32 dst_slot,
++                                         bool combine_on_gpu) {
++    const auto cmdbuf = scheduler.CommandBuffer();
++
++    const std::array<vk::BufferMemoryBarrier2, 2> pre_barriers = {{
++        MakeBufferBarrier(counter_scratch.Handle(), vk::PipelineStageFlagBits2::eAllTransfer,
++                          vk::AccessFlagBits2::eTransferWrite,
++                          vk::PipelineStageFlagBits2::eComputeShader,
++                          vk::AccessFlagBits2::eShaderRead),
++        MakeBufferBarrier(predicate_buffer.Handle(), vk::PipelineStageFlagBits2::eAllCommands,
++                          vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
++                          vk::PipelineStageFlagBits2::eComputeShader,
++                          vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite),
++    }};
++    cmdbuf.pipelineBarrier2(vk::DependencyInfo{
++        .bufferMemoryBarrierCount = static_cast<u32>(pre_barriers.size()),
++        .pBufferMemoryBarriers = pre_barriers.data(),
++    });
++
++    const vk::DescriptorBufferInfo scratch_info = {
++        .buffer = counter_scratch.Handle(),
++        .offset = 0,
++        .range = VK_WHOLE_SIZE,
++    };
++    const vk::DescriptorBufferInfo predicate_info = {
++        .buffer = predicate_buffer.Handle(),
++        .offset = 0,
++        .range = VK_WHOLE_SIZE,
++    };
++    const std::array<vk::WriteDescriptorSet, 2> writes = {{
++        {
++            .dstSet = VK_NULL_HANDLE,
++            .dstBinding = 0,
++            .descriptorCount = 1,
++            .descriptorType = vk::DescriptorType::eStorageBuffer,
++            .pBufferInfo = &scratch_info,
++        },
++        {
++            .dstSet = VK_NULL_HANDLE,
++            .dstBinding = 1,
++            .descriptorCount = 1,
++            .descriptorType = vk::DescriptorType::eStorageBuffer,
++            .pBufferInfo = &predicate_info,
++        },
++    }};
++    cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *reduce_pipeline);
++    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *reduce_pipeline_layout, 0,
++                                writes);
++    const ReducePushConstants push_constants = {
++        .src_index = src_index,
++        .count = count,
++        .dst_index = dst_slot,
++        .combine = combine_on_gpu ? 1u : 0u,
++    };
++    cmdbuf.pushConstants(*reduce_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0,
++                         sizeof(push_constants), &push_constants);
++    cmdbuf.dispatch(1, 1, 1);
++
++    RecordBufferBarrier(cmdbuf,
++                        MakeBufferBarrier(predicate_buffer.Handle(),
++                                          vk::PipelineStageFlagBits2::eComputeShader,
++                                          vk::AccessFlagBits2::eShaderWrite,
++                                          vk::PipelineStageFlagBits2::eConditionalRenderingEXT |
++                                              vk::PipelineStageFlagBits2::eAllTransfer,
++                                          vk::AccessFlagBits2::eConditionalRenderingReadEXT |
++                                              vk::AccessFlagBits2::eTransferRead));
++}
++
++} // namespace Vulkan
+diff --git a/src/video_core/renderer_vulkan/vk_predication.h b/src/video_core/renderer_vulkan/vk_predication.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..772982350c93011969690b3e5af375376c1fbb05
+--- /dev/null
++++ b/src/video_core/renderer_vulkan/vk_predication.h
+@@ -0,0 +1,144 @@
++// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#pragma once
++
++#include <array>
++#include <memory>
++#include <optional>
++#include <unordered_map>
++#include <vector>
++
++#include "common/types.h"
++#include "video_core/buffer_cache/buffer.h"
++
++namespace VideoCore {
++class BufferCache;
++}
++
++namespace Vulkan {
++
++class Instance;
++class Scheduler;
++
++/**
++ * Emulates IT_SET_PREDICATION and the pixel-pipe ZPASS statistics it consumes.
++ *
++ * On real hardware the CP evaluates the predicate when the predicated packets *execute*, long
++ * after they were queued (applications never wait for occlusion results before enabling
++ * predication). To match that without stalling, the predicate is built on the GPU timeline:
++ * per-draw occlusion queries are reduced into a predicate buffer by a small compute pass and
++ * predicated draws are wrapped in VK_EXT_conditional_rendering. The CPU never waits for query
++ * results. Guest-visible ZPASS counter writeback is resolved asynchronously once the submission
++ * that produced the samples completes.
++ */
++class PredicationManager {
++public:
++    explicit PredicationManager(const Instance& instance, Scheduler& scheduler,
++                                VideoCore::BufferCache& buffer_cache);
++
++    /// Handles PIXEL_PIPE_STAT_CONTROL: toggles perfect ZPASS sample counting.
++    void ControlZpassCounting();
++
++    /// Handles PIXEL_PIPE_STAT_RESET: clears the accumulated ZPASS sample counter.
++    void ResetZpassCounting();
++
++    /// Handles a ZPASS_DONE pixel-pipe stat dump. Captures the queries recorded since the last
++    /// dump and schedules the guest counter writeback for when their results are available.
++    void DumpZpassCounters(VAddr address, u32 num_counter_pairs);
++
++    /// Enables predication from the ZPASS delta of an occlusion query results block.
++    void EnableFromZpass(VAddr address, u32 num_counter_pairs, bool draw_visible, bool combine);
++
++    /// Enables predication from a 32/64-bit boolean in guest memory, read on the GPU timeline.
++    void EnableFromBool(VAddr address, bool is_64bit, bool draw_visible, bool combine);
++
++    /// Disables predication; packets execute unconditionally.
++    void Disable();
++
++    /// Returns true when predicated packets must be skipped during command processing. Only
++    /// possible when the predicate value is already final; GPU-side predicates never skip here.
++    bool ShouldSkipPredicatedPacket() const {
++        return mode == Mode::Static && !static_execute;
++    }
++
++    /// Returns true when predicated draws must be wrapped in conditional rendering.
++    bool IsGpuPredicationActive() const {
++        return mode == Mode::Gpu;
++    }
++
++    /// Acquires and resets an occlusion query slot for the next draw when counting is active.
++    std::optional<u32> PrepareDrawQuery();
++
++    /// Begins conditional rendering and/or the draw's occlusion query.
++    void BeginDraw(vk::CommandBuffer cmdbuf, std::optional<u32> query, bool packet_predicated);
++
++    /// Ends the draw's occlusion query and/or conditional rendering.
++    void EndDraw(vk::CommandBuffer cmdbuf, std::optional<u32> query, bool packet_predicated);
++
++private:
++    enum class Mode {
++        Disabled, ///< No predication; packets execute normally.
++        Static,   ///< Predicate value is final; decision applied while parsing packets.
++        Gpu,      ///< Predicate lives in the predicate buffer; draws use conditional rendering.
++    };
++
++    /// Queries captured between two pixel-pipe stat dumps, keyed by the dump address.
++    struct DumpRecord {
++        VAddr address{};
++        u32 num_counter_pairs{};
++        std::vector<u32> queries;
++        bool poisoned{};
++    };
++
++    std::optional<u32> AcquireQuerySlot();
++    void ReleaseQuerySlotsWhenDone(std::vector<u32>&& slots);
++    void ResolveRecord(const DumpRecord& record);
++    void WriteGuestCounters(VAddr address, u32 num_counter_pairs, u64 counter) const;
++    std::optional<bool> ReadGuestZpass(VAddr address, u32 num_counter_pairs) const;
++
++    void SetStatic(std::optional<bool> visible, bool draw_visible, bool combine);
++    void BuildFromQueries(const std::vector<u32>& queries, bool draw_visible, bool combine);
++    /// Picks (and seeds, when combining) the predicate slot the reduction writes into.
++    u32 SelectPredicateSlot(vk::CommandBuffer cmdbuf, bool combine, bool& combine_on_gpu);
++    void ActivateGpuPredicate(u32 slot, bool draw_visible);
++    u32 AllocPredicateSlot();
++    u32 AllocScratchQwords(u32 count);
++    void ReducePredicate(u32 src_index, u32 count, u32 dst_slot, bool combine_on_gpu);
++
++    const Instance& instance;
++    Scheduler& scheduler;
++    VideoCore::BufferCache& buffer_cache;
++    bool supported{};
++
++    // ZPASS sample counting.
++    static constexpr u32 QueryPoolSize = 4096;
++    vk::UniqueQueryPool query_pool;
++    std::array<bool, QueryPoolSize> query_busy{};
++    u32 query_cursor{};
++    bool counting_enabled{};
++    bool active_poisoned{};
++    std::vector<u32> active_queries;
++    std::unordered_map<VAddr, std::shared_ptr<DumpRecord>> records;
++    u64 zpass_counter{};
++
++    // GPU predicate generation.
++    static constexpr u32 NumPredicateSlots = 1024;
++    static constexpr u32 NumScratchQwords = 8192;
++    VideoCore::Buffer predicate_buffer;
++    VideoCore::Buffer counter_scratch;
++    u32 predicate_cursor{};
++    u32 scratch_cursor{};
++    vk::UniqueDescriptorSetLayout reduce_desc_layout;
++    vk::UniquePipelineLayout reduce_pipeline_layout;
++    vk::UniquePipeline reduce_pipeline;
++
++    // Current predication state.
++    Mode mode{Mode::Disabled};
++    bool static_execute{true};
++    std::optional<bool> static_visible;
++    u32 gpu_slot{};
++    bool gpu_inverted{};
++};
++
++} // namespace Vulkan
+diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.cpp b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+index 99db69505bd3b5e34e5e49251a9b94955f51f081..c5a026284bd386dc6fab59d7a971b8a535b24fd1 100644
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@ -1,6 +1,8 @@
+ // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
++#include <algorithm>
++
+ #include "common/debug.h"
+ #include "core/emulator_settings.h"
+ #include "core/memory.h"
+@@ -44,7 +46,8 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_,
+       buffer_cache{instance, scheduler, liverpool_, texture_cache, page_manager},
+       texture_cache{instance, scheduler, liverpool_, buffer_cache, page_manager},
+       liverpool{liverpool_}, memory{Core::Memory::Instance()},
+-      pipeline_cache{instance, scheduler, liverpool} {
++      pipeline_cache{instance, scheduler, liverpool},
++      predication{instance, scheduler, buffer_cache} {
+     if (!EmulatorSettings.IsNullGPU()) {
+         liverpool->BindRasterizer(this);
+     }
+@@ -220,6 +223,8 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
+ 
+     pipeline->BindResources(set_writes, buffer_barriers, push_data);
+     UpdateDynamicState(pipeline, is_indexed);
++    const auto zpass_query = predication.PrepareDrawQuery();
++    const bool predicated = liverpool->IsPacketPredicated();
+     scheduler.BeginRendering(state);
+ 
+     const auto& vs_info = pipeline->GetStage(Shader::LogicalStage::Vertex);
+@@ -228,6 +233,7 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
+ 
+     const auto cmdbuf = scheduler.CommandBuffer();
+     cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->Handle());
++    predication.BeginDraw(cmdbuf, zpass_query, predicated);
+ 
+     if (is_indexed) {
+         cmdbuf.drawIndexed(regs.num_indices, regs.num_instances.NumInstances(), 0,
+@@ -237,6 +243,7 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
+                     instance_offset);
+     }
+ 
++    predication.EndDraw(cmdbuf, zpass_query, predicated);
+     ResetBindings();
+     RetireIsolatedReadConstSnapshots();
+ }
+@@ -278,6 +285,8 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
+ 
+     pipeline->BindResources(set_writes, buffer_barriers, push_data);
+     UpdateDynamicState(pipeline, is_indexed);
++    const auto zpass_query = predication.PrepareDrawQuery();
++    const bool predicated = liverpool->IsPacketPredicated();
+     scheduler.BeginRendering(state);
+ 
+     // We can safely ignore both SGPR UD indices and results of fetch shader parsing, as vertex and
+@@ -285,6 +294,7 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
+ 
+     const auto cmdbuf = scheduler.CommandBuffer();
+     cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->Handle());
++    predication.BeginDraw(cmdbuf, zpass_query, predicated);
+ 
+     if (is_indexed) {
+         ASSERT(sizeof(VkDrawIndexedIndirectCommand) == stride);
+@@ -306,6 +316,7 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
+         }
+     }
+ 
++    predication.EndDraw(cmdbuf, zpass_query, predicated);
+     ResetBindings();
+     RetireIsolatedReadConstSnapshots();
+ }
+@@ -333,9 +344,12 @@ void Rasterizer::DispatchDirect() {
+     scheduler.EndRendering();
+     pipeline->BindResources(set_writes, buffer_barriers, push_data);
+ 
++    const bool predicated = liverpool->IsPacketPredicated();
+     const auto cmdbuf = scheduler.CommandBuffer();
+     cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline->Handle());
++    predication.BeginDraw(cmdbuf, std::nullopt, predicated);
+     cmdbuf.dispatch(cs_program.dim_x, cs_program.dim_y, cs_program.dim_z);
++    predication.EndDraw(cmdbuf, std::nullopt, predicated);
+ 
+     ResetBindings();
+ }
+@@ -360,9 +374,12 @@ void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size) {
+     scheduler.EndRendering();
+     pipeline->BindResources(set_writes, buffer_barriers, push_data);
+ 
++    const bool predicated = liverpool->IsPacketPredicated();
+     const auto cmdbuf = scheduler.CommandBuffer();
+     cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline->Handle());
++    predication.BeginDraw(cmdbuf, std::nullopt, predicated);
+     cmdbuf.dispatchIndirect(buffer->Handle(), base);
++    predication.EndDraw(cmdbuf, std::nullopt, predicated);
+ 
+     ResetBindings();
+ }
+diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.h b/src/video_core/renderer_vulkan/vk_rasterizer.h
+index a1dc5fd35250455404fd3b1156101f12492d9d24..0b4f474a7d53ed7732f00d72d5b351fe1aafb4d9 100644
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.h
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.h
+@@ -3,6 +3,7 @@
+ 
+ #pragma once
+ 
++#include <array>
+ #include <memory>
+ #include <vector>
+ 
+@@ -13,6 +14,7 @@
+ #include "video_core/buffer_cache/buffer_cache.h"
+ #include "video_core/page_manager.h"
+ #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
++#include "video_core/renderer_vulkan/vk_predication.h"
+ #include "video_core/texture_cache/texture_cache.h"
+ 
+ namespace AmdGpu {
+@@ -70,6 +72,11 @@ public:
+     void UnmapMemory(VAddr addr, u64 size);
+ 
+     void CpSync();
++
++    PredicationManager& GetPredication() {
++        return predication;
++    }
++
+     u64 Flush();
+     void Finish();
+     void OnSubmit();
+@@ -157,6 +164,7 @@ private:
+     boost::container::small_vector<ImageBindingInfo, Shader::NUM_IMAGES> image_bindings;
+     bool fault_process_pending{};
+     bool attachment_feedback_loop{};
++    PredicationManager predication;
+ };
+ 
+ } // namespace Vulkan

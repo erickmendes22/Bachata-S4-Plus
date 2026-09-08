@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: gow3-v20-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-v20:
     runs-on: ubuntu-24.04
@@ -72,12 +76,12 @@ jobs:
 
           hydrate_repo "." 0
 
-      - name: Apply and auto-resolve real predication port
+      - name: Apply reviewed ARM64 predication port
         shell: bash
         working-directory: source
         run: |
           bash ../control/runtime/v20/apply-full-predication.sh
-          git diff --stat
+          git diff --cached --stat
 
       - name: Build V20 AArch64/FEX
         shell: bash
@@ -100,13 +104,22 @@ jobs:
         run: |
           set -euo pipefail
           cd source
-          CORE="$(find runtime/build -type f             \( -name 'shadps4-arm64-fex' -o -name 'shadps4-arm64' -o -name 'shadps4' \)             -size +10M | head -n1)"
-          test -n "$CORE"
+          CORE=runtime/build/shadps4-arm64-stage/bin/shadps4-arm64
           test -s "$CORE"
           file "$CORE"
-          readelf -h "$CORE" | grep -E 'ELF64|AArch64'
+          HEADER="$(readelf -h "$CORE")"
+          grep -Eq 'Class:[[:space:]]+ELF64' <<< "$HEADER"
+          grep -Eq 'Machine:[[:space:]]+AArch64' <<< "$HEADER"
           cp "$CORE" "$GITHUB_WORKSPACE/shadps4-arm64-fex"
-          sha256sum "$GITHUB_WORKSPACE/shadps4-arm64-fex"             | tee "$GITHUB_WORKSPACE/V20-shadps4-arm64-fex.sha256"
+          cp runtime/build/shadps4-arm64-stage/needed.txt "$GITHUB_WORKSPACE/V20-needed.txt"
+          sha256sum "$GITHUB_WORKSPACE/shadps4-arm64-fex" \
+            | tee "$GITHUB_WORKSPACE/V20-shadps4-arm64-fex.sha256"
+          {
+            echo "source_commit=$(git rev-parse HEAD)"
+            echo "control_commit=${{ github.sha }}"
+            echo "predication_upstream=3559530df5aec4067a95912af13ef14896b65ada"
+            sha256sum ../control/runtime/v20/full-predication-arm64.patch
+          } > "$GITHUB_WORKSPACE/V20-build-info.txt"
 
       - name: Upload V20 compiled core
         uses: actions/upload-artifact@v7
@@ -115,6 +128,8 @@ jobs:
           path: |
             shadps4-arm64-fex
             V20-shadps4-arm64-fex.sha256
+            V20-needed.txt
+            V20-build-info.txt
           if-no-files-found: error
           retention-days: 7
 
