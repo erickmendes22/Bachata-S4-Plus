@@ -1,3 +1,4 @@
+\
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -7,12 +8,10 @@ UPSTREAM_URL=https://github.com/shadps4-emu/shadPS4.git
 git remote remove shadps4-upstream >/dev/null 2>&1 || true
 git remote add shadps4-upstream "$UPSTREAM_URL"
 
-# Critical: do NOT recurse into submodules while fetching the upstream commit.
-# The ARM64 fork has stale nested submodule pins (e.g. libusb/rapidjson/SPIRV-Headers)
-# that are irrelevant to applying this source commit and can abort the fetch.
-git -c fetch.recurseSubmodules=false     fetch --no-tags --no-recurse-submodules shadps4-upstream "$PATCH_COMMIT"
+git -c fetch.recurseSubmodules=false \
+    fetch --no-tags --no-recurse-submodules \
+    shadps4-upstream "$PATCH_COMMIT"
 
-# Apply only the source diff. Do not recurse into submodules.
 if ! git -c submodule.recurse=false cherry-pick --no-commit "$PATCH_COMMIT"; then
   echo "V20: upstream predication commit did not apply cleanly." >&2
   git status --short >&2 || true
