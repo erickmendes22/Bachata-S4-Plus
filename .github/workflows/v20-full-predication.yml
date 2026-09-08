@@ -1,0 +1,63 @@
+name: V20 Full Predication ARM64/FEX
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-v20:
+    # Use x64 because Bachata's runtime build script intentionally cross-compiles
+    # AArch64 inside a Debian Trixie multiarch environment.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout ARM64 fork with all submodules
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Apply shadPS4 real conditional-rendering predication
+        shell: bash
+        run: |
+          bash runtime/v20/apply-full-predication.sh
+          git diff --stat
+
+      - name: Build V20 AArch64/FEX inside Debian Trixie
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            -e BACHATA_INSIDE_DEBIAN_CONTAINER=1 \
+            debian:trixie \
+            bash -lc '
+              set -euo pipefail
+              bash runtime/scripts/install-debian-runtime-deps.sh
+              bash runtime/scripts/build-shadps4-arm64.sh
+            '
+
+      - name: Verify compiled core
+        shell: bash
+        run: |
+          CORE=runtime/build/shadps4-arm64-stage/bin/shadps4-arm64
+          test -s "$CORE"
+          file "$CORE"
+          readelf -h "$CORE" | grep -E 'ELF64|AArch64'
+          readelf -l "$CORE" | grep '/lib/ld-linux-aarch64.so.1'
+          sha256sum "$CORE" | tee V20-shadps4-arm64-fex.sha256
+          cp "$CORE" shadps4-arm64-fex
+
+      - name: Upload V20 compiled core
+        uses: actions/upload-artifact@v7
+        with:
+          name: GOW3-V20-FULL-PREDICATION-shadps4-arm64-fex
+          path: |
+            shadps4-arm64-fex
+            V20-shadps4-arm64-fex.sha256
+          if-no-files-found: error
+          retention-days: 7
+          
