@@ -1,4 +1,4 @@
-name: V20E Predication + Black Screen Recovery ARM64/FEX
+name: V20F Predication + Frame Format Isolation ARM64/FEX
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: gow3-v20e-${{ github.ref }}
+  group: gow3-v20f-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [blankfix, parent-presenter-texture]
+        variant: [formatonly, format-blankfix]
     name: build-${{ matrix.variant }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -78,7 +78,7 @@ jobs:
 
           hydrate_repo "." 0
 
-      - name: Apply V20E hybrid renderer + real predication
+      - name: Apply V20F minimal frame-output port + real predication
         shell: bash
         working-directory: source
         env:
@@ -87,7 +87,7 @@ jobs:
           bash ../control/runtime/v20/apply-full-predication.sh
           git diff --cached --stat
 
-      - name: Build V20E AArch64/FEX
+      - name: Build V20F AArch64/FEX
         shell: bash
         run: |
           docker run --rm \
@@ -117,29 +117,28 @@ jobs:
           grep -Eq 'Machine:[[:space:]]+AArch64' <<< "$HEADER"
 
           cp "$CORE" "$GITHUB_WORKSPACE/shadps4-arm64-fex"
-          cp runtime/build/shadps4-arm64-stage/needed.txt "$GITHUB_WORKSPACE/V20E-needed.txt"
-          sha256sum "$GITHUB_WORKSPACE/shadps4-arm64-fex" | tee "$GITHUB_WORKSPACE/V20E-shadps4-arm64-fex.sha256"
+          cp runtime/build/shadps4-arm64-stage/needed.txt "$GITHUB_WORKSPACE/V20F-needed.txt"
+          sha256sum "$GITHUB_WORKSPACE/shadps4-arm64-fex" | tee "$GITHUB_WORKSPACE/V20F-shadps4-arm64-fex.sha256"
 
           {
             echo "variant=$V20_VARIANT"
             echo "source_commit=$(git rev-parse HEAD)"
             echo "control_commit=${{ github.sha }}"
             echo "predication_upstream=3559530df5aec4067a95912af13ef14896b65ada"
-            echo "parent_renderer=388cff5177f82e75a667d529212d34f3c255b7fc"
             echo "official_021_binary_build_id=4ae158bf466fa2fe6d80e13b5538a302af90fbb2"
             readelf -n "$CORE" | grep -m1 'Build ID:' || true
             echo '--- key symbol sizes ---'
             nm -S -C "$CORE" | grep -E 'Presenter::(PrepareFrame|Present\(|PrepareBlankFrame)|TextureCache::(RefreshImage|FindImage|ResolveOverlap)|VideoOutDriver::SubmitFlipInternal' || true
-          } > "$GITHUB_WORKSPACE/V20E-build-info.txt"
+          } > "$GITHUB_WORKSPACE/V20F-build-info.txt"
 
-      - name: Upload V20E compiled core
+      - name: Upload V20F compiled core
         uses: actions/upload-artifact@v7
         with:
-          name: GOW3-V20E-${{ matrix.variant }}-shadps4-arm64-fex
+          name: GOW3-V20F-${{ matrix.variant }}-shadps4-arm64-fex
           path: |
             shadps4-arm64-fex
-            V20E-shadps4-arm64-fex.sha256
-            V20E-needed.txt
-            V20E-build-info.txt
+            V20F-shadps4-arm64-fex.sha256
+            V20F-needed.txt
+            V20F-build-info.txt
           if-no-files-found: error
           retention-days: 7
