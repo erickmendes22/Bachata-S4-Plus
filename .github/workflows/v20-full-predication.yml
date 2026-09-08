@@ -2,6 +2,11 @@ name: V20 Full Predication ARM64/FEX
 
 on:
   workflow_dispatch:
+  push:
+    branches: [codex/gow3-v20-build]
+    paths:
+      - .github/workflows/v20-full-predication.yml
+      - runtime/v20/**
 
 permissions:
   contents: read
@@ -21,6 +26,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: zenithblue-oss/shadps4-arm64
+          ref: be6bc2e9c60799e071dd2fafa6216e8d80ec619c
           fetch-depth: 0
           submodules: false
           path: source
@@ -79,12 +85,13 @@ jobs:
           docker run --rm             -v "$GITHUB_WORKSPACE/source:/workspace"             -w /workspace             -e BACHATA_INSIDE_DEBIAN_CONTAINER=1             debian:trixie             bash -lc '
               set -euo pipefail
 
+              # Install Git and the compiler before invoking either.
+              bash runtime/scripts/install-debian-runtime-deps.sh
+
               # The GitHub runner owns the bind-mounted repositories, while the
               # Debian container builds as root. Git otherwise rejects nested
               # repos such as externals/ffmpeg-core as "dubious ownership".
               git config --global --add safe.directory "*"
-
-              bash runtime/scripts/install-debian-runtime-deps.sh
               bash runtime/scripts/build-shadps4-arm64.sh
             '
 
@@ -110,3 +117,4 @@ jobs:
             V20-shadps4-arm64-fex.sha256
           if-no-files-found: error
           retention-days: 7
+
