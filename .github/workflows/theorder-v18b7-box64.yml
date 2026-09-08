@@ -71,7 +71,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             ninja-build clang cmake pkg-config \
-            libx11-dev libxext-dev libxcursor-dev libxrandr-dev libxi-dev libxinerama-dev libxss-dev \
+            libx11-dev libxext-dev libxcursor-dev libxrandr-dev libxi-dev libxinerama-dev libxss-dev libxtst-dev \
             libwayland-dev libxkbcommon-dev libpulse-dev libasound2-dev libudev-dev \
             libunwind-dev libssl-dev libzstd-dev libedit-dev libgl-dev libvulkan-dev
 
