@@ -78,6 +78,12 @@ jobs:
         run: |
           docker run --rm             -v "$GITHUB_WORKSPACE/source:/workspace"             -w /workspace             -e BACHATA_INSIDE_DEBIAN_CONTAINER=1             debian:trixie             bash -lc '
               set -euo pipefail
+
+              # The GitHub runner owns the bind-mounted repositories, while the
+              # Debian container builds as root. Git otherwise rejects nested
+              # repos such as externals/ffmpeg-core as "dubious ownership".
+              git config --global --add safe.directory "*"
+
               bash runtime/scripts/install-debian-runtime-deps.sh
               bash runtime/scripts/build-shadps4-arm64.sh
             '
