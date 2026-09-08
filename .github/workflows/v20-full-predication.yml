@@ -34,11 +34,8 @@ jobs:
           hydrate_repo() {
             local root="$1"
             local depth="$2"
-
             (( depth > 5 )) && return 0
             [[ -f "$root/.gitmodules" ]] || return 0
-
-            echo "=== Hydrating $root (depth $depth) ==="
 
             while read -r key path; do
               local name="${key#submodule.}"
@@ -48,44 +45,28 @@ jobs:
               url="$(git -C "$root" config -f .gitmodules --get "submodule.$name.url" || true)"
               branch="$(git -C "$root" config -f .gitmodules --get "submodule.$name.branch" || true)"
               target="$root/$path"
-
               [[ -n "$url" ]] || continue
 
-              echo "--> $target"
               git -C "$root" -c submodule.recurse=false submodule sync -- "$path" || true
 
-              if git -C "$root" -c submodule.recurse=false \
-                   submodule update --init --depth 1 -- "$path"; then
-                echo "Pinned checkout OK: $target"
-              else
-                echo "Pinned checkout failed: $target"
+              if ! git -C "$root" -c submodule.recurse=false                     submodule update --init --depth 1 -- "$path"; then
                 rm -rf "$target"
-
                 if [[ -n "$branch" ]]; then
-                  echo "Fallback clone: $url branch=$branch"
-                  git clone --depth 1 --branch "$branch" "$url" "$target" || \
-                  git clone --depth 1 "$url" "$target"
+                  git clone --depth 1 --branch "$branch" "$url" "$target" ||                   git clone --depth 1 "$url" "$target"
                 else
-                  echo "Fallback clone: $url default branch"
                   git clone --depth 1 "$url" "$target"
                 fi
               fi
 
-              if [[ -d "$target" ]]; then
-                hydrate_repo "$target" "$((depth + 1))" || true
-              fi
+              [[ -d "$target" ]] && hydrate_repo "$target" "$((depth + 1))" || true
             done < <(
-              git -C "$root" config -f .gitmodules \
-                --get-regexp '^submodule\..*\.path$' 2>/dev/null || true
+              git -C "$root" config -f .gitmodules                 --get-regexp '^submodule\..*\.path$' 2>/dev/null || true
             )
           }
 
           hydrate_repo "." 0
 
-          echo "=== First-level submodule status ==="
-          git submodule status || true
-
-      - name: Apply real conditional-rendering predication
+      - name: Apply and auto-resolve real predication port
         shell: bash
         working-directory: source
         run: |
@@ -95,61 +76,9 @@ jobs:
       - name: Build V20 AArch64/FEX
         shell: bash
         run: |
-          set -euo pipefail
-
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/source:/workspace" \
-            -w /workspace \
-            -e BACHATA_INSIDE_DEBIAN_CONTAINER=1 \
-            debian:trixie \
-            bash -lc '
+          docker run --rm             -v "$GITHUB_WORKSPACE/source:/workspace"             -w /workspace             -e BACHATA_INSIDE_DEBIAN_CONTAINER=1             debian:trixie             bash -lc '
               set -euo pipefail
               bash runtime/scripts/install-debian-runtime-deps.sh
-
-              # First attempt.
-              if bash runtime/scripts/build-shadps4-arm64.sh; then
-                exit 0
-              fi
-
-              echo
-              echo "=== First build failed; repairing nested submodules once more ==="
-
-              repair_nested() {
-                local root="$1"
-                [[ -f "$root/.gitmodules" ]] || return 0
-
-                while read -r key path; do
-                  local name="${key#submodule.}"
-                  name="${name%.path}"
-                  local url branch target
-
-                  url="$(git -C "$root" config -f .gitmodules --get "submodule.$name.url" || true)"
-                  branch="$(git -C "$root" config -f .gitmodules --get "submodule.$name.branch" || true)"
-                  target="$root/$path"
-                  [[ -n "$url" ]] || continue
-
-                  if [[ ! -e "$target/.git" && ! -f "$target/.git" ]]; then
-                    rm -rf "$target"
-                    if [[ -n "$branch" ]]; then
-                      git clone --depth 1 --branch "$branch" "$url" "$target" || \
-                      git clone --depth 1 "$url" "$target"
-                    else
-                      git clone --depth 1 "$url" "$target"
-                    fi
-                  fi
-
-                  repair_nested "$target" || true
-                done < <(
-                  git -C "$root" config -f .gitmodules \
-                    --get-regexp "^submodule\\..*\\.path$" 2>/dev/null || true
-                )
-              }
-
-              repair_nested /workspace
-
-              rm -rf runtime/build/shadps4-arm64 \
-                     runtime/build/shadps4-arm64-stage
-
               bash runtime/scripts/build-shadps4-arm64.sh
             '
 
@@ -158,21 +87,13 @@ jobs:
         run: |
           set -euo pipefail
           cd source
-
-          CORE="$(find runtime/build -type f \
-            \( -name 'shadps4-arm64-fex' -o -name 'shadps4-arm64' -o -name 'shadps4' \) \
-            -size +10M | head -n1)"
-
+          CORE="$(find runtime/build -type f             \( -name 'shadps4-arm64-fex' -o -name 'shadps4-arm64' -o -name 'shadps4' \)             -size +10M | head -n1)"
           test -n "$CORE"
           test -s "$CORE"
-
-          echo "Compiled core: $CORE"
           file "$CORE"
           readelf -h "$CORE" | grep -E 'ELF64|AArch64'
-
           cp "$CORE" "$GITHUB_WORKSPACE/shadps4-arm64-fex"
-          sha256sum "$GITHUB_WORKSPACE/shadps4-arm64-fex" \
-            | tee "$GITHUB_WORKSPACE/V20-shadps4-arm64-fex.sha256"
+          sha256sum "$GITHUB_WORKSPACE/shadps4-arm64-fex"             | tee "$GITHUB_WORKSPACE/V20-shadps4-arm64-fex.sha256"
 
       - name: Upload V20 compiled core
         uses: actions/upload-artifact@v7
@@ -183,4 +104,3 @@ jobs:
             V20-shadps4-arm64-fex.sha256
           if-no-files-found: error
           retention-days: 7
-          
