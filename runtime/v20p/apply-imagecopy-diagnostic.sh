@@ -29,6 +29,9 @@ diag=r'''    const auto& src_info = src_image.info;
     static u64 p20_id_gen{};
     static u64 p20_lines{};
     const u64 p20_id = ++p20_id_gen;
+    if (p20_id == 1) {
+        LOG_WARNING(Render_Vulkan, "P20 ACTIVE revision=2 CopyImage diagnostics reached");
+    }
     const auto p20_sl = src_image.backing->state.layout;
     const auto p20_dl = backing->state.layout;
     const auto p20_sa = src_image.aspect_mask & ~vk::ImageAspectFlagBits::eStencil;
@@ -69,8 +72,8 @@ diag=r'''    const auto& src_info = src_image.info;
           "ALIAS_BACKING={} SAME_ADDRESS_DIFFERENT_TILING={} RANGE_OOB={}",
           p20_id,src_image.image_uid,image_uid,src_info.guest_address,src_info.guest_size,
           info.guest_address,info.guest_size,vk::to_string(src_info.pixel_format),
-          vk::to_string(info.pixel_format),src_info.props.is_depth,info.props.is_depth,
-          src_info.props.has_stencil,info.props.has_stencil,
+          vk::to_string(info.pixel_format),static_cast<bool>(src_static_cast<bool>(info.props.is_depth)),static_cast<bool>(info.props.is_depth),
+          static_cast<bool>(src_static_cast<bool>(info.props.has_stencil)),static_cast<bool>(info.props.has_stencil),
           static_cast<VkImageAspectFlags>(p20_sa),static_cast<VkImageAspectFlags>(p20_da),
           src_info.size.width,src_info.size.height,src_info.size.depth,
           info.size.width,info.size.height,info.size.depth,src_info.pitch,info.pitch,
@@ -79,9 +82,9 @@ diag=r'''    const auto& src_info = src_image.info;
           info.resources.layers,src_info.num_samples,info.num_samples,
           vk::to_string(p20_sl),vk::to_string(p20_dl),static_cast<u32>(src_image.flags),
           static_cast<u32>(flags),static_cast<VkImageUsageFlags>(src_image.usage_flags),
-          static_cast<VkImageUsageFlags>(usage_flags),src_image.binding.is_bound,
-          src_image.binding.is_target,src_image.binding.needs_rebind,src_image.binding.force_general,
-          binding.is_bound,binding.is_target,binding.needs_rebind,binding.force_general,
+          static_cast<VkImageUsageFlags>(usage_flags),static_cast<u32>(src_image.binding.is_bound),
+          static_cast<u32>(src_image.binding.is_target),static_cast<u32>(src_image.binding.needs_rebind),static_cast<u32>(src_image.binding.force_general),
+          static_cast<u32>(binding.is_bound),static_cast<u32>(binding.is_target),static_cast<u32>(binding.needs_rebind),static_cast<u32>(binding.force_general),
           p20_fmt,p20_aspect,p20_layers,p20_mips,p20_samples,p20_cd,p20_stencil,p20_23,p20_32,
           p20_extent,p20_alias,p20_same_tile,p20_oob);
     }
@@ -89,6 +92,23 @@ diag=r'''    const auto& src_info = src_image.info;
 '''
 if anchor not in f: raise SystemExit('V20P: src_info anchor missing')
 f=f.replace(anchor,diag,1)
+
+region_anchor = '        regions.push_back(region);'
+region_trace = r'''        if (p20_emit) {
+            LOG_WARNING(Render_Vulkan,
+                "P20 REGION id={} mip={} src_layer={}+{} dst_layer={}+{} "
+                "src_offset={},{},{} dst_offset={},{},{} extent={}x{}x{}",
+                p20_id, mip,
+                region.srcSubresource.baseArrayLayer, region.srcSubresource.layerCount,
+                region.dstSubresource.baseArrayLayer, region.dstSubresource.layerCount,
+                region.srcOffset.x, region.srcOffset.y, region.srcOffset.z,
+                region.dstOffset.x, region.dstOffset.y, region.dstOffset.z,
+                region.extent.width, region.extent.height, region.extent.depth);
+        }
+        regions.push_back(region);'''
+if f.count(region_anchor) != 1: raise SystemExit('V20P region anchor mismatch')
+f=f.replace(region_anchor,region_trace,1)
+
 s=s[:a]+f+s[b:]
 p.write_text(s)
 PY
