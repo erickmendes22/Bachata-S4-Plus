@@ -111,9 +111,17 @@ f=f.replace(region_anchor,region_trace,1)
 
 s=s[:a]+f+s[b:]
 p.write_text(s)
+
+p=Path('src/emulator.cpp')
+s=p.read_text()
+anchor='    LOG_INFO(Config, "GPU shouldCopyGPUBuffers: {}", EmulatorSettings.IsCopyGpuBuffers());'
+if s.count(anchor) != 1: raise SystemExit('V20P boot marker anchor mismatch')
+s=s.replace(anchor, anchor + '\n    LOG_WARNING(Render_Vulkan, "P20 BOOT revision=2 source-diagnostic-enabled");', 1)
+p.write_text(s)
+
 PY
 
-git add src/video_core/texture_cache/image.cpp
+git add src/video_core/texture_cache/image.cpp src/emulator.cpp
 git diff --cached --check
 grep -q 'V20H ZPASS fail-open' src/video_core/amdgpu/liverpool.cpp
 grep -q 'P20 COPY id=' src/video_core/texture_cache/image.cpp
