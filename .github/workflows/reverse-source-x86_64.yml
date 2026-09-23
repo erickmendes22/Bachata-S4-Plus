@@ -1,0 +1,62 @@
+name: Reverse source x86-64 CI
+
+on:
+  push:
+    branches:
+      - reverse-source/box64-order1886
+    paths:
+      - 'reverse_source/**'
+      - '.github/workflows/reverse-source-x86_64.yml'
+  pull_request:
+    paths:
+      - 'reverse_source/**'
+      - '.github/workflows/reverse-source-x86_64.yml'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit reconstructed invariants
+        run: python3 reverse_source/tools/validate_reconstruction.py
+
+  x86_64-reference-compile:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host compiler dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ libboost-dev libfmt-dev
+
+      - name: Checkout public reference SDK
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/shadps4-emu/shadPS4.git _reference/shadps4
+          cd _reference/shadps4
+          git checkout 7db6e4ba56b98841624ab776aaa56763f10bdc89
+          git submodule update --init --depth 1 externals/sirit externals/Vulkan-Headers externals/magic_enum externals/fmt
+
+      - name: Configure reconstructed layer
+        run: |
+          cmake -S reverse_source -B build/reverse_source -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DBACHATA_REFERENCE_ROOT="${GITHUB_WORKSPACE}/_reference/shadps4"
+
+      - name: Compile reconstructed x86-64 layer
+        run: cmake --build build/reverse_source --target bachata_reverse_patches -j2
+
+      - name: Record architecture
+        run: |
+          file build/reverse_source/libbachata_reverse_patches.a
+          mkdir -p out
+          cp build/reverse_source/libbachata_reverse_patches.a out/
+          printf '%s\n' "reference_commit=7db6e4ba56b98841624ab776aaa56763f10bdc89" > out/build-info.txt
+          printf '%s\n' "host_arch=$(uname -m)" >> out/build-info.txt
+          printf '%s\n' "source_commit=${GITHUB_SHA}" >> out/build-info.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bachata-reverse-source-x86_64-layer
+          path: out/
