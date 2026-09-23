@@ -27,6 +27,7 @@ if(BACHATA_REFERENCE_ROOT)
         "${BACHATA_REFERENCE_ROOT}/externals/vulkan-headers/include"
         "${BACHATA_REFERENCE_ROOT}/externals/magic_enum/include"
         "${BACHATA_REFERENCE_ROOT}/externals/fmt/include"
+        "${BACHATA_REFERENCE_ROOT}/externals/spdlog/include"
     )
     target_compile_definitions(bachata_reverse_patches PRIVATE
         BACHATA_REFERENCE_COMPILE=1
