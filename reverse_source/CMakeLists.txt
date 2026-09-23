@@ -24,7 +24,7 @@ if(BACHATA_REFERENCE_ROOT)
     target_include_directories(bachata_reverse_patches PRIVATE
         "${BACHATA_REFERENCE_ROOT}/src"
         "${BACHATA_REFERENCE_ROOT}/externals/sirit/include"
-        "${BACHATA_REFERENCE_ROOT}/externals/Vulkan-Headers/include"
+        "${BACHATA_REFERENCE_ROOT}/externals/vulkan-headers/include"
         "${BACHATA_REFERENCE_ROOT}/externals/magic_enum/include"
         "${BACHATA_REFERENCE_ROOT}/externals/fmt/include"
     )
