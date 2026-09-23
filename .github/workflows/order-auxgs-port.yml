@@ -87,6 +87,8 @@ jobs:
             debian:trixie \
             bash -lc '
               set -euo pipefail
+              apt-get update
+              apt-get install -y --no-install-recommends git ca-certificates curl
               git config --global --add safe.directory "*"
               bash runtime/scripts/install-debian-runtime-deps.sh
               bash runtime/scripts/build-shadps4-x86_64.sh
