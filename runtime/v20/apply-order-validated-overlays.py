@@ -18,7 +18,7 @@ def replace(path, old, new, count=1):
 p = SRC / "video_core/renderer_vulkan/vk_rasterizer.cpp"
 text = p.read_text(encoding="utf-8")
 if '#include "common/elf_info.h"' not in text:
-    anchor = '#include "common/assert.h"\n'
+    anchor = '#include "common/debug.h"\n'
     if anchor not in text:
         raise SystemExit("vk_rasterizer include anchor missing")
     text = text.replace(anchor, anchor + '#include "common/elf_info.h"\n', 1)
