@@ -35,7 +35,131 @@ jobs:
         run: |
           set -euo pipefail
           git config --global --add safe.directory "*"
-          git submodule update --init --recursive --jobs 8 || true
+
+          hydrate_repo() {
+            local root="$1"
+            local depth="$2"
+            (( depth > 5 )) && return 0
+            [[ -f "$root/.gitmodules" ]] || return 0
+
+            while read -r key path; do
+              local name="${key#submodule.}"
+              name="${name%.path}"
+              local url branch target
+
+              url="$(git -C "$root" config -f .gitmodules --get "submodule.$name.url" || true)"
+              branch="$(git -C "$root" config -f .gitmodules --get "submodule.$name.branch" || true)"
+              target="$root/$path"
+              [[ -n "$url" ]] || continue
+
+              git -C "$root" -c submodule.recurse=false submodule sync -- "$path" || true
+              if ! git -C "$root" -c submodule.recurse=false submodule update --init --depth 1 -- "$path"; then
+                rm -rf "$target"
+                if [[ -n "$branch" ]]; then
+                  git clone --depth 1 --branch "$branch" "$url" "$target" || git clone --depth 1 "$url" "$target"
+                else
+                  git clone --depth 1 "$url" "$target"
+                fi
+              fi
+
+              [[ -d "$target" ]] && hydrate_repo "$target" "$((depth + 1))" || true
+            done < <(
+              git -C "$root" config -f .gitmodules --get-regexp '^submodule\\..*\\.path
+      - name: Fetch upstream AUX-GS commit patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 \
+            https://github.com/shadps4-emu/shadPS4/commit/7db6e4ba56b98841624ab776aaa56763f10bdc89.patch \
+            -o "$GITHUB_WORKSPACE/auxgs.patch"
+          test -s "$GITHUB_WORKSPACE/auxgs.patch"
+          head -n 20 "$GITHUB_WORKSPACE/auxgs.patch"
+
+      - name: Apply AUX-GS port probe
+        id: apply
+        shell: bash
+        working-directory: source
+        run: |
+          set +e
+          git apply --reject --whitespace=nowarn \
+            --directory=runtime/sources/shadps4 \
+            "$GITHUB_WORKSPACE/auxgs.patch" \
+            >"$GITHUB_WORKSPACE/apply.stdout" 2>"$GITHUB_WORKSPACE/apply.stderr"
+          status=$?
+          git diff --stat >"$GITHUB_WORKSPACE/diff.stat" 2>&1
+          git diff >"$GITHUB_WORKSPACE/port.diff" 2>&1
+          find runtime/sources/shadps4 -name '*.rej' -print \
+            >"$GITHUB_WORKSPACE/rejects.list"
+          while read -r f; do
+            [ -n "$f" ] || continue
+            {
+              echo "===== $f ====="
+              cat "$f"
+              echo
+            } >>"$GITHUB_WORKSPACE/rejects.txt"
+          done <"$GITHUB_WORKSPACE/rejects.list"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_WORKSPACE/apply.stderr" || true
+          cat "$GITHUB_WORKSPACE/diff.stat" || true
+          exit $status
+
+      - name: Install and build x86-64 shadPS4
+        if: steps.apply.outputs.status == '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/source:/workspace" \
+            -w /workspace \
+            -e BACHATA_INSIDE_DEBIAN_CONTAINER=1 \
+            debian:trixie \
+            bash -lc '
+              set -euo pipefail
+              apt-get update
+              apt-get install -y --no-install-recommends git ca-certificates curl
+              git config --global --add safe.directory "*"
+              bash runtime/scripts/install-debian-runtime-deps.sh
+              bash runtime/scripts/build-shadps4-x86_64.sh
+            '
+
+      - name: Collect x86-64 core
+        if: steps.apply.outputs.status == '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          CORE="$(find source/runtime/build -type f -name shadps4 -size +10M | head -n1)"
+          test -n "$CORE"
+          file "$CORE" | tee "$GITHUB_WORKSPACE/core.file"
+          readelf -h "$CORE" | tee "$GITHUB_WORKSPACE/core.elf"
+          file "$CORE" | grep -E 'x86-64|x86_64'
+          cp "$CORE" "$GITHUB_WORKSPACE/shadps4-order-auxgs-x86_64"
+          sha256sum "$GITHUB_WORKSPACE/shadps4-order-auxgs-x86_64" \
+            | tee "$GITHUB_WORKSPACE/shadps4-order-auxgs-x86_64.sha256"
+
+      - name: Upload port diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: order-auxgs-port-probe
+          path: |
+            apply.stdout
+            apply.stderr
+            diff.stat
+            port.diff
+            rejects.list
+            rejects.txt
+            auxgs.patch
+            core.file
+            core.elf
+            shadps4-order-auxgs-x86_64
+            shadps4-order-auxgs-x86_64.sha256
+          if-no-files-found: warn
+          retention-days: 7
+ 2>/dev/null || true
+            )
+          }
+
+          hydrate_repo "runtime/sources/shadps4" 0
 
       - name: Fetch upstream AUX-GS commit patch
         shell: bash
