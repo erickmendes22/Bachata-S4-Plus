@@ -70,6 +70,16 @@ jobs:
 
           hydrate_repo "runtime/sources/shadps4" 0
 
+      - name: Apply external ImGui compatibility shim
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          FILE="runtime/sources/shadps4/externals/ImGuiFileDialog/ImGuiFileDialog.cpp"
+          grep -q 'NextWindowData.ChildFlagsSet' "$FILE"
+          sed -i 's/NextWindowData\.ChildFlagsSet/NextWindowData.ChildFlags/g' "$FILE"
+          grep -n 'NextWindowData.ChildFlags.*NavFlattened' "$FILE"
+
       - name: Fetch upstream AUX-GS commit patch
         shell: bash
         run: |
