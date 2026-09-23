@@ -36,7 +36,7 @@ jobs:
           git clone --filter=blob:none --no-checkout https://github.com/shadps4-emu/shadPS4.git _reference/shadps4
           cd _reference/shadps4
           git checkout 7db6e4ba56b98841624ab776aaa56763f10bdc89
-          git submodule update --init --depth 1 externals/sirit externals/Vulkan-Headers externals/magic_enum externals/fmt
+          git submodule update --init --depth 1 externals/sirit externals/vulkan-headers externals/magic_enum externals/fmt
 
       - name: Configure reconstructed layer
         run: |
