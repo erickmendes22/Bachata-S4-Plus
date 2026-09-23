@@ -3,7 +3,7 @@ name: Order AUX-GS port probe
 on:
   push:
     branches:
-      - order-auxgs-port
+      - order-auxgs-sdl-prexim
   workflow_dispatch:
 
 permissions:
@@ -69,6 +69,15 @@ jobs:
           }
 
           hydrate_repo "runtime/sources/shadps4" 0
+
+      - name: Pin SDL3 before XIM rewrite
+        shell: bash
+        working-directory: source/runtime/sources/shadps4/externals/sdl3
+        run: |
+          set -euo pipefail
+          git fetch --depth 1 origin 1f3b40797d9cbd03fe50342069e3449a779723dc
+          git checkout --detach 1f3b40797d9cbd03fe50342069e3449a779723dc
+          git rev-parse HEAD | tee "$GITHUB_WORKSPACE/sdl3.commit"
 
       - name: Apply external ImGui compatibility shim
         shell: bash
@@ -140,6 +149,7 @@ jobs:
             auxgs.patch
             diff.stat
             port.diff
+            sdl3.commit
             core.file
             core.elf
             shadps4-order-auxgs-x86_64
