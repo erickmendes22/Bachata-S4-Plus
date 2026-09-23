@@ -101,6 +101,14 @@ jobs:
           git diff --stat | tee "$GITHUB_WORKSPACE/diff.stat"
           git diff > "$GITHUB_WORKSPACE/port.diff"
 
+      - name: Apply validated Order overlays
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 control/runtime/v20/apply-order-validated-overlays.py source
+          git -C source diff --stat | tee "$GITHUB_WORKSPACE/validated-overlays.stat"
+          git -C source diff > "$GITHUB_WORKSPACE/combined-port.diff"
+
       - name: Install and build x86-64 shadPS4
         shell: bash
         run: |
@@ -140,6 +148,8 @@ jobs:
             auxgs.patch
             diff.stat
             port.diff
+            validated-overlays.stat
+            combined-port.diff
             core.file
             core.elf
             shadps4-order-auxgs-x86_64
