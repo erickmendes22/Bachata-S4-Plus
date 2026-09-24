@@ -1,16 +1,16 @@
-name: Order AUX-GS port probe
+name: Order control source-build probe
 
 on:
   push:
     branches:
-      - order-auxgs-sdl-prexim
+      - order-control-sdl-prexim
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  build-order-auxgs:
+  build-order-control:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
 
@@ -89,26 +89,14 @@ jobs:
           sed -i 's/NextWindowData\.ChildFlagsSet/NextWindowData.ChildFlags/g' "$FILE"
           grep -n 'NextWindowData.ChildFlags.*NavFlattened' "$FILE"
 
-      - name: Fetch upstream AUX-GS commit patch
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl -L --fail --retry 3 \
-            https://github.com/shadps4-emu/shadPS4/commit/7db6e4ba56b98841624ab776aaa56763f10bdc89.patch \
-            -o "$GITHUB_WORKSPACE/auxgs.patch"
-          test -s "$GITHUB_WORKSPACE/auxgs.patch"
-
-      - name: Apply AUX-GS port
-        id: apply
+      - name: Capture control source state
         shell: bash
         working-directory: source
         run: |
           set -euo pipefail
-          git apply --reject --whitespace=nowarn \
-            --directory=runtime/sources/shadps4 \
-            "$GITHUB_WORKSPACE/auxgs.patch"
-          git diff --stat | tee "$GITHUB_WORKSPACE/diff.stat"
-          git diff > "$GITHUB_WORKSPACE/port.diff"
+          printf 'onRps4-runtime=%s\n' "$(git rev-parse HEAD)" | tee "$GITHUB_WORKSPACE/control-source.txt"
+          printf 'SDL3=%s\n' "$(git -C runtime/sources/shadps4/externals/sdl3 rev-parse HEAD)" | tee -a "$GITHUB_WORKSPACE/control-source.txt"
+          git status --short | tee "$GITHUB_WORKSPACE/control-git-status.txt"
 
       - name: Install and build x86-64 shadPS4
         shell: bash
@@ -137,22 +125,21 @@ jobs:
           file "$CORE" | tee "$GITHUB_WORKSPACE/core.file"
           readelf -h "$CORE" | tee "$GITHUB_WORKSPACE/core.elf"
           file "$CORE" | grep -E 'x86-64|x86_64'
-          cp "$CORE" "$GITHUB_WORKSPACE/shadps4-order-auxgs-x86_64"
-          sha256sum "$GITHUB_WORKSPACE/shadps4-order-auxgs-x86_64" | tee "$GITHUB_WORKSPACE/shadps4-order-auxgs-x86_64.sha256"
+          cp "$CORE" "$GITHUB_WORKSPACE/shadps4-order-control-x86_64"
+          sha256sum "$GITHUB_WORKSPACE/shadps4-order-control-x86_64" | tee "$GITHUB_WORKSPACE/shadps4-order-control-x86_64.sha256"
 
       - name: Upload build artifact
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: order-auxgs-port-probe
+          name: order-control-source-build-probe
           path: |
-            auxgs.patch
-            diff.stat
-            port.diff
+            control-source.txt
+            control-git-status.txt
             sdl3.commit
             core.file
             core.elf
-            shadps4-order-auxgs-x86_64
-            shadps4-order-auxgs-x86_64.sha256
+            shadps4-order-control-x86_64
+            shadps4-order-control-x86_64.sha256
           if-no-files-found: warn
           retention-days: 7
