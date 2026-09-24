@@ -12,66 +12,124 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    container:
-      image: debian:trixie
-    timeout-minutes: 300
+    timeout-minutes: 180
     steps:
-      - name: Bootstrap
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends git nodejs ca-certificates python3
+      - name: Checkout exact onRps4 runtime base
+        uses: actions/checkout@v4
+        with:
+          repository: dev-Ali2008/onRps4-runtime
+          ref: 5b50e35c38ad09088761c1b146168107dcdec1e7
+          fetch-depth: 0
+          submodules: false
+          path: source
 
-      - name: Checkout exact onRps4 runtime
-        run: |
-          git clone https://github.com/dev-Ali2008/onRps4-runtime.git source
-          cd source
-          git checkout 5b50e35c38ad09088761c1b146168107dcdec1e7
-          git rev-parse HEAD
-
-      - name: Install build dependencies and externals
+      - name: Hydrate nested shadPS4 submodules
+        shell: bash
         working-directory: source
         run: |
-          bash runtime/scripts/install-debian-runtime-deps.sh
-          find runtime/sources/shadps4/externals -maxdepth 1 -type d -empty -delete || true
-          rm -rf runtime/sources/shadps4/externals/zlib-ng
-          python3 runtime/scripts/populate-shadps4-submodules.py runtime/sources/shadps4
-          git -C runtime/sources/shadps4/externals/sdl3 fetch --depth 1 origin 1f3b40797d9cbd03fe50342069e3449a779723dc
-          git -C runtime/sources/shadps4/externals/sdl3 checkout 1f3b40797d9cbd03fe50342069e3449a779723dc
-          rm -rf externals
-          ln -s runtime/sources/shadps4/externals externals
+          set -euo pipefail
+          git config --global --add safe.directory "*"
+          hydrate_repo() {
+            local root="$1"
+            local depth="$2"
+            (( depth > 5 )) && return 0
+            [[ -f "$root/.gitmodules" ]] || return 0
+            while read -r key path; do
+              local name="${key#submodule.}"
+              name="${name%.path}"
+              local url branch target
+              url="$(git -C "$root" config -f .gitmodules --get "submodule.$name.url" || true)"
+              branch="$(git -C "$root" config -f .gitmodules --get "submodule.$name.branch" || true)"
+              target="$root/$path"
+              [[ -n "$url" ]] || continue
+              git -C "$root" -c submodule.recurse=false submodule sync -- "$path" || true
+              if ! git -C "$root" -c submodule.recurse=false submodule update --init --depth 1 -- "$path"; then
+                rm -rf "$target"
+                if [[ -n "$branch" ]]; then
+                  git clone --depth 1 --branch "$branch" "$url" "$target" || git clone --depth 1 "$url" "$target"
+                else
+                  git clone --depth 1 "$url" "$target"
+                fi
+              fi
+              [[ -d "$target" ]] && hydrate_repo "$target" "$((depth + 1))" || true
+            done < <(git -C "$root" config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null || true)
+          }
+          hydrate_repo "runtime/sources/shadps4" 0
 
-      - name: Materialize AUXGS patches
+      - name: Pin SDL3 before XIM rewrite
+        shell: bash
+        working-directory: source/runtime/sources/shadps4/externals/sdl3
+        run: |
+          set -euo pipefail
+          git fetch --depth 1 origin 1f3b40797d9cbd03fe50342069e3449a779723dc
+          git checkout --detach 1f3b40797d9cbd03fe50342069e3449a779723dc
+
+      - name: Apply external ImGui compatibility shim
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          FILE="runtime/sources/shadps4/externals/ImGuiFileDialog/ImGuiFileDialog.cpp"
+          grep -q 'NextWindowData.ChildFlagsSet' "$FILE"
+          sed -i 's/NextWindowData\.ChildFlagsSet/NextWindowData.ChildFlags/g' "$FILE"
+
+      - name: Fetch and apply original AUX-GS
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 \
+            https://github.com/shadps4-emu/shadPS4/commit/7db6e4ba56b98841624ab776aaa56763f10bdc89.patch \
+            -o "$GITHUB_WORKSPACE/auxgs.patch"
+          git apply --reject --whitespace=nowarn \
+            --directory=runtime/sources/shadps4 \
+            "$GITHUB_WORKSPACE/auxgs.patch"
+
+      - name: Apply interface correction
+        shell: bash
+        working-directory: source
         env:
-          AUX_Z: "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"
           FIX_Z: "eNqtWFtP60YQfudXzFtt2bnZKReHIlIOp0U6BXQ49AWhaGNviMHxWut1IEX5751dL/EldoCeIgXH629m5/LNzDqdTgdIL+V+L52TgPIJpz5bJGFEeW9K/CcaB700CfmyRxehmKivkwRxS8oFfen6SbJnWRZMf1LH6Sl0Bv0Dex8seTmA09M9ePvLwlhMwgB+gx+rhN5exMJwnVtzVCAqAP3cBsEzWkYtqe8UsL+pLxg3ZhEjUtgGB7FWCevuwLo1vcMd2KHEFmifxamAiwByBOH8VYqNOSerktSZhBF0RXtvw+DWNNejPFT7AxWqfcceDiqx4lRkPAaWiSQT2sY1bq8cy1wHLrPFGWaHxTQWqSFXwhihkzRiwtTGvRZx0NZ+97yxEDycZoJCQjhZvFbWPO9aLvbBKqlbl+Kp7QrjGeuij0HarRqidL4lYL1n5V8wSnILGZ/3TU2fQ+HPwagqLomYFcdISmHgFQslK9+yMKrBnWa45lUd7bai3Qb0sBU9rKIDOiNZJGrw28vv5+OzP8e/fzs3yjxeb0f0EinHnpGmQwPvliTKqK2oEWeLib+JnNkU2x2QXQG9SlRG0lDQ8xfBiS9KTNcW9G/ND8b7Kslr7GaezWYRNXT8N5o2ClXNfDAtDUrdVqXYLLYVt2VQCv4f+ct7DcNG84XOwpiex4KvDJmDjZZxEJyRhEzDKBQrI02Wnlfce96N6s/l1vWOwB+ULSjuYuq2c+Tag0OwHOdIXst9Z8Y4GGn4D50IeMJO2B/h5bhUsGlXPkXf4MmyKkYXbUaVOAqXpO6e7kdt0Ij5CMb/qBuxE/x2F96PqoHdtFuCjWQisJOgzKaphGZNezgDo5hNqE6a2oHaX68H5y8JiQMaAKI7OVptkbdDcLGJEKH7cIoE4XwVxg9w3e9dD/Dj9LvwVSJSBmJOG7eYEx48E04hpriBHHKUJwyFaCplsA/jcA3AdTrTUID8JGgBRc4ZtPvQhdlgH1dCnprdbf0qYTKKj3m2HjFbLl7y5GzBK6EMg1ckzpXyzdAdSo6mRqkveBrgaLMhi0kxTK+ELPa8b8xX32yVTQsezf+kRoayTTJZTvI0oJWST3eP95JjQQN8XeWOzsNfRPY+GfEZJw8L7Hw5Q4G+YCeLVh5gO8zzTeQUP/5huydIBiUyla0h0l52G/WPIYlIGMPXm1wewhRiJvKEz4hPO7LlooJpRAEbsbSFU4rPA5rg6UoapInWsEFRAFK3qoDSgWNTFU0nDjc/cVgfI0Khv1HoEzwwPy2u82+9l3ud+GrSgUaYo+Yyv2Rxp6nCsbDSVNUhZ9nDfFSqTjRIZjCgfij7w3SleIDJVaRpKMV36+ozpPwlBSRlRiLYzGnkTICkCXEXSgJgMyDRM1mlyN+EcSHbktys++FEv3FG2gY/l+ct8ffTpUaRM8QR5OAoOvzVHhxsjyJMByzzzrbMO9uyYexcJTc48qlxlYx9n6bp2Rzr0NAmyJjY8BBJBtkg3yr6pmkDHmPulvd10z8//7ZoUB89lSF4XzlrfWxs7oBXz3EoWzs0m7uqvnWSWu+51OxFRbkOfiLy16JrpgorP5rIZJEHehZh7XlezkYbdtOxwoiPz7oyOxoGiN4Vz3Z6ocn7Ld/UUfC1dP6uKbHrR/D1Dq07uYvhs7eaX07iR0liZYnZEq719nJ7jyybUtut4t2yNUQt0m1hWm6HqcmR9d6uW0nMOUknU8JXqInxQDJBNZaDI/sALNfpl36FSEXgeflsnzIW4WR0TqAg9usb8RRuqd4jji+CE12R6FHL88JlfRgpA0qbXshhfHJSzagOZ11nDaN/eUD2LZAfo82dfJFQL5bK6UP104vrHJacRpA+CRRS9fvqq2++4NYRw8oCNtQicqpuK8+kjf8Cvb89Ow=="
         run: |
+          set -euo pipefail
           python3 - <<'PY'
           import os, base64, zlib
-          open('/tmp/auxgs.patch','wb').write(zlib.decompress(base64.b64decode(os.environ['AUX_Z'])))
           open('/tmp/interface.patch','wb').write(zlib.decompress(base64.b64decode(os.environ['FIX_Z'])))
           PY
-          wc -c /tmp/auxgs.patch /tmp/interface.patch
-
-      - name: Apply AUXGS and interface fix
-        working-directory: source
-        run: |
-          git apply --check --directory=runtime/sources/shadps4 /tmp/auxgs.patch
-          git apply --directory=runtime/sources/shadps4 /tmp/auxgs.patch
           git apply --check --directory=runtime/sources/shadps4 /tmp/interface.patch
           git apply --directory=runtime/sources/shadps4 /tmp/interface.patch
           grep -n "one flat array<T,3>" runtime/sources/shadps4/src/shader_recompiler/backend/spirv/emit_spirv_per_vertex.cpp
           git diff --stat
 
-      - name: Build exact x86_64 donor
-        working-directory: source
-        env:
-          FAST_FDROID_BUILD: "0"
+      - name: Install and build x86-64 shadPS4
+        shell: bash
         run: |
-          bash runtime/scripts/build-shadps4-x86_64.sh
-          cp runtime/build/shadps4-stage/bin/shadps4 "$GITHUB_WORKSPACE/shadps4-order-auxgs-interface-x86_64"
-          file "$GITHUB_WORKSPACE/shadps4-order-auxgs-interface-x86_64"
-          readelf -h "$GITHUB_WORKSPACE/shadps4-order-auxgs-interface-x86_64" | grep -E "ELF64|X86-64"
+          set -euo pipefail
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/source:/workspace" \
+            -w /workspace \
+            -e BACHATA_INSIDE_DEBIAN_CONTAINER=1 \
+            debian:trixie \
+            bash -lc '
+              set -euo pipefail
+              apt-get update
+              apt-get install -y --no-install-recommends git ca-certificates curl
+              git config --global --add safe.directory "*"
+              bash runtime/scripts/install-debian-runtime-deps.sh
+              bash runtime/scripts/build-shadps4-x86_64.sh
+            '
+
+      - name: Collect x86-64 donor
+        shell: bash
+        run: |
+          set -euo pipefail
+          CORE="$(find source/runtime/build -type f -name shadps4 -size +10M | head -n1)"
+          test -n "$CORE"
+          file "$CORE"
+          readelf -h "$CORE" | grep -E 'ELF64|X86-64|Advanced Micro Devices X86-64'
+          cp "$CORE" "$GITHUB_WORKSPACE/shadps4-order-auxgs-interface-x86_64"
           sha256sum "$GITHUB_WORKSPACE/shadps4-order-auxgs-interface-x86_64" | tee "$GITHUB_WORKSPACE/shadps4-order-auxgs-interface-x86_64.sha256"
+          nm -C -S "$GITHUB_WORKSPACE/shadps4-order-auxgs-interface-x86_64" | grep 'EmitPerVertexAuxGS' | tee "$GITHUB_WORKSPACE/emit-symbol.txt"
 
       - name: Upload donor core
         uses: actions/upload-artifact@v4
@@ -80,5 +138,6 @@ jobs:
           path: |
             shadps4-order-auxgs-interface-x86_64
             shadps4-order-auxgs-interface-x86_64.sha256
+            emit-symbol.txt
           if-no-files-found: error
           retention-days: 7
