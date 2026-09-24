@@ -55,13 +55,12 @@ jobs:
       - name: Apply AUXGS and interface fix
         working-directory: source
         run: |
-          git apply --check /tmp/auxgs.patch
-          git apply /tmp/auxgs.patch
-          git -C runtime/sources/shadps4 apply --check /tmp/interface.patch
-          git -C runtime/sources/shadps4 apply /tmp/interface.patch
+          git apply --check --directory=runtime/sources/shadps4 /tmp/auxgs.patch
+          git apply --directory=runtime/sources/shadps4 /tmp/auxgs.patch
+          git apply --check --directory=runtime/sources/shadps4 /tmp/interface.patch
+          git apply --directory=runtime/sources/shadps4 /tmp/interface.patch
           grep -n "one flat array<T,3>" runtime/sources/shadps4/src/shader_recompiler/backend/spirv/emit_spirv_per_vertex.cpp
           git diff --stat
-          git -C runtime/sources/shadps4 diff --stat
 
       - name: Build exact x86_64 donor
         working-directory: source
