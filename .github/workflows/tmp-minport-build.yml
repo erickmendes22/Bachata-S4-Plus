@@ -1,0 +1,199 @@
+name: tmp-minport-build
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/tmp-minport-build.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build minimal external PKG bridge
+        run: |
+          set -euxo pipefail
+          curl -L 'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.3/Bachata-S4-Plus-v0.2.3.apk' -o /tmp/original.apk
+          curl -s https://api.github.com/repos/iBotPeaches/Apktool/releases/latest > /tmp/apktool.json
+          URL=$(jq -r '.assets[] | select(.name|endswith(".jar")) | .browser_download_url' /tmp/apktool.json | head -1)
+          curl -L "$URL" -o /tmp/apktool.jar
+          java -jar /tmp/apktool.jar d -f -r /tmp/original.apk -o /tmp/decoded
+          python3 - <<'PY'
+          from pathlib import Path
+          base=Path('/tmp/decoded/smali_classes2/com/bachatas4/android')
+          # Set a Context at ImportService startup; one instruction-range call only.
+          p=base/'service/ImportService.smali'
+          s=p.read_text()
+          marker='.method public onCreate()V'
+          a=s.index(marker); b=s.index('.locals',a); e=s.index('\n',b)
+          ins='\n\n    invoke-static/range {p0 .. p0}, Lcom/bachatas4/android/data/ExternalPkgCompat;->setContext(Landroid/content/Context;)V'
+          s=s[:e]+ins+s[e:]
+          p.write_text(s)
+
+          # Branch at final staging promotion. Null => byte-for-byte logical old path.
+          p=base/'data/ContentImporter$finalizeStagingTree$2.smali'
+          s=p.read_text()
+          old='''    invoke-static {p1}, Lkotlin/ResultKt;->throwOnFailure(Ljava/lang/Object;)V\n\n    .line 164'''
+          new='''    invoke-static {p1}, Lkotlin/ResultKt;->throwOnFailure(Ljava/lang/Object;)V\n\n    iget-object v0, p0, Lcom/bachatas4/android/data/ContentImporter$finalizeStagingTree$2;->this$0:Lcom/bachatas4/android/data/ContentImporter;\n\n    iget-object v1, p0, Lcom/bachatas4/android/data/ContentImporter$finalizeStagingTree$2;->$request:Lcom/bachatas4/android/data/ContentImportRequest;\n\n    iget-object v2, p0, Lcom/bachatas4/android/data/ContentImporter$finalizeStagingTree$2;->$stagingDir:Ljava/io/File;\n\n    iget-object v3, p0, Lcom/bachatas4/android/data/ContentImporter$finalizeStagingTree$2;->$mode:Ljava/lang/String;\n\n    iget-object v4, p0, Lcom/bachatas4/android/data/ContentImporter$finalizeStagingTree$2;->$contentId:Ljava/lang/String;\n\n    invoke-static {v0, v1, v2, v3, v4}, Lcom/bachatas4/android/data/ExternalPkgCompat;->tryFinalize(Lcom/bachatas4/android/data/ContentImporter;Lcom/bachatas4/android/data/ContentImportRequest;Ljava/io/File;Ljava/lang/String;Ljava/lang/String;)Lcom/bachatas4/android/data/ContentImportResult;\n\n    move-result-object v0\n\n    if-eqz v0, :bachata_internal_finalize\n\n    return-object v0\n\n    :bachata_internal_finalize\n\n    .line 164'''
+          if old not in s: raise SystemExit('finalize hook not found')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+          cat > /tmp/decoded/smali_classes2/com/bachatas4/android/data/ExternalPkgCompat.smali <<'SMALI'
+          .class public final Lcom/bachatas4/android/data/ExternalPkgCompat;
+          .super Ljava/lang/Object;
+          .source "ExternalPkgCompat.java"
+
+          .field private static appContext:Landroid/content/Context;
+
+          .method public static setContext(Landroid/content/Context;)V
+              .locals 1
+              if-eqz p0, :done
+              invoke-virtual {p0}, Landroid/content/Context;->getApplicationContext()Landroid/content/Context;
+              move-result-object v0
+              if-eqz v0, :raw
+              sput-object v0, Lcom/bachatas4/android/data/ExternalPkgCompat;->appContext:Landroid/content/Context;
+              return-void
+            :raw
+              sput-object p0, Lcom/bachatas4/android/data/ExternalPkgCompat;->appContext:Landroid/content/Context;
+            :done
+              return-void
+          .end method
+
+          .method public static tryFinalize(Lcom/bachatas4/android/data/ContentImporter;Lcom/bachatas4/android/data/ContentImportRequest;Ljava/io/File;Ljava/lang/String;Ljava/lang/String;)Lcom/bachatas4/android/data/ContentImportResult;
+              .locals 14
+              sget-object v0, Lcom/bachatas4/android/data/ExternalPkgCompat;->appContext:Landroid/content/Context;
+              if-eqz v0, :none
+              const-string v1, "pkg-extraction"
+              const/4 v2, 0x0
+              invoke-virtual {v0, v1, v2}, Landroid/content/Context;->getSharedPreferences(Ljava/lang/String;I)Landroid/content/SharedPreferences;
+              move-result-object v1
+              const-string v2, "destination"
+              const/4 v3, 0x0
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences;->getString(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+              move-result-object v2
+              invoke-static {v2}, Landroid/text/TextUtils;->isEmpty(Ljava/lang/CharSequence;)Z
+              move-result v3
+              if-nez v3, :none
+              invoke-virtual {v0}, Landroid/content/Context;->getContentResolver()Landroid/content/ContentResolver;
+              move-result-object v3
+              new-instance v4, Lcom/bachatas4/android/data/AndroidPkgExportTarget;
+              invoke-direct {v4, v3, v2}, Lcom/bachatas4/android/data/AndroidPkgExportTarget;-><init>(Landroid/content/ContentResolver;Ljava/lang/String;)V
+              invoke-virtual {v4}, Lcom/bachatas4/android/data/AndroidPkgExportTarget;->checkWritable()V
+              invoke-virtual {p1}, Lcom/bachatas4/android/data/ContentImportRequest;->getId()Ljava/lang/String;
+              move-result-object v5
+              invoke-virtual {v4, v5}, Lcom/bachatas4/android/data/AndroidPkgExportTarget;->exists(Ljava/lang/String;)Z
+              move-result v6
+              if-eqz v6, :create
+              new-instance v0, Ljava/lang/IllegalStateException;
+              const-string v1, "Game already exists in selected PKG extraction folder"
+              invoke-direct {v0, v1}, Ljava/lang/IllegalStateException;-><init>(Ljava/lang/String;)V
+              throw v0
+            :create
+              invoke-virtual {v4, v5}, Lcom/bachatas4/android/data/AndroidPkgExportTarget;->createDirectory(Ljava/lang/String;)V
+              invoke-static {p2, v5, v4}, Lcom/bachatas4/android/data/ExternalPkgCompat;->copyTree(Ljava/io/File;Ljava/lang/String;Lcom/bachatas4/android/data/AndroidPkgExportTarget;)J
+              move-result-wide v11
+              invoke-virtual {v4, v5}, Lcom/bachatas4/android/data/AndroidPkgExportTarget;->sourceUri(Ljava/lang/String;)Ljava/lang/String;
+              move-result-object v6
+              new-instance v3, Lcom/bachatas4/android/model/Game;
+              move-object v4, v5
+              invoke-virtual {p1}, Lcom/bachatas4/android/data/ContentImportRequest;->getTitle()Ljava/lang/String;
+              move-result-object v5
+              invoke-virtual {p1}, Lcom/bachatas4/android/data/ContentImportRequest;->getSubtitle()Ljava/lang/String;
+              move-result-object v7
+              invoke-virtual {p1}, Lcom/bachatas4/android/data/ContentImportRequest;->getDetail()Ljava/lang/String;
+              move-result-object v8
+              const-wide/16 v9, 0x0
+              invoke-direct/range {v3 .. v10}, Lcom/bachatas4/android/model/Game;-><init>(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;J)V
+              new-instance v4, Lcom/bachatas4/android/data/ContentImportResult;
+              move-object v5, v3
+              move-wide v6, v11
+              const-string v8, "pkg-extract-external"
+              invoke-direct/range {v4 .. v8}, Lcom/bachatas4/android/data/ContentImportResult;-><init>(Lcom/bachatas4/android/model/Game;JLjava/lang/String;)V
+              return-object v4
+            :none
+              const/4 v0, 0x0
+              return-object v0
+          .end method
+
+          .method private static copyTree(Ljava/io/File;Ljava/lang/String;Lcom/bachatas4/android/data/AndroidPkgExportTarget;)J
+              .locals 14
+              const-wide/16 v0, 0x0
+              invoke-virtual {p0}, Ljava/io/File;->listFiles()[Ljava/io/File;
+              move-result-object v2
+              if-eqz v2, :done
+              array-length v3, v2
+              const/4 v4, 0x0
+            :loop
+              if-ge v4, v3, :done
+              aget-object v5, v2, v4
+              new-instance v6, Ljava/lang/StringBuilder;
+              invoke-direct {v6}, Ljava/lang/StringBuilder;-><init>()V
+              invoke-virtual {v6, p1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+              const-string v7, "/"
+              invoke-virtual {v6, v7}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+              invoke-virtual {v5}, Ljava/io/File;->getName()Ljava/lang/String;
+              move-result-object v7
+              invoke-virtual {v6, v7}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+              invoke-virtual {v6}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+              move-result-object v6
+              invoke-virtual {v5}, Ljava/io/File;->isDirectory()Z
+              move-result v7
+              if-eqz v7, :file
+              invoke-virtual {p2, v6}, Lcom/bachatas4/android/data/AndroidPkgExportTarget;->createDirectory(Ljava/lang/String;)V
+              invoke-static {v5, v6, p2}, Lcom/bachatas4/android/data/ExternalPkgCompat;->copyTree(Ljava/io/File;Ljava/lang/String;Lcom/bachatas4/android/data/AndroidPkgExportTarget;)J
+              move-result-wide v8
+              add-long/2addr v0, v8
+              goto :next
+            :file
+              new-instance v7, Ljava/io/FileInputStream;
+              invoke-direct {v7, v5}, Ljava/io/FileInputStream;-><init>(Ljava/io/File;)V
+              invoke-virtual {p2, v6}, Lcom/bachatas4/android/data/AndroidPkgExportTarget;->openNewFile(Ljava/lang/String;)Ljava/io/OutputStream;
+              move-result-object v8
+              const v9, 0x10000
+              new-array v9, v9, [B
+            :read
+              invoke-virtual {v7, v9}, Ljava/io/InputStream;->read([B)I
+              move-result v10
+              if-ltz v10, :close
+              const/4 v11, 0x0
+              invoke-virtual {v8, v9, v11, v10}, Ljava/io/OutputStream;->write([BII)V
+              int-to-long v11, v10
+              add-long/2addr v0, v11
+              goto :read
+            :close
+              invoke-virtual {v7}, Ljava/io/InputStream;->close()V
+              invoke-virtual {v8}, Ljava/io/OutputStream;->close()V
+            :next
+              add-int/lit8 v4, v4, 0x1
+              goto :loop
+            :done
+              return-wide v0
+          .end method
+          SMALI
+          java -jar /tmp/apktool.jar b /tmp/decoded -o /tmp/rebuilt.apk
+          mkdir /tmp/newdex
+          cd /tmp/newdex
+          unzip -q /tmp/rebuilt.apk classes2.dex
+          cp /tmp/original.apk /tmp/Bachata-S4-Plus-v0.2.3-EXTERNAL-PKG-MINPORT-R1-UNSIGNED.apk
+          zip -q -d /tmp/Bachata-S4-Plus-v0.2.3-EXTERNAL-PKG-MINPORT-R1-UNSIGNED.apk classes2.dex || true
+          zip -q -9 /tmp/Bachata-S4-Plus-v0.2.3-EXTERNAL-PKG-MINPORT-R1-UNSIGNED.apk classes2.dex
+          cd /tmp
+          python3 - <<'PY'
+          import zipfile,hashlib
+          p='/tmp/Bachata-S4-Plus-v0.2.3-EXTERNAL-PKG-MINPORT-R1-UNSIGNED.apk'
+          with zipfile.ZipFile(p) as z:
+              assert z.testzip() is None
+              names=z.namelist(); assert names.count('classes2.dex')==1
+              c2=z.read('classes2.dex')
+              assert b'ExternalPkgCompat' in c2
+              for n in ['classes.dex','classes3.dex','classes4.dex','classes5.dex','classes6.dex','classes7.dex','classes8.dex','AndroidManifest.xml','assets/runtime/runtime.zip']:
+                  with zipfile.ZipFile('/tmp/original.apk') as o:
+                      assert z.read(n)==o.read(n), n
+          print('minimal unsigned OK',hashlib.sha256(open(p,'rb').read()).hexdigest())
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: minport-r1-unsigned
+          path: /tmp/Bachata-S4-Plus-v0.2.3-EXTERNAL-PKG-MINPORT-R1-UNSIGNED.apk
+          compression-level: 0
