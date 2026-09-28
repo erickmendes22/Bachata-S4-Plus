@@ -1,0 +1,112 @@
+name: tmp R3 build
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/tmp-r3-build.yml'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download base and tools
+        run: |
+          set -eux
+          curl -L -o base.apk 'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.3/Bachata-S4-Plus-v0.2.3.apk'
+          curl -L -o baksmali.jar 'https://github.com/baksmali/smali/releases/download/3.0.10/baksmali-3.0.10-fat-release.jar'
+          curl -L -o smali.jar 'https://github.com/baksmali/smali/releases/download/3.0.10/smali-3.0.10-fat-release.jar'
+          curl -L -o kotlin-stdlib.jar 'https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.1.20/kotlin-stdlib-2.1.20.jar'
+          curl -L -o coroutines.jar 'https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.10.2/kotlinx-coroutines-core-jvm-1.10.2.jar'
+      - name: Patch classes2
+        run: |
+          set -eux
+          unzip -p base.apk classes2.dex > classes2.dex
+          java -jar baksmali.jar d classes2.dex -o smali2
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('smali2')
+          p=root/'com/bachatas4/android/service/ImportService.smali'; s=p.read_text()
+          a='invoke-virtual/range {v48 .. v53}, Lcom/bachatas4/android/data/ContentImporter;->finalizeStagingTree(Lcom/bachatas4/android/data/ContentImportRequest;Ljava/io/File;Ljava/lang/String;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;'
+          b='invoke-static/range {v48 .. v53}, Lcom/bachatas4/android/bridge/ExternalPkgBridge;->finalizeStagingTree(Lcom/bachatas4/android/data/ContentImporter;Lcom/bachatas4/android/data/ContentImportRequest;Ljava/io/File;Ljava/lang/String;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;'
+          assert s.count(a)==1; p.write_text(s.replace(a,b))
+          p=root/'com/bachatas4/android/service/EmulationService.smali'; s=p.read_text()
+          a='''    move-object/from16 v11, p2\n\n    invoke-direct {v8, v10, v11}, Ljava/io/File;-><init>(Ljava/io/File;Ljava/lang/String;)V'''
+          b='''    invoke-static/range {p0 .. p2}, Lcom/bachatas4/android/bridge/ExternalSafBridge;->preparePath(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;\n\n    move-result-object v11\n\n    invoke-direct {v8, v10, v11}, Ljava/io/File;-><init>(Ljava/io/File;Ljava/lang/String;)V'''
+          assert s.count(a)==1; s=s.replace(a,b)
+          a='''    const/4 v7, 0x2\n\n    .line 305\n    new-array v10, v7, [Ljava/lang/String;\n\n    const-string v22, "-g"\n    :try_end_198d\n    .catch Ljava/lang/Exception; {:try_start_1965 .. :try_end_198d} :catch_295c\n    .catch Ljava/util/concurrent/CancellationException; {:try_start_1965 .. :try_end_198d} :catch_2948\n    .catchall {:try_start_1965 .. :try_end_198d} :catchall_292b\n\n    const/16 v37, 0x0\n\n    :try_start_198f\n    aput-object v22, v10, v37\n\n    invoke-virtual/range {v94 .. v94}, Ljava/io/File;->getPath()Ljava/lang/String;\n\n    move-result-object v22\n    :try_end_1995\n    .catch Ljava/lang/Exception; {:try_start_198f .. :try_end_1995} :catch_2905\n    .catch Ljava/util/concurrent/CancellationException; {:try_start_198f .. :try_end_1995} :catch_28f1\n    .catchall {:try_start_198f .. :try_end_1995} :catchall_28d3\n\n    const/16 v39, 0x1\n\n    :try_start_1997\n    aput-object v22, v10, v39\n    :try_end_1999\n    .catch Ljava/lang/Exception; {:try_start_1997 .. :try_end_1999} :catch_28ad\n    .catch Ljava/util/concurrent/CancellationException; {:try_start_1997 .. :try_end_1999} :catch_287a\n    .catchall {:try_start_1997 .. :try_end_1999} :catchall_285c\n\n    :try_start_1999\n    invoke-static {v10}, Lkotlin/collections/CollectionsKt;->listOf([Ljava/lang/Object;)Ljava/util/List;\n\n    move-result-object v62'''
+          b='''    .line 305\n    invoke-static/range {v94 .. v94}, Lcom/bachatas4/android/bridge/ExternalSafBridge;->buildGameArguments(Ljava/io/File;)Ljava/util/List;\n\n    move-result-object v62\n    :try_end_198d\n    .catch Ljava/lang/Exception; {:try_start_1965 .. :try_end_198d} :catch_295c\n    .catch Ljava/util/concurrent/CancellationException; {:try_start_1965 .. :try_end_198d} :catch_2948\n    .catchall {:try_start_1965 .. :try_end_198d} :catchall_292b\n\n    :try_start_198f\n    nop\n    :try_end_1995\n    .catch Ljava/lang/Exception; {:try_start_198f .. :try_end_1995} :catch_2905\n    .catch Ljava/util/concurrent/CancellationException; {:try_start_198f .. :try_end_1995} :catch_28f1\n    .catchall {:try_start_198f .. :try_end_1995} :catchall_28d3\n\n    :try_start_1997\n    nop\n    :try_end_1999\n    .catch Ljava/lang/Exception; {:try_start_1997 .. :try_end_1999} :catch_28ad\n    .catch Ljava/util/concurrent/CancellationException; {:try_start_1997 .. :try_end_1999} :catch_287a\n    .catchall {:try_start_1997 .. :try_end_1999} :catchall_285c\n\n    :try_start_1999'''
+          assert s.count(a)==1; s=s.replace(a,b)
+          marker='''.method private final stopSession()V\n    .registers 4\n'''; assert s.count(marker)==1
+          s=s.replace(marker,marker+'\n    invoke-static {}, Lcom/bachatas4/android/bridge/ExternalSafBridge;->close()V\n')
+          p.write_text(s)
+          p=root/'com/bachatas4/android/feature/settings/SettingsScreenKt.smali'; s=p.read_text()
+          a='''    const-string v8, "Edit Controls"\n\n    invoke-direct {v5, v8, v6}, Lkotlin/Pair;-><init>(Ljava/lang/Object;Ljava/lang/Object;)V\n\n    invoke-interface {v3, v5}, Ljava/util/List;->add(Ljava/lang/Object;)Z\n'''
+          b='''\n    new-instance v5, Lkotlin/Pair;\n\n    sget-object v6, Landroidx/compose/material/icons/Icons;->INSTANCE:Landroidx/compose/material/icons/Icons;\n\n    invoke-virtual {v6}, Landroidx/compose/material/icons/Icons;->getDefault()Landroidx/compose/material/icons/Icons$Filled;\n\n    move-result-object v6\n\n    invoke-static {v6}, Landroidx/compose/material/icons/filled/SettingsKt;->getSettings(Landroidx/compose/material/icons/Icons$Filled;)Landroidx/compose/ui/graphics/vector/ImageVector;\n\n    move-result-object v6\n\n    const-string v8, "Storage"\n\n    invoke-direct {v5, v8, v6}, Lkotlin/Pair;-><init>(Ljava/lang/Object;Ljava/lang/Object;)V\n\n    invoke-interface {v3, v5}, Ljava/util/List;->add(Ljava/lang/Object;)Z\n'''
+          assert s.count(a)==1; s=s.replace(a,a+b)
+          a='invoke-interface {p0, p4}, Lkotlin/jvm/functions/Function1;->invoke(Ljava/lang/Object;)Ljava/lang/Object;'; assert s.count(a)==1
+          s=s.replace(a,'invoke-static {p0, p4}, Lcom/bachatas4/android/bridge/ExternalStorageUi;->dispatch(Lkotlin/jvm/functions/Function1;Ljava/lang/String;)V')
+          start=s.index('.method private static final SettingsContent$lambda$0$1$17$0$0$0'); end=s.index('.end method',start)+len('.end method'); sec=s[start:end]
+          a='invoke-interface {v1, v0}, Lkotlin/jvm/functions/Function1;->invoke(Ljava/lang/Object;)Ljava/lang/Object;'; assert sec.count(a)>=1
+          sec=sec.replace(a,'invoke-static {v1, v0}, Lcom/bachatas4/android/bridge/ExternalStorageUi;->dispatch(Lkotlin/jvm/functions/Function1;Ljava/lang/String;)V'); s=s[:start]+sec+s[end:]; p.write_text(s)
+          p=root/'com/bachatas4/android/MainActivity.smali'; s=p.read_text()
+          a='    invoke-super {p0, p1}, Lcom/bachatas4/android/Hilt_MainActivity;->onCreate(Landroid/os/Bundle;)V\n'; assert s.count(a)==1
+          s=s.replace(a,a+'\n    invoke-static {p0}, Lcom/bachatas4/android/bridge/ExternalStorageUi;->attach(Landroid/app/Activity;)V\n')
+          method='''.method protected onActivityResult(IILandroid/content/Intent;)V\n    .registers 4\n\n    invoke-super {p0, p1, p2, p3}, Lcom/bachatas4/android/Hilt_MainActivity;->onActivityResult(IILandroid/content/Intent;)V\n\n    invoke-static {p1, p2, p3}, Lcom/bachatas4/android/bridge/ExternalStorageUi;->onActivityResult(IILandroid/content/Intent;)V\n\n    return-void\n.end method\n\n'''
+          idx=s.index('.method protected onCreate(Landroid/os/Bundle;)V'); s=s[:idx]+method+s[idx:]; p.write_text(s)
+          PY
+          java -jar smali.jar a smali2 -o classes2-r3.dex
+      - name: Compile R3 helper dex
+        run: |
+          set -eux
+          mkdir -p stubsrc/com/bachatas4/android/data stubsrc/com/bachatas4/android/model stubsrc/com/bachatas4/android/service build helperdex
+          cat > stubsrc/com/bachatas4/android/data/ContentImporter.java <<'EOF'
+          package com.bachatas4.android.data; import java.io.File; import kotlin.coroutines.Continuation; public class ContentImporter { public Object finalizeStagingTree(ContentImportRequest r, File f, String m, String c, Continuation<? super ContentImportResult> x){return null;} }
+          EOF
+          cat > stubsrc/com/bachatas4/android/data/ContentImportRequest.java <<'EOF'
+          package com.bachatas4.android.data; public class ContentImportRequest { public String getId(){return null;} public String getTitle(){return null;} public String getSubtitle(){return null;} public String getDetail(){return null;} }
+          EOF
+          cat > stubsrc/com/bachatas4/android/data/ContentImportResult.java <<'EOF'
+          package com.bachatas4.android.data; import com.bachatas4.android.model.Game; public class ContentImportResult { public ContentImportResult(Game g,long b,String s){} }
+          EOF
+          cat > stubsrc/com/bachatas4/android/model/Game.java <<'EOF'
+          package com.bachatas4.android.model; public class Game { public Game(String a,String b,String c,String d,String e,long f){} }
+          EOF
+          cat > stubsrc/com/bachatas4/android/data/PkgExportTarget.java <<'EOF'
+          package com.bachatas4.android.data; public interface PkgExportTarget {}
+          EOF
+          cat > stubsrc/com/bachatas4/android/data/AndroidPkgExportTarget.java <<'EOF'
+          package com.bachatas4.android.data; import android.content.ContentResolver; public class AndroidPkgExportTarget implements PkgExportTarget { public AndroidPkgExportTarget(ContentResolver r,String s){} public void checkWritable(){} }
+          EOF
+          cat > stubsrc/com/bachatas4/android/data/PkgTreePublisher.java <<'EOF'
+          package com.bachatas4.android.data; import java.io.File; import kotlin.coroutines.Continuation; import kotlin.jvm.functions.Function1; import kotlin.jvm.functions.Function3; public class PkgTreePublisher { public PkgTreePublisher(PkgExportTarget t){} public static Object publish$default(PkgTreePublisher p,File f,String id,Function1 a,Function3 b,Continuation c,int m,Object n){return null;} }
+          EOF
+          cat > stubsrc/com/bachatas4/android/service/SafBrokerSession.java <<'EOF'
+          package com.bachatas4.android.service; import java.io.Closeable; public class SafBrokerSession implements Closeable { public String getSocketName(){return null;} public String getToken(){return null;} public void close(){} }
+          EOF
+          cat > stubsrc/com/bachatas4/android/service/SafGameBroker.java <<'EOF'
+          package com.bachatas4.android.service; import android.content.ContentResolver; public class SafGameBroker { public SafGameBroker(ContentResolver r){} public SafBrokerSession start(String s){return null;} }
+          EOF
+          ANDROID_JAR=$(find "$ANDROID_HOME/platforms" -name android.jar | sort -V | tail -1)
+          javac -source 8 -target 8 -cp "$ANDROID_JAR:kotlin-stdlib.jar:coroutines.jar" -d build $(find stubsrc -name '*.java') .github/tmp_r3/*.java
+          D8=$(find "$ANDROID_HOME/build-tools" -type f -name d8 | sort -V | tail -1)
+          "$D8" --min-api 26 --lib "$ANDROID_JAR" --classpath kotlin-stdlib.jar --classpath coroutines.jar --output helperdex $(find build/com/bachatas4/android/bridge -name '*.class')
+          mv helperdex/classes.dex classes9.dex
+      - name: Repack and zipalign unsigned R3
+        run: |
+          set -eux
+          rm -rf apkdir && mkdir apkdir
+          unzip -q base.apk -d apkdir
+          cp classes2-r3.dex apkdir/classes2.dex
+          cp classes9.dex apkdir/classes9.dex
+          rm -rf apkdir/META-INF
+          (cd apkdir && zip -q -r -9 ../r3-unaligned.apk .)
+          ZIPALIGN=$(find "$ANDROID_HOME/build-tools" -type f -name zipalign | sort -V | tail -1)
+          "$ZIPALIGN" -f -p 4 r3-unaligned.apk Bachata-S4-Plus-v0.2.3-EXTERNAL-PKG-R3-UNSIGNED.apk
+          "$ZIPALIGN" -c -p 4 Bachata-S4-Plus-v0.2.3-EXTERNAL-PKG-R3-UNSIGNED.apk
+          unzip -tq Bachata-S4-Plus-v0.2.3-EXTERNAL-PKG-R3-UNSIGNED.apk
+          unzip -p Bachata-S4-Plus-v0.2.3-EXTERNAL-PKG-R3-UNSIGNED.apk classes2.dex | strings | grep -E 'ExternalPkgBridge|ExternalStorageUi|ExternalSafBridge'
+          unzip -p Bachata-S4-Plus-v0.2.3-EXTERNAL-PKG-R3-UNSIGNED.apk classes9.dex | strings | grep -E 'pkg-extraction|bachata-saf-socket|Choose folder'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: r3-unsigned
+          path: Bachata-S4-Plus-v0.2.3-EXTERNAL-PKG-R3-UNSIGNED.apk
