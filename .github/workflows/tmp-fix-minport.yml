@@ -1,0 +1,19 @@
+name: tmp-fix-minport
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/tmp-fix-minport.yml']
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sed -i 's/\.locals 14/\.locals 13/g' .github/workflows/tmp-minport-build.yml
+          git config user.name minport-fix
+          git config user.email actions@users.noreply.github.com
+          git add .github/workflows/tmp-minport-build.yml
+          git commit -m 'tmp: fix smali register window'
+          git push
