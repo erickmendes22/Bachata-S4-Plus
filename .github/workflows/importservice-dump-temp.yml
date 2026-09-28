@@ -10,23 +10,20 @@ jobs:
   dump:
     runs-on: ubuntu-latest
     steps:
-      - name: Download APKs and JADX
+      - name: Download APK and JADX
         run: |
           set -eux
           curl -L -o plus.apk 'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.3/Bachata-S4-Plus-v0.2.3.apk'
-          curl -L -o release.apk 'https://github.com/JICA98/Bachata-S4/releases/download/0.2.3/bachatas4-0.2.3-release.apk'
           curl -L -o jadx.zip 'https://github.com/skylot/jadx/releases/download/v1.5.2/jadx-1.5.2.zip'
           unzip -q jadx.zip -d jadx
-      - name: Decompile both APKs
+      - name: Decompile storage classes
         run: |
           set -eux
-          mkdir -p plus_src release_src out/plus out/release
+          mkdir -p plus_src out
           ./jadx/bin/jadx --show-bad-code --no-res -d plus_src plus.apk || true
-          ./jadx/bin/jadx --show-bad-code --no-res -d release_src release.apk || true
-          find plus_src/sources -type f \( -iname '*ImportService*' -o -iname '*PkgTreePublisher*' -o -iname '*PkgExtractionLocation*' -o -iname '*AndroidPkgExportTarget*' -o -iname '*DirectGameRegistrar*' \) -exec cp --parents {} out/plus/ \; || true
-          grep -RIl --include='*.java' -E 'PKG extraction location|destinationTreeUri|PkgTreePublisher|pkgExtractionLocation' release_src/sources | while read f; do cp --parents "$f" out/release/; done || true
-          grep -RIl --include='*.java' -E 'class ImportService|runPkgBatchImport|runPkgImport' release_src/sources | head -20 | while read f; do cp --parents "$f" out/release/; done || true
+          find plus_src/sources/com/bachatas4/android -type f \( -iname '*ContentImporter*' -o -iname '*ContentImportResult*' -o -iname '*ContentImportRequest*' -o -iname '*GameRepository*' -o -iname '*GameDao*' -o -iname '*GameEntity*' -o -iname '*GameDatabase*' -o -iname '*AppDatabase*' \) -exec cp --parents {} out/ \; || true
+          grep -RIl --include='*.java' -E 'storageMode|sourceUri.*DIRECT|GameStorageMode.DIRECT|addImportedGame' plus_src/sources/com/bachatas4/android | head -80 | while read f; do cp --parents "$f" out/; done || true
       - uses: actions/upload-artifact@v4
         with:
-          name: importservice-jadx-dump
+          name: storage-jadx-dump
           path: out
