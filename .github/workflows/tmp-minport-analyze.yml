@@ -1,0 +1,42 @@
+name: tmp-minport-analyze
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/tmp-minport-analyze.yml']
+permissions:
+  contents: write
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decode target
+        run: |
+          set -eux
+          curl -L 'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.3/Bachata-S4-Plus-v0.2.3.apk' -o /tmp/target.apk
+          curl -s https://api.github.com/repos/iBotPeaches/Apktool/releases/latest > /tmp/apktool.json
+          URL=$(jq -r '.assets[] | select(.name|endswith(".jar")) | .browser_download_url' /tmp/apktool.json | head -1)
+          curl -L "$URL" -o /tmp/apktool.jar
+          java -jar /tmp/apktool.jar d -f -r /tmp/target.apk -o /tmp/decoded
+          rm -rf tmp-minport-smali
+          mkdir -p tmp-minport-smali/classes2/com/bachatas4/android/service tmp-minport-smali/classes2/com/bachatas4/android/data tmp-minport-smali/classes2/com/bachatas4/android/feature/session tmp-minport-smali/classes8/com/bachatas4/android/data tmp-minport-smali/classes8/com/bachatas4/android/service tmp-minport-smali/classes8/com/bachatas4/android/runtime/process
+          cp /tmp/decoded/smali_classes2/com/bachatas4/android/service/ImportService*.smali tmp-minport-smali/classes2/com/bachatas4/android/service/ || true
+          cp /tmp/decoded/smali_classes2/com/bachatas4/android/service/EmulationService*.smali tmp-minport-smali/classes2/com/bachatas4/android/service/ || true
+          cp /tmp/decoded/smali_classes2/com/bachatas4/android/data/ContentImporter*.smali tmp-minport-smali/classes2/com/bachatas4/android/data/ || true
+          cp /tmp/decoded/smali_classes2/com/bachatas4/android/data/GameRepository*.smali tmp-minport-smali/classes2/com/bachatas4/android/data/ || true
+          cp /tmp/decoded/smali_classes2/com/bachatas4/android/database/GameEntity*.smali tmp-minport-smali/classes2/com/bachatas4/android/data/ || true
+          cp /tmp/decoded/smali_classes2/com/bachatas4/android/feature/session/SessionViewModel*.smali tmp-minport-smali/classes2/com/bachatas4/android/feature/session/ || true
+          cp /tmp/decoded/smali_classes8/com/bachatas4/android/data/PkgExtractionLocation*.smali tmp-minport-smali/classes8/com/bachatas4/android/data/ || true
+          cp /tmp/decoded/smali_classes8/com/bachatas4/android/data/PkgTreePublisher*.smali tmp-minport-smali/classes8/com/bachatas4/android/data/ || true
+          cp /tmp/decoded/smali_classes8/com/bachatas4/android/data/AndroidPkgExportTarget*.smali tmp-minport-smali/classes8/com/bachatas4/android/data/ || true
+          cp /tmp/decoded/smali_classes8/com/bachatas4/android/service/SafGameBroker*.smali tmp-minport-smali/classes8/com/bachatas4/android/service/ || true
+          cp /tmp/decoded/smali_classes8/com/bachatas4/android/service/SafBrokerSession*.smali tmp-minport-smali/classes8/com/bachatas4/android/service/ || true
+          cp /tmp/decoded/smali_classes8/com/bachatas4/android/runtime/process/SafRuntimeMount*.smali tmp-minport-smali/classes8/com/bachatas4/android/runtime/process/ || true
+          cp /tmp/decoded/smali_classes8/com/bachatas4/android/runtime/process/RuntimeProcessLauncherKt*.smali tmp-minport-smali/classes8/com/bachatas4/android/runtime/process/ || true
+      - name: Commit analysis
+        run: |
+          git config user.name 'minport-analysis'
+          git config user.email 'actions@users.noreply.github.com'
+          git add tmp-minport-smali
+          git commit -m 'tmp: extract minport smali' || exit 0
+          git push
