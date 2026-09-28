@@ -1,0 +1,31 @@
+name: ImportService dump temp
+
+on:
+  push:
+    paths:
+      - '.github/workflows/importservice-dump-temp.yml'
+  workflow_dispatch:
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download base APK and baksmali
+        run: |
+          set -eux
+          curl -L -o base.apk 'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.3/Bachata-S4-Plus-v0.2.3.apk'
+          curl -L -o baksmali.jar 'https://github.com/baksmali/smali/releases/download/3.0.10/baksmali-3.0.10-fat-release.jar'
+          unzip -p base.apk classes2.dex > classes2.dex
+          unzip -p base.apk classes8.dex > classes8.dex
+      - name: Disassemble relevant dex files
+        run: |
+          set -eux
+          mkdir -p smali2 smali8 out
+          java -jar baksmali.jar d classes2.dex -o smali2
+          java -jar baksmali.jar d classes8.dex -o smali8
+          cp smali2/com/bachatas4/android/service/ImportService.smali out/
+          find smali8/com/bachatas4/android -type f \( -iname '*PkgTreePublisher*' -o -iname '*PkgExtractionLocation*' -o -iname '*AndroidPkgExportTarget*' -o -iname '*ImportService*' -o -iname '*DirectGameRegistrar*' \) -exec cp --parents {} out/ \;
+      - uses: actions/upload-artifact@v4
+        with:
+          name: importservice-smali-dump
+          path: out
