@@ -21,7 +21,6 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           base=Path('/tmp/decoded/smali_classes2/com/bachatas4/android')
-          # Set a Context at ImportService startup; one instruction-range call only.
           p=base/'service/ImportService.smali'
           s=p.read_text()
           marker='.method public onCreate()V'
@@ -30,7 +29,6 @@ jobs:
           s=s[:e]+ins+s[e:]
           p.write_text(s)
 
-          # Branch at final staging promotion. Null => byte-for-byte logical old path.
           p=base/'data/ContentImporter$finalizeStagingTree$2.smali'
           s=p.read_text()
           old='''    invoke-static {p1}, Lkotlin/ResultKt;->throwOnFailure(Ljava/lang/Object;)V\n\n    .line 164'''
@@ -61,7 +59,7 @@ jobs:
           .end method
 
           .method public static tryFinalize(Lcom/bachatas4/android/data/ContentImporter;Lcom/bachatas4/android/data/ContentImportRequest;Ljava/io/File;Ljava/lang/String;Ljava/lang/String;)Lcom/bachatas4/android/data/ContentImportResult;
-              .locals 14
+              .locals 13
               sget-object v0, Lcom/bachatas4/android/data/ExternalPkgCompat;->appContext:Landroid/content/Context;
               if-eqz v0, :none
               const-string v1, "pkg-extraction"
@@ -117,7 +115,7 @@ jobs:
           .end method
 
           .method private static copyTree(Ljava/io/File;Ljava/lang/String;Lcom/bachatas4/android/data/AndroidPkgExportTarget;)J
-              .locals 14
+              .locals 13
               const-wide/16 v0, 0x0
               invoke-virtual {p0}, Ljava/io/File;->listFiles()[Ljava/io/File;
               move-result-object v2
@@ -187,8 +185,8 @@ jobs:
               names=z.namelist(); assert names.count('classes2.dex')==1
               c2=z.read('classes2.dex')
               assert b'ExternalPkgCompat' in c2
-              for n in ['classes.dex','classes3.dex','classes4.dex','classes5.dex','classes6.dex','classes7.dex','classes8.dex','AndroidManifest.xml','assets/runtime/runtime.zip']:
-                  with zipfile.ZipFile('/tmp/original.apk') as o:
+              with zipfile.ZipFile('/tmp/original.apk') as o:
+                  for n in ['classes.dex','classes3.dex','classes4.dex','classes5.dex','classes6.dex','classes7.dex','classes8.dex','AndroidManifest.xml','assets/runtime/runtime.zip']:
                       assert z.read(n)==o.read(n), n
           print('minimal unsigned OK',hashlib.sha256(open(p,'rb').read()).hexdigest())
           PY
