@@ -1,0 +1,36 @@
+name: R3 inspect temp
+
+on:
+  push:
+    paths:
+      - '.github/workflows/tmp-r3-inspect.yml'
+  workflow_dispatch:
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download base and JADX
+        run: |
+          set -eux
+          curl -L -o base.apk 'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.3/Bachata-S4-Plus-v0.2.3.apk'
+          curl -L -o jadx.zip 'https://github.com/skylot/jadx/releases/download/v1.5.2/jadx-1.5.2.zip'
+          unzip -q jadx.zip -d jadx
+      - name: Decompile selected active classes
+        run: |
+          set -eux
+          ./jadx/bin/jadx --show-bad-code --no-res -d src base.apk || true
+          mkdir -p out
+          for f in \
+            src/sources/com/bachatas4/android/model/Game.java \
+            src/sources/com/bachatas4/android/feature/settings/SettingsScreenKt.java \
+            src/sources/com/bachatas4/android/service/EmulationService.java \
+            src/sources/com/bachatas4/android/database/BachataDatabase.java \
+            src/sources/com/bachatas4/android/database/BachataDatabase_Impl.java \
+            src/sources/com/bachatas4/android/data/GameRepository.java; do
+            [ -f "$f" ] && cp --parents "$f" out/
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: r3-inspect
+          path: out
