@@ -1,0 +1,22 @@
+name: tmp tools export
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/tmp-tools-export.yml'
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download tools
+        run: |
+          set -eux
+          curl -L -o jadx.zip 'https://github.com/skylot/jadx/releases/download/v1.5.2/jadx-1.5.2.zip'
+          curl -L -o baksmali.jar 'https://github.com/baksmali/smali/releases/download/3.0.10/baksmali-3.0.10-fat-release.jar'
+          curl -L -o smali.jar 'https://github.com/baksmali/smali/releases/download/3.0.10/smali-3.0.10-fat-release.jar'
+          mkdir out
+          mv jadx.zip baksmali.jar smali.jar out/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: local-android-tools
+          path: out
