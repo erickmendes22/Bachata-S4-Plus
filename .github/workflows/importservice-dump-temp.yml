@@ -10,22 +10,23 @@ jobs:
   dump:
     runs-on: ubuntu-latest
     steps:
-      - name: Download base APK and baksmali
+      - name: Download APKs and JADX
         run: |
           set -eux
-          curl -L -o base.apk 'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.3/Bachata-S4-Plus-v0.2.3.apk'
-          curl -L -o baksmali.jar 'https://github.com/baksmali/smali/releases/download/3.0.10/baksmali-3.0.10-fat-release.jar'
-          unzip -p base.apk classes2.dex > classes2.dex
-          unzip -p base.apk classes8.dex > classes8.dex
-      - name: Disassemble relevant dex files
+          curl -L -o plus.apk 'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.3/Bachata-S4-Plus-v0.2.3.apk'
+          curl -L -o release.apk 'https://github.com/JICA98/Bachata-S4/releases/download/0.2.3/bachatas4-0.2.3-release.apk'
+          curl -L -o jadx.zip 'https://github.com/skylot/jadx/releases/download/v1.5.2/jadx-1.5.2.zip'
+          unzip -q jadx.zip -d jadx
+      - name: Decompile both APKs
         run: |
           set -eux
-          mkdir -p smali2 smali8 out
-          java -jar baksmali.jar d classes2.dex -o smali2
-          java -jar baksmali.jar d classes8.dex -o smali8
-          cp smali2/com/bachatas4/android/service/ImportService.smali out/
-          find smali8/com/bachatas4/android -type f \( -iname '*PkgTreePublisher*' -o -iname '*PkgExtractionLocation*' -o -iname '*AndroidPkgExportTarget*' -o -iname '*ImportService*' -o -iname '*DirectGameRegistrar*' \) -exec cp --parents {} out/ \;
+          mkdir -p plus_src release_src out/plus out/release
+          ./jadx/bin/jadx --show-bad-code --no-res -d plus_src plus.apk || true
+          ./jadx/bin/jadx --show-bad-code --no-res -d release_src release.apk || true
+          find plus_src/sources -type f \( -iname '*ImportService*' -o -iname '*PkgTreePublisher*' -o -iname '*PkgExtractionLocation*' -o -iname '*AndroidPkgExportTarget*' -o -iname '*DirectGameRegistrar*' \) -exec cp --parents {} out/plus/ \; || true
+          grep -RIl --include='*.java' -E 'PKG extraction location|destinationTreeUri|PkgTreePublisher|pkgExtractionLocation' release_src/sources | while read f; do cp --parents "$f" out/release/; done || true
+          grep -RIl --include='*.java' -E 'class ImportService|runPkgBatchImport|runPkgImport' release_src/sources | head -20 | while read f; do cp --parents "$f" out/release/; done || true
       - uses: actions/upload-artifact@v4
         with:
-          name: importservice-smali-dump
+          name: importservice-jadx-dump
           path: out
