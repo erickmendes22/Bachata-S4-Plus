@@ -1,0 +1,55 @@
+name: tmp R16 bridge
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/tmp-r16-bridge.yml'
+      - '.github/tmp_r16/**'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile bridge dex
+        run: |
+          set -eux
+          curl -L -o kotlin-stdlib.jar 'https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.1.20/kotlin-stdlib-2.1.20.jar'
+          curl -L -o coroutines.jar 'https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.10.2/kotlinx-coroutines-core-jvm-1.10.2.jar'
+          mkdir -p stubsrc/com/bachatas4/android/data stubsrc/com/bachatas4/android/model stubsrc/com/bachatas4/android/service build helperdex
+          cat > stubsrc/com/bachatas4/android/data/ContentImporter.java <<'EOF'
+          package com.bachatas4.android.data; import java.io.File; import kotlin.coroutines.Continuation; public class ContentImporter { public Object finalizeStagingTree(ContentImportRequest r, File f, String m, String c, Continuation<? super ContentImportResult> x){return null;} }
+          EOF
+          cat > stubsrc/com/bachatas4/android/data/ContentImportRequest.java <<'EOF'
+          package com.bachatas4.android.data; public class ContentImportRequest { public String getId(){return null;} public String getTitle(){return null;} public String getSubtitle(){return null;} public String getDetail(){return null;} }
+          EOF
+          cat > stubsrc/com/bachatas4/android/data/ContentImportResult.java <<'EOF'
+          package com.bachatas4.android.data; import com.bachatas4.android.model.Game; public class ContentImportResult { public ContentImportResult(Game g,long b,String s){} }
+          EOF
+          cat > stubsrc/com/bachatas4/android/model/Game.java <<'EOF'
+          package com.bachatas4.android.model; public class Game { public Game(String a,String b,String c,String d,String e,long f){} }
+          EOF
+          cat > stubsrc/com/bachatas4/android/data/PkgExportTarget.java <<'EOF'
+          package com.bachatas4.android.data; public interface PkgExportTarget {}
+          EOF
+          cat > stubsrc/com/bachatas4/android/data/AndroidPkgExportTarget.java <<'EOF'
+          package com.bachatas4.android.data; import android.content.ContentResolver; public class AndroidPkgExportTarget implements PkgExportTarget { public AndroidPkgExportTarget(ContentResolver r,String s){} public void checkWritable(){} }
+          EOF
+          cat > stubsrc/com/bachatas4/android/data/PkgTreePublisher.java <<'EOF'
+          package com.bachatas4.android.data; import java.io.File; import kotlin.coroutines.Continuation; import kotlin.jvm.functions.Function1; import kotlin.jvm.functions.Function3; public class PkgTreePublisher { public PkgTreePublisher(PkgExportTarget t){} public static Object publish$default(PkgTreePublisher p,File f,String id,Function1 a,Function3 b,Continuation c,int m,Object n){return null;} }
+          EOF
+          cat > stubsrc/com/bachatas4/android/service/SafBrokerSession.java <<'EOF'
+          package com.bachatas4.android.service; import java.io.Closeable; public class SafBrokerSession implements Closeable { public String getSocketName(){return null;} public String getToken(){return null;} public void close(){} }
+          EOF
+          cat > stubsrc/com/bachatas4/android/service/SafGameBroker.java <<'EOF'
+          package com.bachatas4.android.service; import android.content.ContentResolver; public class SafGameBroker { public SafGameBroker(ContentResolver r){} public SafBrokerSession start(String s){return null;} }
+          EOF
+          ANDROID_JAR=$(find "$ANDROID_HOME/platforms" -name android.jar | sort -V | tail -1)
+          javac -source 8 -target 8 -cp "$ANDROID_JAR:kotlin-stdlib.jar:coroutines.jar" -d build $(find stubsrc -name '*.java') .github/tmp_r16/*.java
+          D8=$(find "$ANDROID_HOME/build-tools" -type f -name d8 | sort -V | tail -1)
+          "$D8" --min-api 26 --lib "$ANDROID_JAR" --classpath kotlin-stdlib.jar --classpath coroutines.jar --output helperdex $(find build/com/bachatas4/android/bridge -name '*.class')
+          mv helperdex/classes.dex classes9.dex
+          strings classes9.dex | grep -E 'direct-games|bachata-saf-socket|games/|ExternalDirectRuntimeBridge'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: r16-bridge-dex
+          path: classes9.dex
