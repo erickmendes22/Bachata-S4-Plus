@@ -1,4 +1,4 @@
-name: tmp save-manager base fetch
+name: tmp save-manager donor fetch
 on:
   push:
     paths:
@@ -7,12 +7,12 @@ jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
-      - name: Download clean 0.2.4 release APK
+      - name: Download donor Bachata S4 0.2.4
         run: |
-          curl -L --fail --retry 3             -o Bachata-S4-Plus-v0.2.4.apk             https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.4/Bachata-S4-Plus-v0.2.4.apk
-          echo "ac190640b974ac287f7cd1ca83739356407e24ffbeaf639db7c50b9ff7b228fd  Bachata-S4-Plus-v0.2.4.apk" | sha256sum -c -
+          curl -L --fail --retry 3             -o bachatas4-0.2.4-release.apk             https://github.com/JICA98/Bachata-S4/releases/download/v0.2.4/bachatas4-0.2.4-release.apk
+          echo "4077b0d0b80e354c71eff1ce2c003f122449ac266eb27a6ac26744d3f9809a08  bachatas4-0.2.4-release.apk" | sha256sum -c -
       - uses: actions/upload-artifact@v4
         with:
-          name: bachata-s4-plus-024-clean
-          path: Bachata-S4-Plus-v0.2.4.apk
+          name: bachata-s4-024-donor
+          path: bachatas4-0.2.4-release.apk
           retention-days: 1
