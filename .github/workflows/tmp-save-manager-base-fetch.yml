@@ -1,0 +1,18 @@
+name: tmp save-manager base fetch
+on:
+  push:
+    paths:
+      - '.github/workflows/tmp-save-manager-base-fetch.yml'
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download clean 0.2.4 release APK
+        run: |
+          curl -L --fail --retry 3             -o Bachata-S4-Plus-v0.2.4.apk             https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.4/Bachata-S4-Plus-v0.2.4.apk
+          echo "ac190640b974ac287f7cd1ca83739356407e24ffbeaf639db7c50b9ff7b228fd  Bachata-S4-Plus-v0.2.4.apk" | sha256sum -c -
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bachata-s4-plus-024-clean
+          path: Bachata-S4-Plus-v0.2.4.apk
+          retention-days: 1
