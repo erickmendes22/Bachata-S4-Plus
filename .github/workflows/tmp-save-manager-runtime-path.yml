@@ -1,0 +1,26 @@
+name: tmp compile save manager runtime path fix
+on:
+  push:
+    paths:
+      - '.github/workflows/tmp-save-manager-runtime-path.yml'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile helper
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SDK="$ANDROID_HOME"
+          PLATFORM=$(find "$SDK/platforms" -maxdepth 1 -type d -name 'android-*' | sort -V | tail -1)
+          BUILD_TOOLS=$(find "$SDK/build-tools" -maxdepth 1 -type d | sort -V | tail -1)
+          mkdir -p out/classes out/dex
+          javac -source 8 -target 8 -classpath "$PLATFORM/android.jar" -d out/classes tools/save-manager-runtime-path/ReleaseSaveManager.java
+          "$BUILD_TOOLS/d8" --min-api 26 --output out/dex $(find out/classes -name '*.class')
+          cp out/dex/classes.dex out/classes12.dex
+      - uses: actions/upload-artifact@v4
+        with:
+          name: save-manager-runtime-path-dex
+          path: out/classes12.dex
+          retention-days: 1
