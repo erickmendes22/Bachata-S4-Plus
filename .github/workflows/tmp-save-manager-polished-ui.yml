@@ -1,4 +1,4 @@
-name: tmp compile save manager polished ui
+name: tmp compile save manager polished ui r2
 on:
   push:
     paths:
