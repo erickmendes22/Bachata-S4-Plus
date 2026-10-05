@@ -62,7 +62,21 @@ public final class ReleaseSaveManager {
         final File gameDir = pendingGameDir;
         pendingActivity = activity;
         if (gameId == null) return;
-        if (requestCode == REQ_EXPORT_BACKUP) {\n            final Backup backup = pendingBackup;\n            if (backup == null || !backup.dir.isDirectory()) { toast(activity, "Backup folder no longer exists"); return; }\n            runBackground(activity, "Exporting backup...", new Work() {\n                public String run() throws Exception { exportBackupArchive(activity, uri, gameId, backup); return "Backup exported"; }\n            });\n            return;\n        }\n        if (requestCode == REQ_EXPORT) {
+        if (requestCode == REQ_EXPORT_BACKUP) {
+            final Backup backup = pendingBackup;
+            if (backup == null || !backup.dir.isDirectory()) {
+                toast(activity, "Backup folder no longer exists");
+                return;
+            }
+            runBackground(activity, "Exporting backup...", new Work() {
+                public String run() throws Exception {
+                    exportBackupArchive(activity, uri, gameId, backup);
+                    return "Backup exported";
+                }
+            });
+            return;
+        }
+        if (requestCode == REQ_EXPORT) {
             if (gameDir == null || !gameDir.isDirectory()) {
                 toast(activity, "Save folder no longer exists");
                 return;
