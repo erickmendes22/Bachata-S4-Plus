@@ -68,8 +68,7 @@ jobs:
         run: |
           set -euo pipefail
           curl -fL https://github.com/shadps4-emu/shadPS4/commit/eec0af82979e4f2c745eed398a621a9728de3a8e.patch -o /tmp/dynamic-tess.patch
-          git apply --check /tmp/dynamic-tess.patch
-          git apply --whitespace=nowarn /tmp/dynamic-tess.patch
+          patch --batch --forward -p1 --fuzz=5 < /tmp/dynamic-tess.patch
 
           # Required new implementation.
           grep -q 'MatchValue(voffset)' src/shader_recompiler/ir/passes/hull_shader_transform.cpp
