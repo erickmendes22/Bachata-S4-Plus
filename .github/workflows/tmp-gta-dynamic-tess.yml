@@ -63,6 +63,14 @@ jobs:
           }
           hydrate_repo "." 0
 
+          # The source export occasionally leaves first-level submodules unhydrated.
+          # Force dear_imgui explicitly because the ARM64 build needs its font compressor.
+          if [[ ! -f externals/dear_imgui/misc/fonts/binary_to_compressed_c.cpp ]]; then
+            rm -rf externals/dear_imgui
+            git clone --depth 1 --branch docking https://github.com/shadps4-emu/ext-imgui.git externals/dear_imgui
+          fi
+          test -f externals/dear_imgui/misc/fonts/binary_to_compressed_c.cpp
+
       - name: Apply dynamic tess support with ARM64 adaptation
         shell: bash
         working-directory: source
