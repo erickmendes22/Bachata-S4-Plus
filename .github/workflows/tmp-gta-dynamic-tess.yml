@@ -1,0 +1,125 @@
+name: GTA Dynamic Tess ARM64 FEX
+
+on:
+  push:
+    branches: [codex/gta-dynamic-tess]
+    paths:
+      - .github/workflows/tmp-gta-dynamic-tess.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-gta-tess:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@v4
+        with:
+          ref: codex/gta-dynamic-tess
+          path: control
+
+      - name: Checkout ARM64 source
+        uses: actions/checkout@v4
+        with:
+          repository: zenithblue-oss/shadps4-arm64
+          ref: be6bc2e9c60799e071dd2fafa6216e8d80ec619c
+          fetch-depth: 0
+          submodules: false
+          path: source
+
+      - name: Hydrate submodules
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          hydrate_repo() {
+            local root="$1"
+            local depth="$2"
+            (( depth > 5 )) && return 0
+            [[ -f "$root/.gitmodules" ]] || return 0
+            while read -r key path; do
+              local name="${key#submodule.}"
+              name="${name%.path}"
+              local url branch target
+              url="$(git -C "$root" config -f .gitmodules --get "submodule.$name.url" || true)"
+              branch="$(git -C "$root" config -f .gitmodules --get "submodule.$name.branch" || true)"
+              target="$root/$path"
+              [[ -n "$url" ]] || continue
+              git -C "$root" -c submodule.recurse=false submodule sync -- "$path" || true
+              if ! git -C "$root" -c submodule.recurse=false submodule update --init --depth 1 -- "$path"; then
+                rm -rf "$target"
+                if [[ -n "$branch" ]]; then
+                  git clone --depth 1 --branch "$branch" "$url" "$target" || git clone --depth 1 "$url" "$target"
+                else
+                  git clone --depth 1 "$url" "$target"
+                fi
+              fi
+              [[ -d "$target" ]] && hydrate_repo "$target" "$((depth + 1))" || true
+            done < <(git -C "$root" config -f .gitmodules --get-regexp '^submodule\\..*\\.path$' 2>/dev/null || true)
+          }
+          hydrate_repo "." 0
+
+      - name: Apply dynamic tess factor support only
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          curl -fL https://github.com/shadps4-emu/shadPS4/commit/eec0af82979e4f2c745eed398a621a9728de3a8e.patch -o /tmp/dynamic-tess.patch
+          git apply --check /tmp/dynamic-tess.patch
+          git apply --whitespace=nowarn /tmp/dynamic-tess.patch
+
+          # Required new implementation.
+          grep -q 'MatchValue(voffset)' src/shader_recompiler/ir/passes/hull_shader_transform.cpp
+          grep -q 'SetTessFactor' src/shader_recompiler/ir/passes/hull_shader_transform.cpp
+          grep -q 'dynamically_accesses_tess_factors' src/shader_recompiler/info.h
+          grep -q 'tess_factor_dynamic_array' src/shader_recompiler/backend/spirv/spirv_emit_context.h
+
+          # Explicitly reject the later Phi simplification from PR HEAD.
+          grep -q 'struct PhiInfo' src/shader_recompiler/ir/passes/hull_shader_transform.cpp
+          grep -q 'seq_num' src/shader_recompiler/ir/passes/hull_shader_transform.cpp
+          ! grep -q 'std::set<IR::Inst\*> phis' src/shader_recompiler/ir/passes/hull_shader_transform.cpp
+
+          git diff --check
+          git diff --stat
+          git diff > "$GITHUB_WORKSPACE/GTA-DYNAMIC-TESS-port.diff"
+
+      - name: Build AArch64 FEX
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/source:/workspace" \
+            -w /workspace \
+            -e BACHATA_INSIDE_DEBIAN_CONTAINER=1 \
+            debian:trixie bash -lc '
+              set -euo pipefail
+              git config --global --add safe.directory "*"
+              bash runtime/scripts/install-debian-runtime-deps.sh
+              bash runtime/scripts/build-shadps4-arm64.sh
+            '
+
+      - name: Locate and verify compiled core
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd source
+          CORE="$(find runtime/build -type f \( -name 'shadps4-arm64-fex' -o -name 'shadps4-arm64' -o -name 'shadps4' \) -size +10M | head -n1)"
+          test -n "$CORE"
+          test -s "$CORE"
+          file "$CORE"
+          readelf -h "$CORE" | grep -E 'ELF64|AArch64'
+          cp "$CORE" "$GITHUB_WORKSPACE/shadps4-arm64-fex"
+          sha256sum "$GITHUB_WORKSPACE/shadps4-arm64-fex" | tee "$GITHUB_WORKSPACE/GTA-DYNAMIC-TESS-sha256.txt"
+
+      - name: Upload GTA dynamic tess core
+        uses: actions/upload-artifact@v7
+        with:
+          name: GTA-DYNAMIC-TESS-shadps4-arm64-fex
+          path: |
+            shadps4-arm64-fex
+            GTA-DYNAMIC-TESS-sha256.txt
+            GTA-DYNAMIC-TESS-port.diff
+          if-no-files-found: error
+          retention-days: 7
