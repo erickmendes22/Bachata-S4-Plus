@@ -36,40 +36,14 @@ jobs:
         working-directory: source
         run: |
           set -euo pipefail
-          hydrate_repo() {
-            local root="$1"
-            local depth="$2"
-            (( depth > 5 )) && return 0
-            [[ -f "$root/.gitmodules" ]] || return 0
-            while read -r key path; do
-              local name="${key#submodule.}"
-              name="${name%.path}"
-              local url branch target
-              url="$(git -C "$root" config -f .gitmodules --get "submodule.$name.url" || true)"
-              branch="$(git -C "$root" config -f .gitmodules --get "submodule.$name.branch" || true)"
-              target="$root/$path"
-              [[ -n "$url" ]] || continue
-              git -C "$root" -c submodule.recurse=false submodule sync -- "$path" || true
-              if ! git -C "$root" -c submodule.recurse=false submodule update --init --depth 1 -- "$path"; then
-                rm -rf "$target"
-                if [[ -n "$branch" ]]; then
-                  git clone --depth 1 --branch "$branch" "$url" "$target" || git clone --depth 1 "$url" "$target"
-                else
-                  git clone --depth 1 "$url" "$target"
-                fi
-              fi
-              [[ -d "$target" ]] && hydrate_repo "$target" "$((depth + 1))" || true
-            done < <(git -C "$root" config -f .gitmodules --get-regexp '^submodule\\..*\\.path$' 2>/dev/null || true)
-          }
-          hydrate_repo "." 0
-
-          # The source export occasionally leaves first-level submodules unhydrated.
-          # Force dear_imgui explicitly because the ARM64 build needs its font compressor.
-          if [[ ! -f externals/dear_imgui/misc/fonts/binary_to_compressed_c.cpp ]]; then
-            rm -rf externals/dear_imgui
-            git clone --depth 1 --branch docking https://github.com/shadps4-emu/ext-imgui.git externals/dear_imgui
-          fi
+          git submodule sync --recursive
+          git submodule update --init --recursive --depth 1
           test -f externals/dear_imgui/misc/fonts/binary_to_compressed_c.cpp
+          test -f externals/ext-boost/CMakeLists.txt
+          test -f externals/spdlog/CMakeLists.txt
+          test -f externals/fmt/CMakeLists.txt
+          test -f externals/ffmpeg-core/CMakeLists.txt
+          test -f externals/zlib-ng/CMakeLists.txt
 
       - name: Apply dynamic tess support with ARM64 adaptation
         shell: bash
