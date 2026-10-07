@@ -74,3 +74,5 @@ for token in required:
         raise SystemExit(f"missing required token: {token}")
 if "std::set<IR::Inst*> phis" in s:
     raise SystemExit("later PR Phi simplification detected")
+
+# trigger build
