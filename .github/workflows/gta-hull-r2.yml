@@ -1,0 +1,109 @@
+name: GTA Hull R2 ARM64/FEX
+
+on:
+  push:
+    branches: [codex/gta-hull-r2]
+    paths:
+      - .github/workflows/gta-hull-r2.yml
+      - runtime/gta-hull-r2/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout control
+        uses: actions/checkout@v4
+        with:
+          path: control
+
+      - name: Checkout ARM64 source
+        uses: actions/checkout@v4
+        with:
+          repository: zenithblue-oss/shadps4-arm64
+          ref: be6bc2e9c60799e071dd2fafa6216e8d80ec619c
+          fetch-depth: 0
+          submodules: false
+          path: source
+
+      - name: Hydrate submodules
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          hydrate_repo() {
+            local root="$1"
+            local depth="$2"
+            (( depth > 5 )) && return 0
+            [[ -f "$root/.gitmodules" ]] || return 0
+            while read -r key path; do
+              local name="${key#submodule.}"
+              name="${name%.path}"
+              local url branch target
+              url="$(git -C "$root" config -f .gitmodules --get "submodule.$name.url" || true)"
+              branch="$(git -C "$root" config -f .gitmodules --get "submodule.$name.branch" || true)"
+              target="$root/$path"
+              [[ -n "$url" ]] || continue
+              git -C "$root" -c submodule.recurse=false submodule sync -- "$path" || true
+              if ! git -C "$root" -c submodule.recurse=false submodule update --init --depth 1 -- "$path"; then
+                rm -rf "$target"
+                if [[ -n "$branch" ]]; then
+                  git clone --depth 1 --branch "$branch" "$url" "$target" || git clone --depth 1 "$url" "$target"
+                else
+                  git clone --depth 1 "$url" "$target"
+                fi
+              fi
+              [[ -d "$target" ]] && hydrate_repo "$target" "$((depth + 1))" || true
+            done < <(git -C "$root" config -f .gitmodules --get-regexp '^submodule\\..*\\.path$' 2>/dev/null || true)
+          }
+          hydrate_repo "." 0
+
+      - name: Apply GTA tess-factor index fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 control/runtime/gta-hull-r2/apply.py source
+          git -C source diff --check
+          git -C source diff -- src/shader_recompiler/ir/passes/hull_shader_transform.cpp
+
+      - name: Build ARM64/FEX
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/source:/workspace" \
+            -w /workspace \
+            -e BACHATA_INSIDE_DEBIAN_CONTAINER=1 \
+            debian:trixie \
+            bash -lc '
+              set -euo pipefail
+              git config --global --add safe.directory "*"
+              bash runtime/scripts/install-debian-runtime-deps.sh
+              bash runtime/scripts/build-shadps4-arm64.sh
+            '
+
+      - name: Collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          CORE="$(find source/runtime/build -type f \
+            \\( -name 'shadps4-arm64-fex' -o -name 'shadps4-arm64' -o -name 'shadps4' \\) \
+            -size +10M | head -n1)"
+          test -n "$CORE"
+          cp "$CORE" shadps4-arm64-gta-hull-r2
+          file shadps4-arm64-gta-hull-r2
+          readelf -h shadps4-arm64-gta-hull-r2 | grep -E 'ELF64|AArch64'
+          sha256sum shadps4-arm64-gta-hull-r2 > GTA-HULL-R2.sha256
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: GTA-HULL-R2-shadps4-arm64
+          path: |
+            shadps4-arm64-gta-hull-r2
+            GTA-HULL-R2.sha256
+          if-no-files-found: error
+          retention-days: 7
