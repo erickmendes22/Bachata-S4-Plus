@@ -93,6 +93,8 @@ jobs:
             -e BACHATA_INSIDE_DEBIAN_CONTAINER=1 \
             debian:trixie bash -lc '
               set -euo pipefail
+              apt-get update
+              apt-get install -y --no-install-recommends git ca-certificates
               git config --global --add safe.directory "*"
               bash runtime/scripts/install-debian-runtime-deps.sh
               bash runtime/scripts/build-shadps4-arm64.sh
