@@ -43,7 +43,14 @@ jobs:
           import android.widget.FrameLayout;
           public final class Fsr3Ui {
             private static final String PREF="bs4_fsr31";
+            private static final String[] MODES = {"Native AA","Quality","Balanced","Performance","Ultra Performance"};
             private static int px(Activity a,int dp){return (int)(dp*a.getResources().getDisplayMetrics().density+0.5f);}
+            private static void refresh(Button button, SharedPreferences pref){
+              final boolean enabled=pref.getBoolean("enabled",false);
+              int preset=pref.getInt("preset",1);
+              if(preset<0||preset>=MODES.length)preset=1;
+              button.setText(enabled?"FSR 3.1 • "+MODES[preset]:"FSR 1 • Configurar");
+            }
             public static void attach(Activity activity){
               final View root=activity.getWindow().getDecorView().findViewById(android.R.id.content);
               if (!(root instanceof FrameLayout)) return;
@@ -53,22 +60,31 @@ jobs:
               button.setAllCaps(false);
               button.setTextColor(Color.WHITE);
               button.setTextSize(12f);
-              button.setText(pref.getBoolean("enabled",false)?"FSR 3.1 (experimental)":"FSR 3.1");
+              refresh(button,pref);
               final FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, px(activity,42),Gravity.END|Gravity.TOP);
               lp.setMargins(0,px(activity,54),px(activity,10),0);
               frame.addView(button,lp);
               button.setOnClickListener(v->{
                 int index=pref.getBoolean("enabled",false)?1:0;
-                final CharSequence[] options={"FSR 1 (original)","FSR 3.1 (experimental)"};
-                new AlertDialog.Builder(activity)
-                  .setTitle("BACHATA S4+ 0.2.6 - Upscaler")
-                  .setSingleChoiceItems(options,index,(dialog,selected)->{
+                new AlertDialog.Builder(activity).setTitle("BACHATA S4+ — Upscaler")
+                  .setSingleChoiceItems(new CharSequence[]{"FSR 1 (original)","FSR 3.1"},index,(dialog,selected)->{
                     pref.edit().putBoolean("enabled",selected==1).apply();
-                    button.setText(selected==1?"FSR 3.1 (experimental)":"FSR 3.1");
                     dialog.dismiss();
-                  })
+                    refresh(button,pref);
+                    if(selected==1)showModes(activity,button,pref);
+                  }).setNeutralButton("Modos FSR 3.1",(d,w)->showModes(activity,button,pref))
                   .setNegativeButton("Cancelar",null).show();
               });
+            }
+            private static void showModes(Activity activity,Button button, SharedPreferences pref){
+              int preset=pref.getInt("preset",1);
+              if(preset<0||preset>=MODES.length)preset=1;
+              new AlertDialog.Builder(activity).setTitle("FSR 3.1 — Preset")
+                .setSingleChoiceItems(MODES,preset,(dialog,choice)->{
+                  pref.edit().putInt("preset",choice).apply();
+                  refresh(button,pref);
+                  dialog.dismiss();
+                }).setNegativeButton("Cancelar",null).show();
             }
           }
           JAVA
