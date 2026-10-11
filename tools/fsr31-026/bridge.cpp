@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <mutex>
 #include <fstream>
+#include <cstdlib>
 #include <string>
 namespace {
 std::mutex guard;
@@ -84,9 +85,17 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(
     if (++polls % 120u == 1u) {
         enabled = false;
         preset = 1;
-        for (const char* path : {
-              "/data/user/0/com.bachatas4.android/shared_prefs/bs4_fsr31.xml",
-              "/data/data/com.bachatas4.android/shared_prefs/bs4_fsr31.xml"}) {
+        // The runtime launcher explicitly forwards this preference into
+        // GLIBC/FEX via BACHATA_FSR31_MODE. -1 = disabled, 0..4 = preset.
+        // This also works when the Linux rootfs hides Android /data paths.
+        if (const char* mode = std::getenv("BACHATA_FSR31_MODE")) {
+            if (*mode >= '0' && *mode <= '4' && mode[1] == '\\0') {
+                enabled = true;
+                preset = *mode - '0';
+            }
+        } else for (const char* path : {
+              "/data/user/0/com.bachatas4.plusapp/shared_prefs/bs4_fsr31.xml",
+              "/data/data/com.bachatas4.plusapp/shared_prefs/bs4_fsr31.xml"}) {
             std::ifstream settings(path);
             if (!settings) continue;
             const std::string contents{std::istreambuf_iterator<char>{settings}, {}};
