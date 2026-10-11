@@ -1,0 +1,41 @@
+name: Locate 026 host process launch and env bridge
+on:
+  push:
+    branches: [feature/fsr31-026-existing-core]
+    paths: [.github/workflows/fsr31-launcher-env-inspect.yml]
+permissions: {contents: read}
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          set -eu
+          curl -fLsS https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar -o /tmp/apktool.jar
+          curl -fLsS https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.6/Bachata-S4-Plus-v0.2.6.apk -o /tmp/original.apk
+          java -Xmx4g -jar /tmp/apktool.jar d -f -r /tmp/original.apk -o /tmp/app
+          mkdir -p report
+          grep -RnlE 'LD_LIBRARY_PATH|ProcessBuilder;->environment|proot|shadps4-arm64-024|shared_prefs' /tmp/app/smali* --include='*.smali' > report/matches.txt || :
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+          root=Path('/tmp/app')
+          out=Path('report/code')
+          count=0
+          for f in Path('report/matches.txt').read_text().splitlines():
+              p=Path(f)
+              if not p.exists() or 'com/bachatas4/android' not in f:continue
+              text=p.read_text(errors='replace')
+              # Select only classes invoking a process launch / proot process.
+              if not any(x in text for x in ['ProcessBuilder;->environment','ProcessBuilder;->start','LD_LIBRARY_PATH','shadps4-arm64-024','proot']):continue
+              dest=out/p.relative_to(root)
+              dest.parent.mkdir(parents=True,exist_ok=True)
+              shutil.copy2(p,dest)
+              count+=1
+          print(count)
+          PY
+          du -sh report
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BS4-026-launcher-env
+          path: report/
+          if-no-files-found: error
