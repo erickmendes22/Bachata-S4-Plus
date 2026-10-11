@@ -1,0 +1,49 @@
+name: Inspect 026 UI FSR preference for real FSR3 integration
+on:
+  push:
+    branches: [feature/fsr31-026-existing-core]
+    paths: [.github/workflows/fsr31-analyze-ui.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install apktool
+        run: |
+          set -eux
+          curl -fL --retry 3 https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar -o /tmp/apktool.jar
+          java -jar /tmp/apktool.jar --version
+      - name: Decompile original release APK
+        run: |
+          set -eux
+          curl -fL --retry 3 https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.6/Bachata-S4-Plus-v0.2.6.apk -o /tmp/base.apk
+          java -Xmx4g -jar /tmp/apktool.jar d -f -r -s /tmp/base.apk -o /tmp/app-resources
+          java -Xmx4g -jar /tmp/apktool.jar d -f -r /tmp/base.apk -o /tmp/app-smali
+          find /tmp/app-smali -path '*smali*' -name '*.smali' | wc -l
+      - name: Extract main menu FSR settings classes
+        run: |
+          set -eux
+          mkdir -p report
+          grep -RnilE 'FSR|Fsr|fsr|Upscaler|upscal' /tmp/app-smali/smali* > report/matches.txt || :
+          cp /tmp/app-smali/AndroidManifest.xml report/AndroidManifest.xml
+          python3 - <<'PY'
+          import pathlib,shutil
+          base=pathlib.Path('/tmp/app-smali')
+          out=pathlib.Path('report/classes')
+          for line in pathlib.Path('report/matches.txt').read_text().splitlines():
+              f=pathlib.Path(line)
+              if not f.exists():continue
+              if 'com/bachatas4' in str(f):
+                  dest=out/f.relative_to(base)
+                  dest.parent.mkdir(parents=True,exist_ok=True)
+                  shutil.copy2(f,dest)
+          print('files:',len(list(out.rglob('*.smali'))))
+          PY
+          du -sh report
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BS4-026-UI-FSR-SMALI
+          path: report/
+          if-no-files-found: error
+          retention-days: 2
