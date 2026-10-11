@@ -28,6 +28,21 @@ jobs:
           assert s.count(signature)==1
           s=s.replace(signature,signature+'\n\n    invoke-static {v0}, Lcom/bachatas4/android/bridge/Fsr3Ui;->attach(Landroid/app/Activity;)V')
           p.write_text(s)
+          legacy=Path('/tmp/decoded/smali_classes2/com/bachatas4/android/runtime/process/RuntimeProcessLauncher.smali')
+          t=legacy.read_text()
+          target='    :cond_3\n    iget-object p0, p0, Lcom/bachatas4/android/runtime/process/RuntimeProcessLauncher;->starter:Lcom/bachatas4/android/runtime/process/RuntimeProcessStarter;'
+          assert t.count(target)==1
+          t=t.replace(target,'    :cond_3\n    invoke-static {v0}, Lcom/bachatas4/android/bridge/Fsr3Ui;->enrichProcessEnvironment(Ljava/util/Map;)V\n\n    iget-object p0, p0, Lcom/bachatas4/android/runtime/process/RuntimeProcessLauncher;->starter:Lcom/bachatas4/android/runtime/process/RuntimeProcessStarter;')
+          legacy.write_text(t)
+          native=Path('/tmp/decoded/smali_classes8/com/bachatas4/android/runtime/process/NativeRuntimeProcessLauncher.smali')
+          t=native.read_text()
+          target='.method private final filteredEnvironment(Ljava/util/Map;)[Ljava/lang/String;\n    .locals 0'
+          assert t.count(target)==1
+          t=t.replace(target,'.method private final filteredEnvironment(Ljava/util/Map;)[Ljava/lang/String;\n    .locals 1')
+          target='    .line 233\n    invoke-static {p1}, Lkotlin/collections/MapsKt;->asSequence(Ljava/util/Map;)Lkotlin/sequences/Sequence;'
+          assert t.count(target)==1
+          t=t.replace(target,'    iget-object v0, p0, Lcom/bachatas4/android/runtime/process/NativeRuntimeProcessLauncher;->context:Landroid/content/Context;\n    invoke-static {v0, p1}, Lcom/bachatas4/android/bridge/Fsr3Ui;->enrichEnvironment(Landroid/content/Context;Ljava/util/Map;)V\n\n'+target)
+          native.write_text(t)
           PY
           mkdir -p /tmp/java/com/bachatas4/android/bridge
           cat > /tmp/java/com/bachatas4/android/bridge/Fsr3Ui.java <<'JAVA'
@@ -35,6 +50,8 @@ jobs:
           import android.app.Activity;
           import android.app.AlertDialog;
           import android.content.SharedPreferences;
+          import android.content.Context;
+          import java.util.Map;
           import android.graphics.Color;
           import android.view.Gravity;
           import android.view.View;
@@ -43,6 +60,18 @@ jobs:
           import android.widget.FrameLayout;
           public final class Fsr3Ui {
             private static final String PREF="bs4_fsr31";
+            private static volatile Context appContext;
+            public static void enrichEnvironment(Context ctx, Map<String,String> env){
+              if(ctx==null||env==null)return;
+              SharedPreferences p=ctx.getSharedPreferences(PREF,Context.MODE_PRIVATE);
+              int preset=p.getInt("preset",1);
+              if(preset<0||preset>4)preset=1;
+              env.put("BACHATA_FSR31_MODE", p.getBoolean("enabled",false)?Integer.toString(preset):"-1");
+            }
+            public static void enrichProcessEnvironment(Map<String,String> env){
+              enrichEnvironment(appContext,env);
+            }
+
             private static final String[] MODES = {"Native AA","Quality","Balanced","Performance","Ultra Performance"};
             private static int px(Activity a,int dp){return (int)(dp*a.getResources().getDisplayMetrics().density+0.5f);}
             private static void refresh(Button button, SharedPreferences pref){
@@ -52,6 +81,7 @@ jobs:
               button.setText(enabled?"FSR 3.1 • "+MODES[preset]:"FSR 1 • Configurar");
             }
             public static void attach(Activity activity){
+              appContext=activity.getApplicationContext();
               final View root=activity.getWindow().getDecorView().findViewById(android.R.id.content);
               if (!(root instanceof FrameLayout)) return;
               final FrameLayout frame=(FrameLayout)root;
@@ -100,11 +130,13 @@ jobs:
           set -euxo pipefail
           mkdir -p artifact
           unzip -p /tmp/unsigned-rebuilt.apk classes2.dex > artifact/classes2.dex
+          unzip -p /tmp/unsigned-rebuilt.apk classes8.dex > artifact/classes8.dex
           cp /tmp/dexout/classes.dex artifact/classes9.dex
+          test -s artifact/classes8.dex
           test -s artifact/classes2.dex
           test -s artifact/classes9.dex
           unzip -p /tmp/original.apk classes2.dex | sha256sum | tee artifact/original-classes2.sha
-          sha256sum artifact/classes2.dex artifact/classes9.dex | tee artifact/new-dex.sha
+          sha256sum artifact/classes2.dex artifact/classes8.dex artifact/classes9.dex | tee artifact/new-dex.sha
       - uses: actions/upload-artifact@v4
         with:
           name: BACHATA-026-FSR3-INTERFACE-DEX
