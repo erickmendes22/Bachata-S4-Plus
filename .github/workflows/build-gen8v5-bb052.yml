@@ -18,16 +18,21 @@ jobs:
         run: |
           set -euxo pipefail
           sudo dpkg --add-architecture arm64
-          if [ -e /etc/apt/sources.list.d/ubuntu.sources ]; then
-            sudo python3 - <<'PY'
-          from pathlib import Path
-          p=Path('/etc/apt/sources.list.d/ubuntu.sources')
-          s=p.read_text()
-          blocks=s.strip().split('\n\n')
-          blocks=[b+'\nArchitectures: amd64' if 'Architectures:' not in b else b for b in blocks]
-          p.write_text('\n\n'.join(blocks)+'\n')
-          PY
-          fi
+          sudo tee /etc/apt/sources.list.d/ubuntu.sources >/dev/null <<'EOF'
+          Types: deb
+          URIs: http://archive.ubuntu.com/ubuntu
+          Suites: noble noble-updates
+          Components: main restricted universe multiverse
+          Architectures: amd64
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+          Types: deb
+          URIs: http://security.ubuntu.com/ubuntu
+          Suites: noble-security
+          Components: main restricted universe multiverse
+          Architectures: amd64
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
           sudo tee /etc/apt/sources.list.d/arm64.sources >/dev/null <<'EOF'
           Types: deb
           URIs: http://ports.ubuntu.com/ubuntu-ports
