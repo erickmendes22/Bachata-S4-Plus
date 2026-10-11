@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <mutex>
+#include <fstream>
+#include <string>
 namespace {
 std::mutex guard;
 FfxVkPortableUpscaleContext* ctx = nullptr;
@@ -74,6 +76,24 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(uint64_t fsr1OutputView,
     (void)settings;
     (void)hdr;
     std::lock_guard<std::mutex> lock(guard);
+    // Preference written by BACHATA 0.2.6's native Android settings UI.
+    // Its absence or unreadability leaves the existing FSR 1 path untouched.
+    static unsigned polls = 0;
+    static bool enabled = false;
+    if (++polls % 120u == 1u) {
+        enabled = false;
+        for (const char* path : {
+              "/data/user/0/com.bachatas4.android/shared_prefs/bs4_fsr31.xml",
+              "/data/data/com.bachatas4.android/shared_prefs/bs4_fsr31.xml"}) {
+            std::ifstream settings(path);
+            if (!settings) continue;
+            const std::string contents{std::istreambuf_iterator<char>{settings}, {}};
+            if (contents.find("name=\"enabled\" value=\"true\"") != std::string::npos)
+                enabled = true;
+            break;
+        }
+    }
+    if (!enabled) return 0;
     if (!valid || !ctx || !pending.available ||
         pending.info.commandBuffer != reinterpret_cast<VkCommandBuffer>(commandBuffer)) return 0;
     auto info = pending.info;
