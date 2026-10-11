@@ -1,0 +1,96 @@
+name: Patch BACHATA 026 interface for FSR3 control
+on:
+  push:
+    branches: [feature/fsr31-026-existing-core]
+    paths:
+      - '.github/workflows/fsr31-026-ui-build.yml'
+permissions: {contents: read}
+jobs:
+  ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Get exact 0.2.6 APK and apktool
+        run: |
+          set -euxo pipefail
+          curl -fLsS --retry 3 https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar -o /tmp/apktool.jar
+          curl -fLsS --retry 3 https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.6/Bachata-S4-Plus-v0.2.6.apk -o /tmp/original.apk
+          java -Xmx4g -jar /tmp/apktool.jar d -f -r /tmp/original.apk -o /tmp/decoded
+      - name: Patch existing MainActivity and compile standalone Android control class
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/decoded/smali_classes2/com/bachatas4/android/MainActivity.smali')
+          s=p.read_text()
+          signature='invoke-static {v0, v2, p0, v1, v2}, Landroidx/activity/compose/ComponentActivityKt;->setContent$default(Landroidx/activity/ComponentActivity;Landroidx/compose/runtime/CompositionContext;Lkotlin/jvm/functions/Function2;ILjava/lang/Object;)V'
+          assert s.count(signature)==1
+          s=s.replace(signature,signature+'\n\n    invoke-static {v0}, Lcom/bachatas4/android/bridge/Fsr3Ui;->attach(Landroid/app/Activity;)V')
+          p.write_text(s)
+          PY
+          mkdir -p /tmp/java/com/bachatas4/android/bridge
+          cat > /tmp/java/com/bachatas4/android/bridge/Fsr3Ui.java <<'JAVA'
+          package com.bachatas4.android.bridge;
+          import android.app.Activity;
+          import android.app.AlertDialog;
+          import android.content.SharedPreferences;
+          import android.graphics.Color;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.view.ViewGroup;
+          import android.widget.Button;
+          import android.widget.FrameLayout;
+          public final class Fsr3Ui {
+            private static final String PREF="bs4_fsr31";
+            private static int px(Activity a,int dp){return (int)(dp*a.getResources().getDisplayMetrics().density+0.5f);}
+            public static void attach(Activity activity){
+              final View root=activity.getWindow().getDecorView().findViewById(android.R.id.content);
+              if (!(root instanceof FrameLayout)) return;
+              final FrameLayout frame=(FrameLayout)root;
+              final SharedPreferences pref=activity.getSharedPreferences(PREF,Activity.MODE_PRIVATE);
+              final Button button=new Button(activity);
+              button.setAllCaps(false);
+              button.setTextColor(Color.WHITE);
+              button.setTextSize(12f);
+              button.setText(pref.getBoolean("enabled",false)?"FSR 3.1 (experimental)":"FSR 3.1");
+              final FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, px(activity,42),Gravity.END|Gravity.TOP);
+              lp.setMargins(0,px(activity,54),px(activity,10),0);
+              frame.addView(button,lp);
+              button.setOnClickListener(v->{
+                int index=pref.getBoolean("enabled",false)?1:0;
+                final CharSequence[] options={"FSR 1 (original)","FSR 3.1 (experimental)"};
+                new AlertDialog.Builder(activity)
+                  .setTitle("BACHATA S4+ 0.2.6 - Upscaler")
+                  .setSingleChoiceItems(options,index,(dialog,selected)->{
+                    pref.edit().putBoolean("enabled",selected==1).apply();
+                    button.setText(selected==1?"FSR 3.1 (experimental)":"FSR 3.1");
+                    dialog.dismiss();
+                  })
+                  .setNegativeButton("Cancelar",null).show();
+              });
+            }
+          }
+          JAVA
+          ANDROID_JAR="$(find "$ANDROID_HOME/platforms" -maxdepth 2 -name android.jar | sort -Vr | head -n1)"
+          D8="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -type f -name d8 | sort -Vr | head -n1)"
+          echo "$ANDROID_JAR $D8"
+          mkdir -p /tmp/classes /tmp/dexout
+          javac -encoding UTF-8 -source 8 -target 8 -cp "$ANDROID_JAR" -d /tmp/classes /tmp/java/com/bachatas4/android/bridge/Fsr3Ui.java
+          "$D8" --min-api 26 --lib "$ANDROID_JAR" --output /tmp/dexout /tmp/classes/com/bachatas4/android/bridge/Fsr3Ui.class
+          java -Xmx4g -jar /tmp/apktool.jar b /tmp/decoded -o /tmp/unsigned-rebuilt.apk
+      - name: Export small dex payload and ensure APK structure
+        run: |
+          set -euxo pipefail
+          mkdir -p artifact
+          unzip -p /tmp/unsigned-rebuilt.apk classes2.dex > artifact/classes2.dex
+          cp /tmp/dexout/classes.dex artifact/classes9.dex
+          test -s artifact/classes2.dex
+          test -s artifact/classes9.dex
+          unzip -p /tmp/original.apk classes2.dex | sha256sum | tee artifact/original-classes2.sha
+          sha256sum artifact/classes2.dex artifact/classes9.dex | tee artifact/new-dex.sha
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BACHATA-026-FSR3-INTERFACE-DEX
+          path: artifact/
+          if-no-files-found: error
