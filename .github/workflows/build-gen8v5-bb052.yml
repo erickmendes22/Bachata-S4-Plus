@@ -1,0 +1,154 @@
+name: Build Gen8 V5 with Bloodborne KGSL fixes
+on:
+  push:
+    branches:
+      - build/gen8-v5-bb052-kgsl-20261011
+    paths:
+      - .github/workflows/build-gen8v5-bb052.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  turnip:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Install AArch64 cross compilation dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo dpkg --add-architecture arm64
+          if [ -e /etc/apt/sources.list.d/ubuntu.sources ]; then
+            sudo python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/etc/apt/sources.list.d/ubuntu.sources')
+          s=p.read_text()
+          blocks=s.strip().split('\n\n')
+          blocks=[b+'\nArchitectures: amd64' if 'Architectures:' not in b else b for b in blocks]
+          p.write_text('\n\n'.join(blocks)+'\n')
+          PY
+          fi
+          sudo tee /etc/apt/sources.list.d/arm64.sources >/dev/null <<'EOF'
+          Types: deb
+          URIs: http://ports.ubuntu.com/ubuntu-ports
+          Suites: noble noble-updates noble-security
+          Components: main restricted universe multiverse
+          Architectures: arm64
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git curl unzip file binutils meson ninja-build python3-mako python3-setuptools python3-yaml python3-packaging pkg-config flex bison glslang-tools libvulkan-dev gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libz-dev:arm64 libexpat1-dev:arm64 libx11-dev:arm64 libxcb1-dev:arm64 libx11-xcb-dev:arm64 libxcb-dri3-dev:arm64 libxcb-present-dev:arm64 libxcb-xfixes0-dev:arm64 libxcb-randr0-dev:arm64 libxcb-shm0-dev:arm64 libxcb-sync-dev:arm64 libxshmfence-dev:arm64 libdrm-dev:arm64 libstdc++-dev:arm64
+          python3 -m pip install --break-system-packages --upgrade 'meson>=1.5' mako packaging || true
+          git --version; meson --version; aarch64-linux-gnu-g++ --version | head -1
+
+      - name: Prepare exact original V5 source and full compatible patch set
+        shell: bash
+        run: |
+          set -euxo pipefail
+          PIN=9c7e022677dfa3abb356c2b6732cbd2e25783d01
+          mkdir -p /tmp/turnip-input
+          curl -fL --retry 3 https://github.com/JICA98/bachata-s4-drivers/releases/download/gen8-v5/Turnip-gen8-v5-9c7e022-EMULATOR.zip -o /tmp/turnip-input/original.zip
+          unzip -qo /tmp/turnip-input/original.zip -d /tmp/turnip-input/original
+          python3 - <<'PY'
+          import json
+          m=json.load(open('/tmp/turnip-input/original/meta.json'))
+          assert m['sourceCommit']=='9c7e022677dfa3abb356c2b6732cbd2e25783d01'
+          assert m['line']=='gen8' and m['abi']=='linux-aarch64-glibc'
+          assert m['releaseVersion']==5
+          PY
+          git clone --depth 1 --branch psycho https://github.com/JICA98/bachata-s4-drivers.git /tmp/drivers
+          rm /tmp/drivers/patches/kgsl-zero-timeout-poll.patch
+          RAW=https://raw.githubusercontent.com/ducvd89/Bloodborne-Android/android-0.5.2/tools/android/mesa-patches
+          PATCHES=(
+            gen8/0001-tu-kgsl-Prevent-overflow-in-kgsl-queue-wait-fence.patch
+            gen8/0002-tu-kgsl-Distinguish-timestamp-and-sync-wait-errors.patch
+            gen8/0003-tu-kgsl-Prevent-indefinite-wait-times-for-0-timeout-waits.patch
+            gen8/0004-tu-kgsl-Always-round-up-the-wait-timeout.patch
+            0001-freedreno-a840-kgsl-patchid-wildcard.patch
+            0005-wsi-x11-sw-wait-for-the-gpu-on-the-present-thread.patch
+            0006-tu-kgsl-power-constraint-from-the-environment.patch
+          )
+          index=0
+          for patch in "${PATCHES[@]}"; do
+            index=$((index+1))
+            printf -v dest "/tmp/drivers/patches/%02d-%s" "$index" "${patch##*/}"
+            curl -fLsS --retry 3 "$RAW/$patch" -o "$dest"
+            test -s "$dest"
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/drivers/scripts/build-driver.sh')
+          s=p.read_text()
+          marker='commit="$(git -C "$src" rev-parse HEAD)"'
+          assert s.count(marker)==1
+          s=s.replace(marker,'git -C "$src" fetch --depth 1 origin "9c7e022677dfa3abb356c2b6732cbd2e25783d01"\ngit -C "$src" checkout --force FETCH_HEAD\n'+marker)
+          p.write_text(s)
+          # Existing check only supports the old inline implementation. New patch extracts poll into helper.
+          check=Path('/tmp/drivers/scripts/check-kgsl-zero-timeout.sh')
+          check.write_text("""#!/usr/bin/env bash
+          set -euo pipefail
+          python3 - "$1" <<'CHECK'
+          import sys
+          s=open(sys.argv[1]).read()
+          for x in ('kgsl_poll_timestamp(', 'IOCTL_KGSL_CMDSTREAM_READTIMESTAMP_CTXTID', 'IOCTL_KGSL_DEVICE_WAITTIMESTAMP_CTXTID', 'return kgsl_poll_timestamp(device'):
+              if x not in s: raise SystemExit('Missing KGSL zero wait fix: '+x)
+          CHECK
+          """.replace('          ',''))
+          check.chmod(0o755)
+          PY
+
+      - name: Compile original Gen8 V5 source with compatible Bloodborne patches
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd /tmp/drivers
+          FORCE_VERSION=5 FORCE=1 ./scripts/build-driver.sh gen8 2>&1 | tee /tmp/build-gen8.log
+
+      - name: Verify no missing Bachata dependencies or lost Vulkan extensions
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd /tmp/drivers
+          ZIP=dist/Turnip-gen8-v5-9c7e022-EMULATOR.zip
+          test -s "$ZIP"
+          mkdir -p /tmp/new
+          unzip -qo "$ZIP" -d /tmp/new
+          python3 - <<'PY'
+          import subprocess, pathlib, json
+          old=pathlib.Path('/tmp/turnip-input/original/libvulkan_freedreno.so')
+          new=pathlib.Path('/tmp/new/libvulkan_freedreno.so')
+          def needed(p):
+              o=subprocess.check_output(['readelf','-d',str(p)],text=True)
+              return {s.split('[')[-1].split(']')[0] for s in o.splitlines() if '(NEEDED)' in s}
+          a,b=needed(old),needed(new)
+          print('ORIGINAL:',sorted(a))
+          print('PATCHED :',sorted(b))
+          assert b<=a, 'New dynamic dependencies unsupported by Bachata: '+str(b-a)
+          a_bytes=old.read_bytes(); b_bytes=new.read_bytes()
+          assert a_bytes!=b_bytes
+          for name in (b'VK_KHR_surface',b'VK_KHR_xcb_surface',b'VK_KHR_xlib_surface'):
+              assert name in a_bytes and name in b_bytes, 'Missing expected Vulkan WSI extension '+repr(name)
+          m=json.load(open('/tmp/new/meta.json'))
+          m['name']='Turnip gen8 V5 KGSL BB052 patched (Bachata)'
+          m['description']='Exact 9c7e022 Gen8 V5, original Bachata glibc build options; 7 source patches from Bloodborne 0.5.2 (no FEXDROID_PRESENT).'
+          m['patches']=['kgsl-wait-overflow','kgsl-sync-errors','kgsl-zero-timeout-upstream','kgsl-round-up','a840-patchid-wildcard','wsi-present-thread-wait','kgsl-power-constraint']
+          pathlib.Path('/tmp/new/meta.json').write_text(json.dumps(m,indent=2)+'\n')
+          PY
+          python3 - <<'PY'
+          import zipfile
+          out='/tmp/drivers/dist/Turnip-gen8-v5-9c7e022-KGSL-BB052-CORRIGIDA-EMULATOR.zip'
+          with zipfile.ZipFile(out,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+              for n in ('libvulkan_freedreno.so','freedreno_icd.aarch64.json','meta.json'):
+                  z.write('/tmp/new/'+n,n)
+          print(out)
+          PY
+          ./scripts/validate-driver.sh dist/Turnip-gen8-v5-9c7e022-KGSL-BB052-CORRIGIDA-EMULATOR.zip
+
+      - name: Upload compiled and validated Turnip
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: Turnip-gen8-v5-9c7e022-KGSL-BB052-CORRIGIDA-EMULATOR
+          path: /tmp/drivers/dist/Turnip-gen8-v5-9c7e022-KGSL-BB052-CORRIGIDA-EMULATOR.zip
+          if-no-files-found: error
+          retention-days: 7
