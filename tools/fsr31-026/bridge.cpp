@@ -4,6 +4,7 @@
 // scene colour, depth, motion vectors, and jitter to the dispatch.
 #include <ffx_vk_portable.h>
 #include <cstdint>
+#include <cmath>
 #include <cstdio>
 #include <mutex>
 #include <fstream>
@@ -65,10 +66,9 @@ BS4_PUBLIC int bs4_fsr31_supply_temporal_frame(
     pending.available = true;
     return 1;
 }
-BS4_PUBLIC uint64_t bs4_fsr31_try_render(uint64_t fsr1OutputView,
+BS4_PUBLIC uint64_t bs4_fsr31_try_render(
     uint64_t fsrPassObject, uint64_t commandBuffer, uint64_t inputView,
     uint64_t renderExtent, uint64_t outputExtent, uint64_t settings, uint64_t hdr) {
-    (void)fsr1OutputView;
     (void)fsrPassObject;
     (void)inputView;
     (void)renderExtent;
@@ -80,8 +80,10 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(uint64_t fsr1OutputView,
     // Its absence or unreadability leaves the existing FSR 1 path untouched.
     static unsigned polls = 0;
     static bool enabled = false;
+    static int preset = 1; // 0 Native AA, 1 Quality, 2 Balanced, 3 Performance, 4 Ultra
     if (++polls % 120u == 1u) {
         enabled = false;
+        preset = 1;
         for (const char* path : {
               "/data/user/0/com.bachatas4.android/shared_prefs/bs4_fsr31.xml",
               "/data/data/com.bachatas4.android/shared_prefs/bs4_fsr31.xml"}) {
@@ -90,6 +92,12 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(uint64_t fsr1OutputView,
             const std::string contents{std::istreambuf_iterator<char>{settings}, {}};
             if (contents.find("name=\"enabled\" value=\"true\"") != std::string::npos)
                 enabled = true;
+            const std::string tag = "name=\"preset\" value=\"";
+            const auto at = contents.find(tag);
+            if (at != std::string::npos && at + tag.size() < contents.size()) {
+                const char n = contents[at + tag.size()];
+                if (n >= '0' && n <= '4') preset = n - '0';
+            }
             break;
         }
     }
@@ -97,6 +105,20 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(uint64_t fsr1OutputView,
     if (!valid || !ctx || !pending.available ||
         pending.info.commandBuffer != reinterpret_cast<VkCommandBuffer>(commandBuffer)) return 0;
     auto info = pending.info;
+    // Preset scales are constraints on the *actual scene render extent*, never
+    // post-presentation resizes.  Native AA = 1.0, Quality = 1.5,
+    // Balanced ~=1.7, Performance = 2.0, Ultra = 3.0.
+    // Until the game's producer supplies an image at the requested extent,
+    // retain the original FSR1 renderer instead of mislabelling its output.
+    const uint64_t ow = info.outputSize.width;
+    const uint64_t oh = info.outputSize.height;
+    const uint64_t rw = info.renderSize.width;
+    const uint64_t rh = info.renderSize.height;
+    static constexpr float ratios[] = {1.f,1.5f,1.7f,2.f,3.f};
+    const float desired = ratios[preset];
+    if (!rw || !rh || !ow || !oh ||
+        (std::abs(float(ow) / float(rw) - desired) > 0.12f) ||
+        (std::abs(float(oh) / float(rh) - desired) > 0.12f)) return 0;
     const VkImageView view = pending.outputView;
     pending.available = false;
     if (ffxVkPortableValidateUpscaleDispatchInfo(&current,&info)) return 0;
