@@ -42,7 +42,7 @@ jobs:
           Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
           EOF
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git curl unzip file binutils meson ninja-build python3-mako python3-setuptools python3-yaml python3-packaging pkg-config flex bison glslang-tools libvulkan-dev gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libz-dev:arm64 libexpat1-dev:arm64 libx11-dev:arm64 libxcb1-dev:arm64 libx11-xcb-dev:arm64 libxcb-dri3-dev:arm64 libxcb-present-dev:arm64 libxcb-xfixes0-dev:arm64 libxcb-randr0-dev:arm64 libxcb-shm0-dev:arm64 libxcb-sync-dev:arm64 libxshmfence-dev:arm64 libdrm-dev:arm64 libstdc++-dev:arm64
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git curl unzip file binutils meson ninja-build python3-mako python3-setuptools python3-yaml python3-packaging pkg-config flex bison glslang-tools libvulkan-dev gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libz-dev:arm64 libexpat1-dev:arm64 libx11-dev:arm64 libxcb1-dev:arm64 libx11-xcb-dev:arm64 libxcb-dri3-dev:arm64 libxcb-present-dev:arm64 libxcb-xfixes0-dev:arm64 libxcb-randr0-dev:arm64 libxcb-shm0-dev:arm64 libxcb-sync-dev:arm64 libxshmfence-dev:arm64 libdrm-dev:arm64
           python3 -m pip install --break-system-packages --upgrade 'meson>=1.5' mako packaging || true
           git --version; meson --version; aarch64-linux-gnu-g++ --version | head -1
 
