@@ -1,0 +1,40 @@
+name: Inspect BACHATA 026 activity controls
+on:
+  push:
+    branches: [feature/fsr31-026-existing-core]
+    paths: [.github/workflows/fsr31-inspect-activity.yml]
+permissions: {contents: read}
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          curl -fLsS https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar -o /tmp/a.jar
+          curl -fLsS https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.6/Bachata-S4-Plus-v0.2.6.apk -o /tmp/base.apk
+          java -Xmx4g -jar /tmp/a.jar d -f -r /tmp/base.apk -o /tmp/decoded
+          mkdir -p report
+          find /tmp/decoded -path '*smali*' -name '*MainActivity*.smali' -o -name '*Settings*Screen*.smali' > report/classpaths.txt
+          grep -Rnl '^\.method.*onCreate(Landroid/os/Bundle;)V' /tmp/decoded/smali_classes2/com/bachatas4/android | head -60 > report/oncreate.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+          root=Path('/tmp/decoded')
+          for s in Path('report/classpaths.txt').read_text().splitlines():
+              p=Path(s)
+              if '/com/bachatas4/' not in s or not p.exists():continue
+              t=Path('report/classes')/p.relative_to(root)
+              t.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(p,t)
+          for s in Path('report/oncreate.txt').read_text().splitlines():
+              p=Path(s)
+              if not p.exists(): continue
+              t=Path('report/classes')/p.relative_to(root)
+              t.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(p,t)
+          print('files', len(list(Path('report/classes').rglob('*.smali'))))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BS4-026-Activity-Classes
+          path: report/
+          if-no-files-found: error
