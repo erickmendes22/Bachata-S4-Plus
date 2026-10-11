@@ -78,6 +78,7 @@ jobs:
           set(FFX_VK_PORTABLE_BUILD_FSR4_V07_VULKAN OFF CACHE BOOL "" FORCE)
           set(FFX_VK_PORTABLE_INSTALL OFF CACHE BOOL "" FORCE)
           add_subdirectory(fsr-vulkan)
+          find_package(Vulkan REQUIRED)
           add_library(bachata_fsr31 SHARED tools/fsr31-026/bridge.cpp)
           target_compile_features(bachata_fsr31 PRIVATE cxx_std_17)
           target_link_libraries(bachata_fsr31 PRIVATE ffx-vulkan::portable Vulkan::Vulkan)
