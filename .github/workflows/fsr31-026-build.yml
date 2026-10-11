@@ -1,0 +1,106 @@
+name: Build Android GLIBC FSR3 SDK for existing core 024
+on:
+  push:
+    branches: [feature/fsr31-026-existing-core]
+    paths:
+      - 'tools/fsr31-026/**'
+      - '.github/workflows/fsr31-026-build.yml'
+permissions:
+  contents: read
+jobs:
+  bridge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure Ubuntu for ARM64 cross-build
+        run: |
+          set -euxo pipefail
+          sudo dpkg --add-architecture arm64
+          sudo tee /etc/apt/sources.list.d/ubuntu.sources >/dev/null <<'EOF'
+          Types: deb
+          URIs: http://archive.ubuntu.com/ubuntu
+          Suites: noble noble-updates
+          Components: main restricted universe multiverse
+          Architectures: amd64
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+          Types: deb
+          URIs: http://security.ubuntu.com/ubuntu
+          Suites: noble-security
+          Components: main restricted universe multiverse
+          Architectures: amd64
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+          sudo tee /etc/apt/sources.list.d/arm64.sources >/dev/null <<'EOF'
+          Types: deb
+          URIs: http://ports.ubuntu.com/ubuntu-ports
+          Suites: noble noble-updates noble-security
+          Components: main restricted universe multiverse
+          Architectures: arm64
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            git cmake ninja-build python3-mako python3-setuptools pkg-config \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            libvulkan-dev:arm64 libvulkan1:arm64 libx11-dev:arm64 \
+            libstdc++6:arm64
+      - name: Check out exact portable FSR implementation from Android Bloodborne port
+        run: |
+          set -euxo pipefail
+          git clone --filter=blob:none https://github.com/FireBurn/FSR-Vulkan.git fsr-vulkan
+          git -C fsr-vulkan checkout --detach c64f093404125e960813f95f1996c14780f0dd69
+          for name in 0002-Vulkan-backend-device-local-memory-on-unified-memory-GPUs.patch 0003-Frame-generation-free-per-frame-descriptor-pools-and-constant-buffers.patch; do
+            curl -fLsS "https://raw.githubusercontent.com/ducvd89/Bloodborne-Android/android-0.5.2/gpu/patches/fsr-vulkan/$name" -o "/tmp/$name"
+            git -C fsr-vulkan apply --check "/tmp/$name"
+            git -C fsr-vulkan apply "/tmp/$name"
+          done
+      - name: Build FSR 3.1 ARM64 glibc SDK as independently loadable shared library
+        run: |
+          set -euxo pipefail
+          cat > fsr-aarch64.ini <<'EOF'
+          set(CMAKE_SYSTEM_NAME Linux)
+          set(CMAKE_SYSTEM_PROCESSOR aarch64)
+          set(CMAKE_C_COMPILER aarch64-linux-gnu-gcc)
+          set(CMAKE_CXX_COMPILER aarch64-linux-gnu-g++)
+          set(CMAKE_FIND_ROOT_PATH /usr/aarch64-linux-gnu /usr)
+          EOF
+          cat > CMakeLists.txt <<'EOF'
+          cmake_minimum_required(VERSION 3.22)
+          project(bs4_fsr3 LANGUAGES C CXX)
+          set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+          set(FFX_VK_PORTABLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+          set(FFX_VK_PORTABLE_BUILD_PROBE OFF CACHE BOOL "" FORCE)
+          set(FFX_VK_PORTABLE_BUILD_FSR3_HOST ON CACHE BOOL "" FORCE)
+          set(FFX_VK_PORTABLE_BUILD_FSR3_VK_BACKEND ON CACHE BOOL "" FORCE)
+          set(FFX_VK_PORTABLE_BUILD_FSR3_3_1_5_SCAFFOLD OFF CACHE BOOL "" FORCE)
+          set(FFX_VK_PORTABLE_BUILD_FSR4_V07_VULKAN OFF CACHE BOOL "" FORCE)
+          set(FFX_VK_PORTABLE_INSTALL OFF CACHE BOOL "" FORCE)
+          add_subdirectory(fsr-vulkan)
+          add_library(bachata_fsr31 SHARED tools/fsr31-026/bridge.cpp)
+          target_compile_features(bachata_fsr31 PRIVATE cxx_std_17)
+          target_link_libraries(bachata_fsr31 PRIVATE ffx-vulkan::portable Vulkan::Vulkan)
+          set_target_properties(bachata_fsr31 PROPERTIES OUTPUT_NAME bachata_fsr31)
+          EOF
+          cmake -S . -B build -GNinja -DCMAKE_TOOLCHAIN_FILE=fsr-aarch64.ini -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target bachata_fsr31 -j 6
+      - name: Validate ARM64 and exports
+        run: |
+          set -euxo pipefail
+          test -s build/libbachata_fsr31.so
+          file build/libbachata_fsr31.so | grep -Ei 'aarch64|ARM aarch64'
+          readelf -d build/libbachata_fsr31.so | tee needed.txt
+          readelf -Ws build/libbachata_fsr31.so | grep bs4_fsr31_ | tee symbols.txt
+          nm -D build/libbachata_fsr31.so | grep bs4_fsr31_record
+          sha256sum build/libbachata_fsr31.so | tee sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BS4-026-FSR31-GLIBC-BACKEND
+          path: |
+            build/libbachata_fsr31.so
+            sha256.txt
+            needed.txt
+            symbols.txt
+          if-no-files-found: error
+          retention-days: 7
