@@ -89,7 +89,7 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(
         // GLIBC/FEX via BACHATA_FSR31_MODE. -1 = disabled, 0..4 = preset.
         // This also works when the Linux rootfs hides Android /data paths.
         if (const char* mode = std::getenv("BACHATA_FSR31_MODE")) {
-            if (*mode >= '0' && *mode <= '4' && mode[1] == '\\0') {
+            if (*mode >= '0' && *mode <= '4' && mode[1] == '\0') {
                 enabled = true;
                 preset = *mode - '0';
             }
