@@ -4,6 +4,7 @@
 // binds these uniform descriptors when it compiles/records Bloodborne draws.
 #include "port_camera_constants.h"
 #include <vulkan/vulkan.h>
+extern "C" int bs4_fsr31_selected_preset();
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -182,8 +183,7 @@ extern "C" void bs4_port_reset_cb(VkCommandBuffer cb) {
 static float Halton(unsigned n,unsigned base);
 extern "C" int bs4_port_jitter_for_pass(VkExtent2D size,float* x,float* y) {
     if(!x || !y || !size.width || !size.height)return 0;
-    const char* mode=std::getenv("BACHATA_FSR31_MODE");
-    if(!mode || mode[0]<'0'||mode[0]>'4'||mode[1]!=0)return 0;
+    if(bs4_fsr31_selected_preset()<0)return 0;
     std::lock_guard lock{guard};
     // A real guest camera from the previous displayed Bloodborne frame
     // identifies the renderer. Do not shift random Vulkan applications.
@@ -372,8 +372,7 @@ void bs4_port_scan_at_draw(VkCommandBuffer cb) {
     }
     if(!valid || alreadyJittered || !width ||
        !bs4_fsr31_camera_resources_ready({width,height}))return;
-    const char* mode=std::getenv("BACHATA_FSR31_MODE");
-    if(!mode || mode[0]<'0'||mode[0]>'4'||mode[1]!=0)return;
+    if(bs4_fsr31_selected_preset()<0)return;
     const double ratio=1280.0/double(width);
     const unsigned phases=unsigned(std::clamp(
         std::ceil(8.0*ratio*ratio),8.0,256.0));
