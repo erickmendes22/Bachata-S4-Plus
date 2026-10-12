@@ -44,7 +44,7 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
             git cmake ninja-build python3-mako python3-setuptools pkg-config \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            libvulkan-dev:arm64 libvulkan1:arm64 libx11-dev:arm64 \
+            libvulkan-dev:arm64 libvulkan1:arm64 libx11-dev:arm64 glslang-tools \
             libstdc++6:arm64
       - name: Check out exact portable FSR implementation from Android Bloodborne port
         run: |
@@ -70,6 +70,7 @@ jobs:
           cmake_minimum_required(VERSION 3.22)
           project(bs4_fsr3 LANGUAGES C CXX)
           set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+          set(CMAKE_CXX_STANDARD 17)
           set(FFX_VK_PORTABLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
           set(FFX_VK_PORTABLE_BUILD_PROBE OFF CACHE BOOL "" FORCE)
           set(FFX_VK_PORTABLE_BUILD_FSR3_HOST ON CACHE BOOL "" FORCE)
@@ -81,12 +82,29 @@ jobs:
           find_package(Vulkan REQUIRED)
           add_library(bachata_fsr31 SHARED
             tools/fsr31-026/bridge.cpp
-            tools/fsr31-026/vulkan_capture.cpp)
+            tools/fsr31-026/vulkan_capture.cpp
+            tools/fsr31-026/temporal_generic.cpp)
           target_compile_features(bachata_fsr31 PRIVATE cxx_std_17)
+          target_include_directories(bachata_fsr31 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/generated")
           target_compile_definitions(bachata_fsr31 PRIVATE _GNU_SOURCE=1)
           target_link_libraries(bachata_fsr31 PRIVATE ffx-vulkan::portable Vulkan::Vulkan)
           set_target_properties(bachata_fsr31 PROPERTIES OUTPUT_NAME bachata_fsr31)
           EOF
+          mkdir -p generated
+          glslangValidator -V --target-env vulkan1.2 -S comp -o /tmp/flow.spv tools/fsr31-026/flow.comp
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+          raw=Path('/tmp/flow.spv').read_bytes()
+          assert len(raw)%4==0 and raw[:4] == bytes.fromhex('03022307')
+          words=struct.unpack('<%dI'%(len(raw)//4),raw)
+          content='#pragma once\n#include <stdint.h>\nstatic const uint32_t BS4_FSR31_FLOW_SPV[] = {\n'
+          for i in range(0,len(words),8):
+              content += '    '+', '.join('0x%08x'%v for v in words[i:i+8])+',\n'
+          content+='};\n'
+          Path('generated/flow_spv.h').write_text(content)
+          print('Optical flow shader bytes:',len(raw))
+          PY
           cmake -S . -B build -GNinja -DCMAKE_TOOLCHAIN_FILE=fsr-aarch64.ini -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target bachata_fsr31 -j 6
       - name: Validate ARM64 and exports
