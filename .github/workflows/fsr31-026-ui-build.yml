@@ -43,6 +43,7 @@ jobs:
           assert t.count(target)==1
           t=t.replace(target,'    iget-object v0, p0, Lcom/bachatas4/android/runtime/process/NativeRuntimeProcessLauncher;->context:Landroid/content/Context;\n    invoke-static {v0, p1}, Lcom/bachatas4/android/bridge/Fsr3Ui;->enrichEnvironment(Landroid/content/Context;Ljava/util/Map;)V\n\n'+target)
 
+          native.write_text(t)
           # The stock native-process filter explicitly excludes LD_PRELOAD.
           # Allow only our exact backend while the user has selected FSR3.
           # Never unblock arbitrary LD_PRELOAD values.
