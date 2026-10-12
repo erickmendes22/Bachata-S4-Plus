@@ -4,6 +4,9 @@
 // This is the *effect library* only. The existing core must supply real
 // scene colour, depth, motion vectors, and jitter to the dispatch.
 #include <ffx_vk_portable.h>
+extern "C" uint64_t bs4_fsr31_generic_render(const FfxVkPortableDeviceInfo* info,
+    VkCommandBuffer cmd,VkImageView input,VkExtent2D inputSize,
+    VkExtent2D outputSize,int preset,int hdr);
 #include <cstdint>
 #include <cmath>
 #include <cstdio>
@@ -18,6 +21,8 @@ namespace {
 std::mutex guard;
 FfxVkPortableUpscaleContext* ctx = nullptr;
 FfxVkPortableUpscaleCreateInfo current{};
+FfxVkPortableDeviceInfo acquired_device{};
+bool device_attached = false;
 bool valid = false;
 }
 #define BS4_PUBLIC extern "C" __attribute__((visibility("default")))
@@ -115,8 +120,18 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(
         }
     }
     if (!enabled) return 0;
+    // No explicit motion/depth producer? Use the generic Vulkan capture +
+    // shader optical-flow path. No fabricated depth texture is permitted.
     if (!valid || !ctx || !pending.available ||
-        pending.info.commandBuffer != reinterpret_cast<VkCommandBuffer>(commandBuffer)) return 0;
+        pending.info.commandBuffer != reinterpret_cast<VkCommandBuffer>(commandBuffer)) {
+        if (!device_attached) return 0;
+        auto input_size = VkExtent2D{uint32_t(renderExtent),uint32_t(renderExtent >> 32)};
+        auto output_size = VkExtent2D{uint32_t(outputExtent),uint32_t(outputExtent >> 32)};
+        return bs4_fsr31_generic_render(&acquired_device,
+            reinterpret_cast<VkCommandBuffer>(commandBuffer),
+            reinterpret_cast<VkImageView>(inputView),input_size,output_size,
+            preset,int(hdr != 0));
+    }
     auto info = pending.info;
     // Preset scales are constraints on the *actual scene render extent*, never
     // post-presentation resizes.  Native AA = 1.0, Quality = 1.5,
@@ -139,10 +154,7 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(
         ? reinterpret_cast<uint64_t>(view) : 0;
 }
 
-namespace {
-FfxVkPortableDeviceInfo acquired_device{};
-bool device_attached = false;
-}
+
 BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice device,
                                  void* allocator, uint32_t swap_images) {
     (void)allocator;
