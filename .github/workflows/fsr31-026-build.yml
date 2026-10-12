@@ -1,7 +1,7 @@
 name: Build Android GLIBC FSR3 SDK for existing core 024
 on:
   push:
-    branches: [feature/fsr31-026-existing-core]
+    branches: [feature/fsr31-026-existing-core, feature/fsr31-026-r13-pre-ui]
     paths:
       - 'tools/fsr31-026/**'
       - '.github/workflows/fsr31-026-build.yml'
