@@ -1,6 +1,7 @@
 #version 450
-// Image-based motion estimation for arbitrary games. Motion is in render
-// pixels, current -> previous. This does not require game-specific matrices.
+// Real FSR 3.1 motion-vector producer for the unchanged core024.
+// Image-based fallback only: do not synthesize or claim guest camera matrices.
+// Same resolution and motion convention as the source R13.
 layout(local_size_x=8, local_size_y=8) in;
 layout(set=0,binding=0) uniform sampler2D currentScene;
 layout(set=0,binding=1) uniform sampler2D previousScene;
@@ -13,23 +14,34 @@ layout(push_constant) uniform Push {
 float gray(vec3 c) { return dot(c,vec3(0.2126,0.7152,0.0722)); }
 float luma(ivec2 coord,bool prior) {
     ivec2 p=clamp(coord,ivec2(0),pc.extent-ivec2(1));
-    return gray((prior ? texelFetch(previousScene,p,0) : texelFetch(currentScene,p,0)).rgb);
+    return gray((prior?texelFetch(previousScene,p,0):texelFetch(currentScene,p,0)).rgb);
 }
 void main() {
     ivec2 p=ivec2(gl_GlobalInvocationID.xy);
     if(any(greaterThanEqual(p,pc.extent)))return;
-    if(pc.firstFrame!=0) {imageStore(motionImage,p,vec4(0));return;}
+    if(pc.firstFrame!=0){imageStore(motionImage,p,vec4(0));return;}
+    const float c=luma(p,false);
+    const float cx=luma(p+ivec2(1,0),false);
+    const float cy=luma(p+ivec2(0,1),false);
+    const float contrast=max(abs(c-cx),abs(c-cy));
+    // Flat regions have no observable optical motion. Zero avoids FSR ghosting.
+    if(contrast<0.009){imageStore(motionImage,p,vec4(0));return;}
     float best=3.402823e38;
+    float second=3.402823e38;
     ivec2 shift=ivec2(0);
-    float c0=luma(p,false), cx=luma(p+ivec2(2,0),false),cy=luma(p+ivec2(0,2),false);
-    for(int y=-2;y<=2;y+=2)for(int x=-2;x<=2;x+=2) {
-        ivec2 q=p+ivec2(x,y);
-        float cost=abs(c0-luma(q,true))
-            +0.5*abs(cx-luma(q+ivec2(2,0),true))
-            +0.5*abs(cy-luma(q+ivec2(0,2),true));
-        if(cost<best){best=cost;shift=ivec2(x,y);}
+    // 25 single-sample candidates, replacing the previous 9*3 samples.
+    // At 640x360, searches one-pixel movement without doubling cost.
+    for(int y=-2;y<=2;++y)for(int x=-2;x<=2;++x) {
+        float score=abs(c-luma(p+ivec2(x,y),true));
+        // Prefer still pixels when evidence does not distinguish movement.
+        score+=0.002*float(abs(x)+abs(y));
+        if(score<best){second=best;best=score;shift=ivec2(x,y);}
+        else if(score<second)second=score;
     }
-    // Reject ambiguous flow matches in near-uniform areas to avoid streaks.
-    if(best>0.23)shift=ivec2(0);
+    // Verify edge-direction coherence only for the winning candidate.
+    float edge=abs(cx-luma(p+shift+ivec2(1,0),true))+
+               abs(cy-luma(p+shift+ivec2(0,1),true));
+    if(best>0.18||edge>0.28||(second-best)<0.0015)
+        shift=ivec2(0);
     imageStore(motionImage,p,vec4(vec2(shift),0,0));
 }
