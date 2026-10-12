@@ -312,6 +312,34 @@ void flow(VkCommandBuffer cb,const Frame& f,VkExtent2D size) {
     vkCmdPushConstants(cb,pipeline_layout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(pc),&pc);
     vkCmdDispatch(cb,(size.width+7)/8,(size.height+7)/8,1);
 }
+// No optical-flow inference here: the exact shader shipped in the port
+// reconstructs motion from G-buffer depth + current/previous matrices.
+void record_port_camera_motion(VkCommandBuffer cb,const Frame& f,
+                               const PortCameraPush& camera,VkExtent2D extent) {
+    VkDescriptorImageInfo info[3]{};
+    info[0]={VK_NULL_HANDLE,f.depth.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    info[1]={VK_NULL_HANDLE,f.motion.view,VK_IMAGE_LAYOUT_GENERAL};
+    // In mode=0 this binding is not sampled, but Vulkan still requires it.
+    info[2]=info[0];
+    VkWriteDescriptorSet writes[3]{};
+    for(uint32_t i=0;i<3;++i) {
+        writes[i]={VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        writes[i].dstSet=f.port_motion_descriptor;
+        writes[i].dstBinding=i;
+        writes[i].descriptorCount=1;
+        writes[i].descriptorType=(i==1)?
+            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        writes[i].pImageInfo=&info[i];
+    }
+    vkUpdateDescriptorSets(device,3,writes,0,nullptr);
+    vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,port_pipeline);
+    vkCmdBindDescriptorSets(cb,VK_PIPELINE_BIND_POINT_COMPUTE,
+                            port_pipeline_layout,0,1,
+                            &f.port_motion_descriptor,0,nullptr);
+    vkCmdPushConstants(cb,port_pipeline_layout,VK_SHADER_STAGE_COMPUTE_BIT,
+                       0,sizeof(camera),&camera);
+    vkCmdDispatch(cb,(extent.width+7)/8,(extent.height+7)/8,1);
+}
 } // namespace
 
 // Explicit port renderer/guest camera handoff. The R13 core024 does NOT yet
@@ -420,6 +448,15 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
         (depth_features.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) &&
         (depth_features.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT);
     std::lock_guard lock{mutex};
+    // Port RunScaled must receive real G-buffer camera data from core024.
+    // Never fake motion with image search/optical flow (R20 visual artifact).
+    if(pre_ui && (!port_camera.valid || port_camera.command!=cb ||
+                  port_camera.depth!=scene_depth_view ||
+                  std::abs(port_camera.push.size[0]-input_extent.width)>0.5f ||
+                  std::abs(port_camera.push.size[1]-input_extent.height)>0.5f)) {
+        report_once(18,"port camera/depth/jitter not supplied by core024");
+        return 0;
+    }
     device=owned->device;physical=owned->physicalDevice;
     constexpr float ratio[]={1.f,1.5f,1.7f,2.f,3.f};
     // Use the guest's *real* render dimensions. The preset selects an
@@ -508,7 +545,11 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
         transit(cb,previous,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
     transit(cb,f.motion,VK_IMAGE_LAYOUT_GENERAL);
-    flow(cb,f,internal);
+    if(pre_ui) {
+        record_port_camera_motion(cb,f,port_camera.push,internal);
+    } else {
+        flow(cb,f,internal); // legacy FsrPass spatial-hook path unchanged
+    }
     // Shader storage writes must be visible to the FSR 3.1 compute passes.
     barrier(cb,f.motion.image,VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -525,15 +566,23 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     info.transparencyAndCompositionMask.structSize=sizeof(info.transparencyAndCompositionMask);
     info.renderSize={internal.width,internal.height};
     info.outputSize={output_extent.width,output_extent.height};
-    info.motionVectorScale={1,1};info.jitterOffset={0,0};
+    info.motionVectorScale={1,1};
+    info.jitterOffset=pre_ui?
+        FfxVkPortableFloat2{port_camera.push.jitter[0],
+                            port_camera.push.jitter[1]}:
+        FfxVkPortableFloat2{0,0};
     const auto now=std::chrono::steady_clock::now();
     float dt=16.6667f;
     if(frame_id)dt=std::clamp(
         std::chrono::duration<float,std::milli>(now-last_frame).count(),4.f,100.f);
     last_frame=now;
     info.frameTimeMilliseconds=dt;info.preExposure=1.0f;
-    info.cameraNear=0.1f;info.cameraFar=1000.f;
-    info.cameraVerticalFovRadians=1.0f;info.viewSpaceToMeters=1.0f;
+    info.cameraNear=pre_ui?
+        -port_camera.push.proj[3]/port_camera.push.proj[2]:0.1f;
+    info.cameraFar=pre_ui?3000.0f:1000.0f;
+    info.cameraVerticalFovRadians=pre_ui?
+        2.0f*std::atan(1.0f/std::abs(port_camera.push.proj[1])):1.0f;
+    info.viewSpaceToMeters=1.0f;
     info.sharpness=0.2f;info.enableSharpening=VK_TRUE;
     info.reset=has_previous?VK_FALSE:VK_TRUE;info.frameId=frame_id++;
     const auto result=ffxVkPortableUpscaleContextRecordDispatch(fsr,&info);
@@ -556,6 +605,7 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     transit(cb,previous,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     transit(cb,f.scene,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     has_previous=true;
+    if(pre_ui)port_camera.valid=false;
     if(frame_id==1)
         std::fprintf(stderr,"[BS4_FSR31] real FSR3.1 dispatch recorded (%ux%u->%ux%u)\n",
              internal.width,internal.height,output_extent.width,output_extent.height);
