@@ -27,6 +27,14 @@ int main(){
     f[0]=1000;f[1]=1.f/1000;f[63]=-.05f;
     assert(Parse(f.data(),sizeof(f),now)); // same camera contract, no fixed Bloodborne far plane
     assert(now.farPlane==1000 && now.nearPlane>0);
+    // R17 exact bug: genuine guest camera 640x360 is embedded in a
+    // 1920x1080 G-buffer; equality with renderArea wrongly rejected it.
+    assert(GBufferCanContainScene(5,true,1920,1080,now));
+    assert(GBufferCanContainScene(6,true,640,360,now));
+    assert(!GBufferCanContainScene(4,true,1920,1080,now));
+    assert(!GBufferCanContainScene(5,false,1920,1080,now));
+    assert(!GBufferCanContainScene(5,true,320,180,now));
+    assert(!GBufferCanContainScene(5,true,8192,8192,now));
     f[180]=2.f;assert(!Parse(f.data(),sizeof(f),now)); // unrelated/noninverse matrices rejected
     f[180]=1.f;
 
