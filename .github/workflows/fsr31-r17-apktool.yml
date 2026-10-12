@@ -1,0 +1,30 @@
+name: R17 Android Smali Toolkit
+on:
+  push:
+    branches: [feature/fsr31-core025-r17-boot-ui]
+    paths: ['.github/workflows/fsr31-r17-apktool.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tool:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Download standalone apktool decoder/rebuilder
+        run: |
+          set -euxo pipefail
+          curl -fLsS --retry 3 \
+            https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar \
+            -o apktool.jar
+          test $(stat -c%s apktool.jar) -gt 10000000
+          java -jar apktool.jar --version
+          sha256sum apktool.jar > apktool-sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: R17-APKTOOL-2.12.1-STANDALONE
+          path: |
+            apktool.jar
+            apktool-sha256.txt
+          if-no-files-found: error
+          retention-days: 7
