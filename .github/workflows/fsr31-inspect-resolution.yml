@@ -1,0 +1,47 @@
+name: Inspect 026 internal-resolution patch loader
+on:
+  push:
+    branches: [feature/fsr31-026-existing-core]
+    paths: [.github/workflows/fsr31-inspect-resolution.yml]
+permissions: {contents: read}
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Inspect exact base 0.2.6 runtime patch storage and configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 3 https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.6/Bachata-S4-Plus-v0.2.6.apk -o /tmp/base.apk
+          mkdir -p report
+          python3 - <<'PY'
+          import zipfile,io,pathlib
+          root=pathlib.Path('report')
+          with zipfile.ZipFile('/tmp/base.apk') as z:
+              (root/'apk-paths.txt').write_text('\n'.join(i.filename for i in z.infolist() if any(x in i.filename.lower() for x in ['patch','runtime','config','game']))[:160000])
+              matches=[i for i in z.infolist() if i.filename.endswith('runtime.zip')]
+              print('Nested runtime archive(s)',[(i.filename,i.file_size) for i in matches])
+              if not matches:raise SystemExit("no embedded runtime")
+              for idx,inf in enumerate(matches):
+                  with zipfile.ZipFile(io.BytesIO(z.read(inf))) as inner:
+                      names=inner.namelist()
+                      (root/f'runtime-paths-{idx}.txt').write_text('\n'.join(names))
+                      patch=[n for n in names if 'patch' in n.lower() or 'config' in n.lower() or 'setting' in n.lower()]
+                      (root/f'runtime-patches-{idx}.txt').write_text('\n'.join(patch))
+                      for name in patch:
+                          if name.lower().endswith('bloodborne.xml') or name.lower().endswith('patches.ini'):
+                              try:
+                                  txt=inner.read(name)
+                                  if len(txt)<600000:
+                                      out=root/f'candidate-{idx}-{pathlib.Path(name).name}'
+                                      out.write_bytes(txt)
+                                      print('candidate',name,len(txt))
+                              except Exception as e:print('cannot read',name,e)
+                  print('runtime',idx,'paths',len(names),'patch-like',len(patch))
+          PY
+          head -80 report/runtime-patches-0.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BS4-026-RESOLUTION-PATCH-INSPECTION
+          path: report/
+          retention-days: 3
