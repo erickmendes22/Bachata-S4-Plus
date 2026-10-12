@@ -11,6 +11,10 @@
 #include <vector>
 #include <algorithm>
 #include <cmath>
+#include <string>
+#include <cstdint>
+#include <cstdlib>
+#include <cctype>
 namespace {
 struct Image {
     VkFormat format = VK_FORMAT_UNDEFINED;
@@ -103,7 +107,8 @@ void record_rendering(const VkRenderingInfo* info) {
  */
 bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
                         VkRenderingInfo& modified,
-                        std::vector<VkRenderingAttachmentInfo>& overrides) {
+                        std::vector<VkRenderingAttachmentInfo>& overrides,
+                        bool verified_first_hud_draw) {
     if (!cmd || !info || !info->colorAttachmentCount ||
         !info->pColorAttachments || !info->pColorAttachments[0].imageView)
         return false;
@@ -139,9 +144,11 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
             }
             return false;
         }
-        // This is the first full-size UI pass following a completed small
-        // 3D scene on the SAME command buffer. Cross-CB ordering is unknown:
-        // never issue Vulkan commands based on unproven inter-CB ordering.
+        // The first 1080p pass was NOT necessarily the HUD in R14/R18:
+        // lighting, bloom and post-processing also render at this extent.
+        // Dispatch only at the first *recognized guest HUD shader draw*.
+        if(!verified_first_hud_draw) return false;
+        // Cross-CB ordering is not proven: scene must be complete on this CB.
         if(w<1280||h<700||!stage.ready||!stage.color||
            !stage.depth||stage.color==view)
             return false;
@@ -378,7 +385,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering(
     // FSR3 would select the newly-starting UI depth instead of scene depth.
     VkRenderingInfo modified{};
     std::vector<VkRenderingAttachmentInfo> overrides;
-    const bool composite=first_pre_ui_color(cb,info,modified,overrides);
+    const bool composite=first_pre_ui_color(cb,info,modified,overrides,false);
     record_rendering(info);
     if(original_begin_rendering)
         original_begin_rendering(cb,composite?&modified:info);
@@ -398,7 +405,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering_khr(
     // FSR3 would select the newly-starting UI depth instead of scene depth.
     VkRenderingInfo modified{};
     std::vector<VkRenderingAttachmentInfo> overrides;
-    const bool composite=first_pre_ui_color(cb,info,modified,overrides);
+    const bool composite=first_pre_ui_color(cb,info,modified,overrides,false);
     record_rendering(info);
     if(original_begin_rendering_khr)
         original_begin_rendering_khr(cb,composite?&modified:info);
