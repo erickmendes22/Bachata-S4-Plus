@@ -1,3 +1,4 @@
+#include "vulkan_capture.h"
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Native FSR 3.1 backend, using FireBurn/FSR-Vulkan c64f093.
 // This is the *effect library* only. The existing core must supply real
@@ -266,11 +267,14 @@ VKAPI_ATTR VkResult VKAPI_CALL fsr31_create_device(
 }
 }
 
+extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice, const char*);
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(
         VkInstance instance, const char* name) {
     const auto original = real_gipa();
     if (!original || !name) return nullptr;
     const auto out = original(instance, name);
+    if (std::strcmp(name, "vkGetDeviceProcAddr") == 0 && out && fsr31_requested())
+        return reinterpret_cast<PFN_vkVoidFunction>(&vkGetDeviceProcAddr);
     if (std::strcmp(name, "vkCreateDevice") == 0 && out && fsr31_requested()) {
         real_create_device = reinterpret_cast<PFN_vkCreateDevice>(out);
         return reinterpret_cast<PFN_vkVoidFunction>(&fsr31_create_device);
