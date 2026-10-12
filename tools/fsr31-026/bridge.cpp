@@ -172,6 +172,42 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(
 /* Called strictly at the transition from the game's reduced 3D render
  * target to the first full-size UI render target. This uses the existing
  * FSR 3.1 backend and keeps the stock presenter as a fallback. */
+/* R22: supply a *sampled image* to the original Bloodborne HDR copy
+ * fragment shader. Never overwrite its target or skip its draw: the R21
+ * replacement removed required postprocessing/color conversions. */
+BS4_PUBLIC VkImageView bs4_fsr31_hdr_scene_source(
+        VkCommandBuffer command, VkImageView scene_color, VkImageView scene_depth,
+        VkExtent2D scene_extent, VkExtent2D output_extent) {
+    if (!command || !scene_color || !scene_depth ||
+        !scene_extent.width || !scene_extent.height) return VK_NULL_HANDLE;
+    FfxVkPortableDeviceInfo info{};
+    int preset=-1;
+    {
+        std::lock_guard<std::mutex> lock(guard);
+        if (!device_attached) return VK_NULL_HANDLE;
+        info=acquired_device;
+        if(const char* mode=std::getenv("BACHATA_FSR31_MODE")) {
+            if(mode[0]>='0' && mode[0]<='4' && mode[1]==0)
+                preset=mode[0]-'0';
+        }
+    }
+    if(preset<0) return VK_NULL_HANDLE;
+    const auto view=bs4_fsr31_generic_render(
+        &info,command,scene_color,scene_extent,output_extent,
+        preset,0,1,scene_depth);
+    if(!view)return VK_NULL_HANDLE;
+    static bool once=false;
+    if(!once) {
+        once=true;
+        std::fprintf(stderr,
+          "[BS4_FSR31] R22_HDR_SOURCE ready %ux%u -> %ux%u, "
+          "guest shader preserved\\n",
+          scene_extent.width,scene_extent.height,
+          output_extent.width,output_extent.height);
+    }
+    return reinterpret_cast<VkImageView>(view);
+}
+
 BS4_PUBLIC int bs4_fsr31_pre_ui_dispatch(
         VkCommandBuffer command, VkImageView scene_color, VkImageView scene_depth,
         VkExtent2D scene_extent, VkExtent2D output_extent,
