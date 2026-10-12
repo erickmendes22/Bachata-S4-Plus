@@ -120,6 +120,14 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(
             break;
         }
     }
+    static bool logged_render = false;
+    if (!logged_render) {
+        logged_render = true;
+        std::fprintf(stderr,
+          "[BS4_FSR31] presenter hook enabled=%d preset=%d attached=%d input=%ux%u output=%ux%u\\n",
+          int(enabled), preset, int(device_attached), unsigned(renderExtent), unsigned(renderExtent >> 32),
+          unsigned(outputExtent), unsigned(outputExtent >> 32));
+    }
     if (!enabled) return 0;
     // No explicit motion/depth producer? Use the generic Vulkan capture +
     // shader optical-flow path. No fabricated depth texture is permitted.
@@ -158,26 +166,28 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(
 
 BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice device,
                                  void* allocator, uint32_t swap_images) {
+    std::fprintf(stderr, "[BS4_FSR31] attach hook entered: fsr=%p instance=%p device=%p\\n", fsr_pass, instance_object, (void*)device);
     (void)allocator;
     (void)swap_images;
-    if (!fsr_pass || !instance_object || !device) return -1;
+    const auto fail = [](int code) { std::fprintf(stderr, "[BS4_FSR31] attach failed code=%d\\n", code); return code; };
+    if (!fsr_pass || !instance_object || !device) return fail(-1);
     std::lock_guard<std::mutex> lock(guard);
     // The original BACHATA core is unchanged in memory layout. vk::UniqueInstance
     // stores the raw VkInstance in its first pointer-sized field. Query real
     // physical devices through Vulkan instead of assuming a C++ member offset.
     const VkInstance instance = *static_cast<VkInstance*>(instance_object);
-    if (!instance) return -2;
+    if (!instance) return fail(-2);
     uint32_t count = 0;
     VkResult err = vkEnumeratePhysicalDevices(instance, &count, nullptr);
     if (err != VK_SUCCESS || count != 1) {
         std::fprintf(stderr,
             "[BS4_FSR31] attach: expected one Vulkan physical device, result=%d count=%u\\n",
             int(err), count);
-        return -3;
+        return fail(-3);
     }
     VkPhysicalDevice physical{};
     err = vkEnumeratePhysicalDevices(instance, &count, &physical);
-    if (err != VK_SUCCESS || !physical) return -4;
+    if (err != VK_SUCCESS || !physical) return fail(-4);
     FfxVkPortableDeviceInfo info{};
     info.structSize = sizeof(info);
     info.instance = instance;
@@ -189,7 +199,7 @@ BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice 
     // definite bug in R5/R6 and makes FSR context creation invalid.
     uint32_t queue_count = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(physical, &queue_count, nullptr);
-    if (!queue_count || queue_count > 128) return -5;
+    if (!queue_count || queue_count > 128) return fail(-5);
     std::vector<VkQueueFamilyProperties> queue_properties(queue_count);
     vkGetPhysicalDeviceQueueFamilyProperties(physical, &queue_count,
                                                queue_properties.data());
@@ -198,10 +208,10 @@ BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice 
         if ((queue_properties[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) &&
              queue_properties[i].queueCount) { family = i; break; }
     }
-    if (family == queue_count) return -6;
+    if (family == queue_count) return fail(-6);
     VkQueue graphics_queue = VK_NULL_HANDLE;
     vkGetDeviceQueue(device, family, 0, &graphics_queue);
-    if (!graphics_queue) return -7;
+    if (!graphics_queue) return fail(-7);
     info.queue = graphics_queue;
     info.queueFamilyIndex = family;
     info.synchronization2Enabled = VK_TRUE;
