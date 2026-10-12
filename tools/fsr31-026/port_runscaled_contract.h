@@ -18,10 +18,16 @@ constexpr bool SceneAndOutput(VkFormat format, VkExtent2D scene, VkExtent2D out)
     return scene.width <= out.width && scene.height <= out.height &&
         uint64_t(scene.width) * out.height == uint64_t(scene.height) * out.width;
 }
-constexpr bool MatchingDepth(VkExtent2D scene, VkExtent2D depth) {
-    // In the port, SceneTargets::Read resolves to the actual raster extent.
-    // Never guess that unrelated full-resolution depth belongs to the scene.
-    return scene.width == depth.width && scene.height == depth.height;
+constexpr bool MatchingDepth(VkExtent2D scene, VkExtent2D allocated_color,
+                             VkExtent2D depth) {
+    // Bloodborne Port RunScaled handles both startup-patched allocations
+    // equal to renderSize AND game-allocated native images with a reduced
+    // 640x360 region in their upper-left corner. Color and depth must have
+    // the same physical dimensions; this is not an arbitrary resize.
+    return scene.width<=allocated_color.width &&
+           scene.height<=allocated_color.height &&
+           allocated_color.width==depth.width &&
+           allocated_color.height==depth.height;
 }
 constexpr VkFormat UiOutputFormat = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr uint32_t ContextFlags = 0; // LDR: NO HDR_COLOR_INPUT or AUTO_EXPOSURE.
