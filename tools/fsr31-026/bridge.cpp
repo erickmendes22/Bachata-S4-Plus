@@ -134,3 +134,59 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(
     return ffxVkPortableUpscaleContextRecordDispatch(ctx,&info) == FFX_VK_PORTABLE_OK
         ? reinterpret_cast<uint64_t>(view) : 0;
 }
+
+namespace {
+FfxVkPortableDeviceInfo acquired_device{};
+bool device_attached = false;
+}
+BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice device,
+                                 void* allocator, uint32_t swap_images) {
+    (void)allocator;
+    (void)swap_images;
+    if (!fsr_pass || !instance_object || !device) return -1;
+    std::lock_guard<std::mutex> lock(guard);
+    // The original BACHATA core is unchanged in memory layout. vk::UniqueInstance
+    // stores the raw VkInstance in its first pointer-sized field. Query real
+    // physical devices through Vulkan instead of assuming a C++ member offset.
+    const VkInstance instance = *static_cast<VkInstance*>(instance_object);
+    if (!instance) return -2;
+    uint32_t count = 0;
+    VkResult err = vkEnumeratePhysicalDevices(instance, &count, nullptr);
+    if (err != VK_SUCCESS || count != 1) {
+        std::fprintf(stderr,
+            "[BS4_FSR31] attach: expected one Vulkan physical device, result=%d count=%u\\n",
+            int(err), count);
+        return -3;
+    }
+    VkPhysicalDevice physical{};
+    err = vkEnumeratePhysicalDevices(instance, &count, &physical);
+    if (err != VK_SUCCESS || !physical) return -4;
+    FfxVkPortableDeviceInfo info{};
+    info.structSize = sizeof(info);
+    info.instance = instance;
+    info.physicalDevice = physical;
+    info.device = device;
+    info.getDeviceProcAddr = vkGetDeviceProcAddr;
+    info.queue = VK_NULL_HANDLE;
+    info.queueFamilyIndex = 0;
+    info.synchronization2Enabled = VK_TRUE;
+    VkPhysicalDeviceFeatures features{};
+    vkGetPhysicalDeviceFeatures(physical, &features);
+    // The BACHATA Vulkan device may not enable this optional capability.
+    // Do not claim enabled features solely from physical-device support.
+    info.shaderStorageImageWriteWithoutFormatEnabled = VK_FALSE;
+    acquired_device = info;
+    device_attached = true;
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(physical, &props);
+    std::fprintf(stderr,
+        "[BS4_FSR31] attached core024 GPU=%s vendor=0x%x, driver=0x%x, "
+        "shaderStorageImageWriteWithoutFormat-supported=%d\\n",
+        props.deviceName, props.vendorID, props.driverVersion,
+        int(features.shaderStorageImageWriteWithoutFormat));
+    return 0;
+}
+BS4_PUBLIC int bs4_fsr31_attachment_ready() {
+    std::lock_guard<std::mutex> lock(guard);
+    return device_attached ? 1 : 0;
+}
