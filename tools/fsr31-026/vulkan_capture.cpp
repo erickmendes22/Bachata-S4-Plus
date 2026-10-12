@@ -42,7 +42,7 @@ bool pre_ui_dispatch_logged=false;
 bool pre_ui_eligible_logged=false;
 using PreUiDispatch=int (*)(VkCommandBuffer,VkImageView,VkExtent2D,VkExtent2D,VkImage*);
 extern "C" int bs4_fsr31_pre_ui_dispatch(VkCommandBuffer,VkImageView,
-                VkExtent2D,VkExtent2D,VkImage*);
+                VkImageView,VkExtent2D,VkExtent2D,VkImage*);
 
 PFN_vkBeginCommandBuffer original_begin_command{};
 PFN_vkResetCommandBuffer original_reset_command{};
@@ -170,8 +170,8 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     // decoupled; resample the upscaled background without changing HUD draws.
     const VkExtent2D upscale_extent{1280,720};
     VkImage upscaled=VK_NULL_HANDLE;
-    if(!bs4_fsr31_pre_ui_dispatch(cmd,completed.color,completed.extent,
-                                   upscale_extent,&upscaled)||!upscaled)
+    if(!bs4_fsr31_pre_ui_dispatch(cmd,completed.color,completed.depth,
+                                    completed.extent,upscale_extent,&upscaled)||!upscaled)
         return false;
     // Pre-UI barrier + blit: both images are outside a rendering instance.
     // Return the UI attachment to its original layout before vkCmdBeginRendering.
