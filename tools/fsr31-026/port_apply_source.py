@@ -168,6 +168,52 @@ src = replace_once(src,
     "static std::pair<u32, u32> GetDrawOffsets(",
     frame_boundary + "\nstatic std::pair<u32, u32> GetDrawOffsets(")
 
+
+# Native pre-UI composition: all HUD colors go to a separate host surface.
+# This change does not install a user-facing APK; it is compile-validated first.
+src = replace_once(src,
+    "    if (state.num_layers == std::numeric_limits<u16>::max()) {",
+    r'''    fsr31PortUiRenderScale = {1.f,1.f};
+    if (fsr31PortUi && fsr31PortUi->Drawing() &&
+        state.num_color_attachments == 1 &&
+        fsr31PortUi->RedirectColor(cb_descs[0].first) &&
+        (!db_desc.first || fsr31PortUi->RedirectDepth(db_desc.first))) {
+        auto& color_attachment = state.color_attachments[0];
+        color_attachment.image_view = fsr31PortUi->ColorView();
+        color_attachment.image_layout = vk::ImageLayout::eGeneral;
+        if (db_desc.first) {
+            auto& depth_attachment = state.depth_stencil_attachment;
+            depth_attachment.image_view = fsr31PortUi->DepthView();
+            depth_attachment.image_layout = vk::ImageLayout::eGeneral;
+        }
+        const auto out = fsr31PortUi->Size();
+        state.width = out.width;
+        state.height = out.height;
+        const auto& vp = regs.viewports[0];
+        const bool native = std::abs(std::abs(vp.xscale * 2.f) - 1920.f) < 0.5f &&
+                            std::abs(std::abs(vp.yscale * 2.f) - 1080.f) < 0.5f;
+        fsr31PortUiRenderScale = fsr31PortUi->Scale(native);
+    }
+''' + "    if (state.num_layers == std::numeric_limits<u16>::max()) {")
+src = replace_once(src,
+    "        viewports.push_back(viewport);",
+    r'''        viewport.x *= fsr31PortUiRenderScale[0];
+        viewport.width *= fsr31PortUiRenderScale[0];
+        viewport.y *= fsr31PortUiRenderScale[1];
+        viewport.height *= fsr31PortUiRenderScale[1];
+        viewports.push_back(viewport);''')
+src = replace_once(src,
+    "        scissors.push_back({\n"
+    "            .offset = {vp_scsr.top_left_x, vp_scsr.top_left_y},\n"
+    "            .extent = {vp_scsr.GetWidth(), vp_scsr.GetHeight()},\n"
+    "        });",
+    r'''        scissors.push_back({
+            .offset = {s32(std::lround(float(vp_scsr.top_left_x)*fsr31PortUiRenderScale[0])),
+                       s32(std::lround(float(vp_scsr.top_left_y)*fsr31PortUiRenderScale[1]))},
+            .extent = {u32(std::lround(float(vp_scsr.GetWidth())*fsr31PortUiRenderScale[0])),
+                       u32(std::lround(float(vp_scsr.GetHeight())*fsr31PortUiRenderScale[1]))},
+        });''')
+
 pres = replace_once(pres,
     "    texture_cache.UpdateImage(image_id);",
     "    texture_cache.UpdateImage(image_id);\n"
