@@ -545,20 +545,24 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_begin_command(
         VkCommandBuffer cb,const VkCommandBufferBeginInfo* info) {
     if (!original_begin_command) return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_begin_command(cb,info);
-    if(status==VK_SUCCESS){std::lock_guard lock{mutex};command_scenes.erase(cb);}
+    if(status==VK_SUCCESS){std::lock_guard lock{mutex};command_scenes.erase(cb);active_rendering.erase(cb);graphics_pipeline_bound.erase(cb);}
     return status;
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_reset_command(
         VkCommandBuffer cb,VkCommandBufferResetFlags flags) {
     if(!original_reset_command)return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_reset_command(cb,flags);
-    if(status==VK_SUCCESS){std::lock_guard lock{mutex};command_scenes.erase(cb);}
+    if(status==VK_SUCCESS){std::lock_guard lock{mutex};command_scenes.erase(cb);active_rendering.erase(cb);graphics_pipeline_bound.erase(cb);}
     return status;
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_free_commands(
         VkDevice device,VkCommandPool pool,uint32_t count,const VkCommandBuffer* cb) {
     if(cb&&count){std::lock_guard lock{mutex};
-        for(uint32_t i=0;i<count;++i)command_scenes.erase(cb[i]);}
+        for(uint32_t i=0;i<count;++i){
+            command_scenes.erase(cb[i]);
+            active_rendering.erase(cb[i]);
+            graphics_pipeline_bound.erase(cb[i]);
+        }}
     if(original_free_commands)original_free_commands(device,pool,count,cb);
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image(
@@ -601,12 +605,19 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering(
     std::vector<VkRenderingAttachmentInfo> overrides;
     const bool composite=first_pre_ui_color(cb,info,modified,overrides,false);
     record_rendering(info);
+    {std::lock_guard lock{mutex};
+        auto scene=command_scenes.find(cb);
+        if(scene!=command_scenes.end() && scene->second.ready)
+            active_rendering[cb]=copy_rendering(info,false);
+        else active_rendering.erase(cb);
+    }
     if(original_begin_rendering)
         original_begin_rendering(cb,composite?&modified:info);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_end_rendering(VkCommandBuffer cb) {
     if(original_end_rendering) original_end_rendering(cb);
     scene_rendering_ended(cb);
+    {std::lock_guard lock{mutex};active_rendering.erase(cb);}
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_barrier2(
     VkCommandBuffer cb,const VkDependencyInfo* dep) {
@@ -621,12 +632,19 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering_khr(
     std::vector<VkRenderingAttachmentInfo> overrides;
     const bool composite=first_pre_ui_color(cb,info,modified,overrides,false);
     record_rendering(info);
+    {std::lock_guard lock{mutex};
+        auto scene=command_scenes.find(cb);
+        if(scene!=command_scenes.end() && scene->second.ready)
+            active_rendering[cb]=copy_rendering(info,true);
+        else active_rendering.erase(cb);
+    }
     if(original_begin_rendering_khr)
         original_begin_rendering_khr(cb,composite?&modified:info);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_end_rendering_khr(VkCommandBuffer cb) {
     if(original_end_rendering_khr) original_end_rendering_khr(cb);
     scene_rendering_ended(cb);
+    {std::lock_guard lock{mutex};active_rendering.erase(cb);}
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_barrier2_khr(
     VkCommandBuffer cb,const VkDependencyInfo* dep) {
