@@ -23,6 +23,9 @@ jobs:
           git -C /tmp/arm64-source diff --check
           grep -Fq 'fsr31PortCamera.OnConstants(' /tmp/arm64-source/src/video_core/renderer_vulkan/vk_rasterizer.cpp
           grep -Fq 'fsr31PortStage.Observe(d)' /tmp/arm64-source/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+          grep -Fq 'void Rasterizer::Fsr31PortOnPresentedFrame()' /tmp/arm64-source/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+          grep -Fq 'rasterizer->Fsr31PortOnPresentedFrame();' /tmp/arm64-source/src/video_core/renderer_vulkan/vk_presenter.cpp
+          ! grep -q 'if (event == Bachata::Fsr31::Event::BeginHUD)' /tmp/arm64-source/src/video_core/renderer_vulkan/vk_rasterizer.cpp
           grep -Fq 'port_camera_state.h' /tmp/arm64-source/src/video_core/renderer_vulkan/vk_rasterizer.h
           grep -Fq 'port_rasterizer_scene.h' /tmp/arm64-source/src/video_core/renderer_vulkan/vk_rasterizer.h
           ! grep -Eq 'first_pre_ui_color|vkCmdBlitImage|capture_active' /tmp/arm64-source/src/video_core/renderer_vulkan/port_rasterizer_scene.h
