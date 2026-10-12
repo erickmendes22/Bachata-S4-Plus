@@ -204,7 +204,7 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
         if(!alloc(f.scene,color_format,render,sampled,VK_IMAGE_ASPECT_COLOR_BIT) ||
            !alloc(f.depth,depth_format,render,sampled,VK_IMAGE_ASPECT_DEPTH_BIT) ||
            !alloc(f.motion,VK_FORMAT_R16G16_SFLOAT,render,storage,VK_IMAGE_ASPECT_COLOR_BIT) ||
-           !alloc(f.output,VK_FORMAT_R8G8B8A8_UNORM,output,storage,VK_IMAGE_ASPECT_COLOR_BIT))
+           !alloc(f.output,VK_FORMAT_R16G16B16A16_SFLOAT,output,storage,VK_IMAGE_ASPECT_COLOR_BIT))
             return false;
         VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         ai.descriptorPool=descriptors;ai.descriptorSetCount=1;ai.pSetLayouts=&desc_layout;
@@ -248,37 +248,50 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     VkExtent2D input_extent,VkExtent2D output_extent,int preset,int hdr) {
     if(!owned||!cb||!input||hdr||preset<0||preset>4){report_once(1,"missing arguments or HDR/preset unsupported");return 0;}
     if(!owned->shaderStorageImageWriteWithoutFormatEnabled){report_once(2,"storage image write without format disabled");return 0;}
-    if(output_extent.width==0||output_extent.height==0){report_once(3,"output extent zero");return 0;}
+    if(output_extent.width==0||output_extent.height==0 ||
+       input_extent.width==0||input_extent.height==0) {
+        report_once(3,"input/output extent zero");return 0;
+    }
+    // R11 incorrectly downsized the fully rendered 1920x1080 scene to
+    // 427x240 and then reconstructed 1280x720. This cannot improve game
+    // performance and destroys visual detail. Host temporal upscaling must
+    // consume the *actual* smaller scene image, never synthesize one.
+    // Exactly matches the original shadPS4 FsrPass skip condition.
+    if (input_extent.width >= output_extent.width &&
+        input_extent.height >= output_extent.height) {
+        report_once(14, "source already >= presentation size; no forced downsample");
+        return 0;
+    }
     Bs4FsrCaptureImage color{},depth{};
     if(!bs4_fsr31_capture_image(input,&color)){report_once(4,"Vulkan color image view not captured");return 0;}
     if(!bs4_fsr31_capture_depth(input_extent,&depth)){report_once(5,"depth image matching render extent not captured");return 0;}
     if(!(color.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)){report_once(6,"color image lacks transfer-source usage");return 0;}
     if(!(depth.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)){report_once(7,"depth image lacks transfer-source usage");return 0;}
     // Begin with the formats available in the native FSR Vulkan backend.
-    // The guest video output may use sRGB, 10-bit UNORM, or RGBA16f,
-    // which the R10 format whitelist incorrectly rejected. Convert the
-    // real source to the portable FSR backend's RGBA8 intermediate through
+    // The guest video output may use sRGB, 10-bit UNORM, or RGBA16f.
+    // Convert color to a linear float16 intermediate; do not send
+    // gamma-encoded UNORM output to the original float HDR pipeline through
     // vkCmdBlitImage; first verify that format supports blitting.
     VkFormatProperties color_props{},rgba_props{};
     vkGetPhysicalDeviceFormatProperties(owned->physicalDevice,color.format,&color_props);
     vkGetPhysicalDeviceFormatProperties(owned->physicalDevice,
-                                         VK_FORMAT_R8G8B8A8_UNORM,&rgba_props);
+                                         VK_FORMAT_R16G16B16A16_SFLOAT,&rgba_props);
     if (!(color_props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) ||
         !(rgba_props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT)) {
         std::fprintf(stderr,
           "[BS4_FSR31] color source fmt=%d size=%ux%u usage=0x%x "
-          "blit_src=%d destination blit_dst=%d\\n",int(color.format),
+          "blit_src=%d destination float16 blit_dst=%d\\n",int(color.format),
           color.size.width,color.size.height,unsigned(color.usage),
           !!(color_props.optimalTilingFeatures&VK_FORMAT_FEATURE_BLIT_SRC_BIT),
           !!(rgba_props.optimalTilingFeatures&VK_FORMAT_FEATURE_BLIT_DST_BIT));
-        report_once(8,"color source/destination cannot be blitted to RGBA8");
+        report_once(8,"color source/destination cannot be blitted to RGBA16F");
         return 0;
     }
     static bool reported_color=false;
     if(!reported_color) {
         reported_color=true;
         std::fprintf(stderr,
-           "[BS4_FSR31] color source fmt=%d size=%ux%u usage=0x%x -> RGBA8\\n",
+           "[BS4_FSR31] color source fmt=%d size=%ux%u usage=0x%x -> RGBA16F\\n",
            int(color.format),color.size.width,color.size.height,unsigned(color.usage));
     }
     if(depth.format!=VK_FORMAT_D32_SFLOAT &&
@@ -293,9 +306,17 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     std::lock_guard lock{mutex};
     device=owned->device;physical=owned->physicalDevice;
     constexpr float ratio[]={1.f,1.5f,1.7f,2.f,3.f};
-    VkExtent2D internal{
-        std::max(1u,uint32_t(std::lround(output_extent.width/ratio[preset]))),
-        std::max(1u,uint32_t(std::lround(output_extent.height/ratio[preset])))};
+    // Use the guest's *real* render dimensions. The preset selects an
+    // expected game render-scale; it cannot magically reduce GPU draw cost
+    // after the game has already rendered its full-resolution frame.
+    VkExtent2D internal{input_extent.width, input_extent.height};
+    const float actual_x = float(output_extent.width)/float(internal.width);
+    const float actual_y = float(output_extent.height)/float(internal.height);
+    if(std::abs(actual_x-ratio[preset])>0.20f ||
+       std::abs(actual_y-ratio[preset])>0.20f) {
+        report_once(15,"actual scene dimensions do not match selected quality preset");
+        return 0;
+    }
     // A depth copy cannot be made from a mismatched guest depth target.
     // PS4 scene depth commonly has a different size than the displayed
     // VideoOut image. Its pixels are resampled to the same render extent as
@@ -307,8 +328,8 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
        config.maxRenderSize.height!=internal.height ||
        config.maxOutputSize.width!=output_extent.width ||
        config.maxOutputSize.height!=output_extent.height ||
-       frames[0].scene.format!=VK_FORMAT_R8G8B8A8_UNORM ||frames[0].depth.format!=depth.format) {
-        if(!allocate_for(*owned,internal,output_extent,VK_FORMAT_R8G8B8A8_UNORM,depth.format)){report_once(13,"FSR resource or context creation failed");return 0;}
+       frames[0].scene.format!=VK_FORMAT_R16G16B16A16_SFLOAT ||frames[0].depth.format!=depth.format) {
+        if(!allocate_for(*owned,internal,output_extent,VK_FORMAT_R16G16B16A16_SFLOAT,depth.format)){report_once(13,"FSR resource or context creation failed");return 0;}
     }
     Frame& f=frames[cursor++%frames.size()];
     transit(cb,f.scene,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
