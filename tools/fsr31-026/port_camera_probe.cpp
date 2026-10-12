@@ -149,6 +149,25 @@ extern "C" void bs4_port_reset_cb(VkCommandBuffer cb) {
     recorded.erase(cb);active_depth.erase(cb);active_extent.erase(cb);
     pending_push.erase(cb);bound_sets.erase(cb);
 }
+extern "C" int bs4_port_jitter_for_pass(VkExtent2D size,float* x,float* y) {
+    if(!x || !y || !size.width || !size.height)return 0;
+    const char* mode=std::getenv("BACHATA_FSR31_MODE");
+    if(!mode || mode[0]<'0'||mode[0]>'4'||mode[1]!=0)return 0;
+    std::lock_guard lock{guard};
+    // A real guest camera from the previous displayed Bloodborne frame
+    // identifies the renderer. Do not shift random Vulkan applications.
+    if(!previous_frame.valid ||
+       previous_frame.camera.width!=size.width ||
+       previous_frame.camera.height!=size.height ||
+       previous_frame.frame+1!=frame_sequence)return 0;
+    const double ratio=1280.0/double(size.width);
+    const unsigned phases=unsigned(std::clamp(
+        std::ceil(8.0*ratio*ratio),8.0,256.0));
+    const unsigned phase=unsigned((frame_sequence-1)%phases)+1;
+    *x=Halton(phase,2)-0.5f;*y=Halton(phase,3)-0.5f;
+    return 1;
+}
+
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_port_map(
     VkDevice d,VkDeviceMemory mem,VkDeviceSize off,VkDeviceSize len,
     VkMemoryMapFlags flags,void** ptr){
