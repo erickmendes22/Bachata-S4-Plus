@@ -6,6 +6,7 @@ on:
       - 'tools/fsr31-026/port_apply_source.py'
       - 'tools/fsr31-026/port_*.h'
       - 'tools/fsr31-026/test_port_*.cpp'
+      - 'tools/fsr31-026/port_camera_motion.comp'
       - '.github/workflows/fsr31-026-port-source-audit.yml'
 permissions: {contents: read}
 jobs:
@@ -32,4 +33,11 @@ jobs:
           cd tools/fsr31-026
           g++ -std=c++20 -O2 -Wall -Wextra -Werror test_port_rasterizer_scene.cpp -o /tmp/test-scene
           g++ -std=c++20 -O2 -Wall -Wextra -Werror test_port_camera_state.cpp -o /tmp/test-camera
-          /tmp/test-scene && /tmp/test-camera
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror test_port_camera_motion_math.cpp -o /tmp/test-motion
+          /tmp/test-scene && /tmp/test-camera && /tmp/test-motion
+      - name: Compile real Bloodborne camera-motion shader into SPIR-V
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslang-tools
+          glslangValidator -V -S comp tools/fsr31-026/port_camera_motion.comp -o /tmp/bachata-camera-motion.spv
+          test "$(stat -c%s /tmp/bachata-camera-motion.spv)" -gt 512
