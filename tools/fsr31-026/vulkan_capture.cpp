@@ -295,6 +295,20 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     }
     return true;
 }
+bool scene_ready_for_ui(const ActiveRendering& r,
+     const decltype(command_scenes)::const_iterator& it) {
+    if(it==command_scenes.end() || !it->second.ready ||
+       !it->second.color || !it->second.depth)return false;
+    const auto& c=it->second;
+    // Require completed 3D scene with depth, at reduced input dimensions.
+    if(c.extent.width<600 || c.extent.width>=1280 ||
+       c.extent.height<320 || c.extent.height>=720)return false;
+    if(r.info.renderArea.extent.width<1280 ||
+       r.info.renderArea.extent.height<700)return false;
+    // Some post passes have color attachments but no exact UI target.
+    // Positive guest HUD shader identity is mandatory (checked by caller).
+    return true;
+}
 void scene_rendering_ended(VkCommandBuffer command) {
     std::lock_guard lock{mutex};
     const auto it=command_scenes.find(command);
@@ -304,6 +318,165 @@ void scene_rendering_ended(VkCommandBuffer command) {
     }
 }
 } // namespace
+
+// The core024 shadPS4 shader compiler calls vkSetDebugUtilsObjectNameEXT with
+// guest program names (Vertex_0x...); recover the guest hash before the
+// Vulkan pipeline gets created. The SDK never changes the guest shader.
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_object_name(
+    VkDevice device,const VkDebugUtilsObjectNameInfoEXT* info) {
+    if(info && info->objectType==VK_OBJECT_TYPE_SHADER_MODULE &&
+       info->pObjectName) {
+        const char* p=std::strstr(info->pObjectName,"0x");
+        if(p) {
+            char* end=nullptr;
+            const uint64_t hash=std::strtoull(p+2,&end,16);
+            if(end!=p+2) {
+                std::lock_guard lock{mutex};
+                vertex_module_hash[(VkShaderModule)(uintptr_t)info->objectHandle]=hash;
+            }
+        }
+    }
+    return original_object_name?
+           original_object_name(device,info):VK_ERROR_EXTENSION_NOT_PRESENT;
+}
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_graphics_pipelines(
+    VkDevice device,VkPipelineCache cache,uint32_t count,
+    const VkGraphicsPipelineCreateInfo* cis,const VkAllocationCallbacks* allocator,
+    VkPipeline* output) {
+    if(!original_create_graphics_pipelines)return VK_ERROR_INITIALIZATION_FAILED;
+    const VkResult status=original_create_graphics_pipelines(
+        device,cache,count,cis,allocator,output);
+    if(output && cis && (status==VK_SUCCESS || status==VK_PIPELINE_COMPILE_REQUIRED)) {
+        std::lock_guard lock{mutex};
+        for(uint32_t i=0;i<count;i++) {
+            if(!output[i])continue;
+            bool ui=false;
+            for(uint32_t j=0;j<cis[i].stageCount;j++) {
+                const auto& st=cis[i].pStages[j];
+                if(st.stage!=VK_SHADER_STAGE_VERTEX_BIT)continue;
+                const auto it=vertex_module_hash.find(st.module);
+                if(it!=vertex_module_hash.end() &&
+                   known_first_hud_shader(it->second))ui=true;
+            }
+            known_ui_pipeline[output[i]]=ui;
+            if(ui) {
+                static bool logged=false;
+                if(!logged) {
+                    logged=true;
+                    std::fprintf(stderr,
+                        "[BS4_FSR31] first guest UI shader pipeline identified; "
+                        "pre-HUD temporal path enabled\\n");
+                }
+            }
+        }
+    }
+    return status;
+}
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_destroy_pipeline(
+    VkDevice d,VkPipeline pipeline,const VkAllocationCallbacks* allocator) {
+    {std::lock_guard lock{mutex};known_ui_pipeline.erase(pipeline);}
+    if(original_destroy_pipeline)original_destroy_pipeline(d,pipeline,allocator);
+}
+thread_local VkCommandBuffer currently_bound_cb=VK_NULL_HANDLE;
+thread_local bool currently_bound_ui_shader=false;
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_bind_pipeline(
+    VkCommandBuffer cb,VkPipelineBindPoint point,VkPipeline pipeline) {
+    if(point==VK_PIPELINE_BIND_POINT_GRAPHICS) {
+        currently_bound_cb=cb;
+        {
+            std::lock_guard lock{mutex};
+            const auto it=known_ui_pipeline.find(pipeline);
+            currently_bound_ui_shader=it!=known_ui_pipeline.end() && it->second;
+        }
+    }
+    if(original_bind_pipeline) original_bind_pipeline(cb,point,pipeline);
+}
+
+/* Called ONLY before a verified first guest HUD draw. Do not overwrite
+ * arbitrary intermediate 1080p targets. Stop the active Vulkan dynamic
+ * rendering pass, record real FSR3 640x360->1280x720 + composite, then
+ * resume that exact pass with LOAD so all subsequent HUD draws are intact.
+ *
+ * This also avoids the R14/R18 error where the entire game scene appeared
+ * corrupted while UI stayed legible. Unknown shaders pass through untouched.
+ */
+bool bs4_dispatch_at_first_ui_draw(VkCommandBuffer cb) {
+    if(cb!=currently_bound_cb || !currently_bound_ui_shader)return false;
+    ActiveRendering record{};
+    {
+        std::lock_guard lock{mutex};
+        auto live=active_rendering.find(cb);
+        auto scene=command_scenes.find(cb);
+        if(live==active_rendering.end() || !live->second.valid ||
+           live->second.attempted || !scene_ready_for_ui(live->second,scene))
+           return false;
+        live->second.attempted=true;
+        record=live->second;
+    }
+    auto end_fn=record.khr?original_end_rendering_khr:original_end_rendering;
+    auto begin_fn=record.khr?original_begin_rendering_khr:original_begin_rendering;
+    if(!end_fn || !begin_fn)return false;
+    // pNext chains and suspend/resume attachments cannot be safely replayed.
+    if(record.info.pNext ||
+       (record.info.flags & (VK_RENDERING_SUSPENDING_BIT |
+                             VK_RENDERING_RESUMING_BIT)))return false;
+
+    VkRenderingInfo resume=record.info;
+    resume.pColorAttachments=record.color.data();
+    for(auto& a:record.color)
+        if(a.imageView)a.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;
+    if(record.has_depth) {
+        record.depth.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;
+        resume.pDepthAttachment=&record.depth;
+    }
+    if(record.has_stencil) {
+        record.stencil.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;
+        resume.pStencilAttachment=&record.stencil;
+    }
+    end_fn(cb);
+    VkRenderingInfo modified{};
+    std::vector<VkRenderingAttachmentInfo> overrides;
+    const bool upscaled=first_pre_ui_color(cb,&resume,modified,overrides,true);
+    // Regardless of dispatch outcome: this is a RESUMED render pass.
+    // Clearing would destroy existing contents before drawing the HUD.
+    if(upscaled)resume=modified;
+    begin_fn(cb,&resume);
+    if(upscaled){
+        static bool once=false;
+        if(!once){
+            once=true;
+            std::fprintf(stderr,
+                "[BS4_FSR31] FIRST_GUEST_HUD_DRAW temporal applied "
+                "without modifying an intermediate rendering pass\\n");
+        }
+    }
+    return upscaled;
+}
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_draw(
+    VkCommandBuffer cb,uint32_t vertexCount,uint32_t instanceCount,
+    uint32_t firstVertex,uint32_t firstInstance) {
+    bs4_dispatch_at_first_ui_draw(cb);
+    if(original_draw)original_draw(cb,vertexCount,instanceCount,firstVertex,firstInstance);
+}
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_draw_indexed(
+    VkCommandBuffer cb,uint32_t indexCount,uint32_t instanceCount,
+    uint32_t firstIndex,int32_t vertexOffset,uint32_t firstInstance) {
+    bs4_dispatch_at_first_ui_draw(cb);
+    if(original_draw_indexed)original_draw_indexed(
+        cb,indexCount,instanceCount,firstIndex,vertexOffset,firstInstance);
+}
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_draw_indirect(
+    VkCommandBuffer cb,VkBuffer buffer,VkDeviceSize offset,uint32_t drawCount,uint32_t stride) {
+    bs4_dispatch_at_first_ui_draw(cb);
+    if(original_draw_indirect) original_draw_indirect(cb,buffer,offset,drawCount,stride);
+}
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_draw_indexed_indirect(
+    VkCommandBuffer cb,VkBuffer buffer,VkDeviceSize offset,uint32_t drawCount,uint32_t stride) {
+    bs4_dispatch_at_first_ui_draw(cb);
+    if(original_draw_indexed_indirect)original_draw_indexed_indirect(
+        cb,buffer,offset,drawCount,stride);
+}
+
 extern "C" int bs4_fsr31_capture_image(VkImageView view, Bs4FsrCaptureImage* out) {
     if (!out || !view) return 0;
     std::lock_guard lock{mutex};
