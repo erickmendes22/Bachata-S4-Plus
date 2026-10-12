@@ -78,6 +78,9 @@ body = r'''
             d.depthHeight = depth.size.height;
         }
         if (mrt >= 5 && d.depthId) {
+            if (fsr31PortStage.HUDStarted()) {
+                fsr31PortCamera.OnDisplayFrame();
+            }
             const auto& vp = regs.viewports[0];
             fsr31PortCamera.OnGBuffer(d.depthId,
                     vp.xscale < 0.f ? -1.f : 1.f,
@@ -103,7 +106,9 @@ cam = r'''
             // Bloodborne port: inspect actual 864-byte guest camera buffer
             // on each GBuffer pass. Do not reuse stale matrices across frames.
             // MemoryManager already bounded the mapped guest range.
-            if (!desc.is_written && size >= 216 * sizeof(float) &&
+            if (!desc.is_written && vsharp.GetSize() == 864 &&
+                fsr31PortCamera.WaitingForConstants() &&
+                size >= 216 * sizeof(float) &&
                 (vsharp.base_address & 3) == 0) {
                 fsr31PortCamera.OnConstants(
                     reinterpret_cast<const float*>(vsharp.base_address),216);
