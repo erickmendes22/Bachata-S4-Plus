@@ -11,6 +11,9 @@
 #include <mutex>
 #include <unordered_map>
 #include <vector>
+#include <cmath>
+#include <algorithm>
+#include <cstdlib>
 #include <dlfcn.h>
 
 namespace {
@@ -21,6 +24,8 @@ struct CameraRecord {
     VkImageView depth=VK_NULL_HANDLE;
     uint64_t frame=0;
     bool valid=false;
+    bool jitterApplied=false;
+    float jitterX=0.f,jitterY=0.f;
 };
 std::mutex guard;
 std::unordered_map<VkBuffer,Binding> bound;
@@ -71,7 +76,8 @@ void inspect_buffer(VkCommandBuffer cb,const VkDescriptorBufferInfo& info) {
     if(d==active_depth.end() || e==active_extent.end() ||
        !d->second || c.width!=e->second.width ||
        c.height!=e->second.height)return;
-    CameraRecord rec{c,d->second,frame_sequence,true};
+    CameraRecord rec{};
+    rec.camera=c;rec.depth=d->second;rec.frame=frame_sequence;rec.valid=true;
     recorded[cb]=rec;
     last_frame_camera=rec;
     if(seen.fetch_add(1)==0)
@@ -121,7 +127,11 @@ extern "C" VkImageView bs4_port_camera_for_scene(VkCommandBuffer cb,
        previous_frame.camera.height!=size.height)
        return VK_NULL_HANDLE;
     const auto push=BachataCamera::MakePush(
-        it->second.camera,previous_frame.camera); // jitter stays 0 until raster hook
+        it->second.camera,previous_frame.camera,
+        it->second.jitterApplied?it->second.jitterX:0.f,
+        it->second.jitterApplied?it->second.jitterY:0.f,
+        previous_frame.jitterApplied?previous_frame.jitterX:0.f,
+        previous_frame.jitterApplied?previous_frame.jitterY:0.f);
     std::memcpy(out_push,&push,sizeof(push));
     return it->second.depth;
 }
@@ -243,22 +253,62 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_bind_sets(
 // Descriptor recording and scene beginning can have different order.
 // Inspect again at the actual G-buffer draw, after both are known.
 extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer);
+extern "C" int bs4_port_ui_apply_camera_jitter(VkCommandBuffer,float,float);
+static float Halton(unsigned n,unsigned base){
+    float f=1.0f,r=0.0f;
+    while(n){f/=float(base);r+=f*float(n%base);n/=base;}
+    return r;
+}
 void bs4_port_scan_at_draw(VkCommandBuffer cb) {
-    std::lock_guard lock{guard};
-    auto existing=recorded.find(cb);
-    if(existing!=recorded.end() && existing->second.frame==frame_sequence)
-        return;
-    auto p=pending_push.find(cb);
-    if(p!=pending_push.end())
-        for(const auto& b:p->second) inspect_buffer(cb,b);
-    auto bound_it=bound_sets.find(cb);
-    if(bound_it!=bound_sets.end())
-        for(const auto& set_id:bound_it->second) {
-            auto set=sets.find(set_id);
-            if(set==sets.end())continue;
-            for(const auto& b:set->second)
-                if(b.buffer)inspect_buffer(cb,b);
+    bool valid=false,alreadyJittered=false;
+    uint32_t width=0;
+    uint64_t generation=0;
+    {
+        std::lock_guard lock{guard};
+        auto existing=recorded.find(cb);
+        if(existing==recorded.end() || existing->second.frame!=frame_sequence){
+            auto p=pending_push.find(cb);
+            if(p!=pending_push.end())
+                for(const auto& b:p->second)inspect_buffer(cb,b);
+            auto bound_it=bound_sets.find(cb);
+            if(bound_it!=bound_sets.end())
+                for(const auto& set_id:bound_it->second){
+                    auto set=sets.find(set_id);
+                    if(set==sets.end())continue;
+                    for(const auto& b:set->second)
+                        if(b.buffer)inspect_buffer(cb,b);
+                }
+            existing=recorded.find(cb);
         }
+        if(existing!=recorded.end() && existing->second.valid &&
+           existing->second.frame==frame_sequence){
+            valid=true;
+            width=existing->second.camera.width;
+            alreadyJittered=existing->second.jitterApplied;
+            generation=frame_sequence;
+        }
+    }
+    if(!valid || alreadyJittered || !width)return;
+    const char* mode=std::getenv("BACHATA_FSR31_MODE");
+    if(!mode || mode[0]<'0'||mode[0]>'4'||mode[1]!=0)return;
+    const double ratio=1280.0/double(width);
+    const unsigned phases=unsigned(std::clamp(
+        std::ceil(8.0*ratio*ratio),8.0,256.0));
+    const unsigned phase=unsigned((generation-1)%phases)+1;
+    const float x=Halton(phase,2)-0.5f;
+    const float y=Halton(phase,3)-0.5f;
+    if(bs4_port_ui_apply_camera_jitter(cb,x,y)) {
+        std::lock_guard lock{guard};
+        auto it=recorded.find(cb);
+        if(it!=recorded.end() && it->second.frame==generation){
+            it->second.jitterApplied=true;
+            it->second.jitterX=x;it->second.jitterY=y;
+            if(last_frame_camera.valid && last_frame_camera.frame==generation) {
+                last_frame_camera.jitterApplied=true;
+                last_frame_camera.jitterX=x;last_frame_camera.jitterY=y;
+            }
+        }
+    }
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_draw(
     VkCommandBuffer cb,uint32_t v,uint32_t n,uint32_t first,uint32_t instance) {
