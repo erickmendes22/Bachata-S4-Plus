@@ -112,6 +112,7 @@ extern "C" int bs4_port_ui_apply_camera_jitter(
     return 1;
 }
 extern "C" int bs4_port_jitter_for_pass(VkExtent2D,float*,float*);
+extern "C" int bs4_port_can_prepare_ui(VkCommandBuffer);
 extern "C" VkImageView bs4_port_prepare_ui(VkCommandBuffer);
 extern "C" VkImage bs4_fsr31_output_image(VkImageView);
 extern "C" int bs4_fsr31_set_output_layout(VkImageView,VkImageLayout);
@@ -382,8 +383,17 @@ extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer cb) {
     const auto begin_fn=s.khr?reinterpret_cast<PFN_vkCmdBeginRendering>(realBeginKHR):realBegin;
     if(!end_fn || !begin_fn || !realSetViewport || !realSetScissor)return false;
 
-    // Only now is it safe to end the original game UI pass. The actual LDR
-    // scene, matching G-buffer depth, and camera must all be present.
+    // R23 recorded vkCmdEndRendering before even checking whether the
+    // temporal source/camera existed; a failed dispatch then re-opened the
+    // guest pass with LOAD, which is NOT a safe no-op.
+    // Verify real LDR scene + camera + same-size depth WITHOUT recording a
+    // single Vulkan command. If unavailable leave the entire game pass intact.
+    lock.unlock();
+    const bool ready=bs4_port_can_prepare_ui(cb)!=0;
+    lock.lock();
+    if(!ready || !s.inside || !safeOriginal(s))return false;
+    // Beyond this point the renderer still requires preflighted resources;
+    // a rejected FSR dispatch is not evidence of an image-quality fix.
     end_fn(cb);
     // FSR dispatch binds its own Vulkan compute pipeline, which is also
     // seen by our proc-address hooks. Do not hold uiMutex across dispatch.
