@@ -112,7 +112,8 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     const auto view=info->pColorAttachments[0].imageView;
     ScenePass completed{};
     VkImage dst=VK_NULL_HANDLE, src=VK_NULL_HANDLE;
-    VkImageLayout dst_layout=info->pColorAttachments[0].imageLayout;
+    const VkImageLayout dst_layout=info->pColorAttachments[0].imageLayout;
+    VkImageLayout dst_previous_layout=VK_IMAGE_LAYOUT_UNDEFINED;
     uint32_t dst_w=0,dst_h=0;
     {
         std::lock_guard lock{mutex};
@@ -151,6 +152,7 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
             !(dst_i->second.usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
             return false;
         dst=dst_v->second.image;
+        dst_previous_layout=dst_i->second.layout;
         dst_w=dst_i->second.size.width;
         dst_h=dst_i->second.size.height;
         completed=stage;
@@ -197,7 +199,10 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     const VkImageLayout ui_layout =
         dst_layout==VK_IMAGE_LAYOUT_UNDEFINED ?
         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : dst_layout;
-    bars[1].oldLayout=dst_layout;
+    // AttachmentInfo::imageLayout is the layout required *during* the UI
+    // pass, not necessarily the current image layout before its first draw.
+    // The Vulkan barrier tracker stores the preceding transition.
+    bars[1].oldLayout=dst_previous_layout;
     bars[1].newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
     dep.imageMemoryBarrierCount=2;
@@ -221,6 +226,11 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     }
     bars[1].newLayout=ui_layout;
     vkCmdPipelineBarrier2(cmd,&dep);
+    {
+        std::lock_guard lock{mutex};
+        const auto current=images.find(dst);
+        if(current!=images.end())current->second.layout=ui_layout;
+    }
     // The background is now populated. Preserve it when the game's UI
     // starts drawing; otherwise a CLEAR loadOp would erase the FSR result.
     modified=*info;
