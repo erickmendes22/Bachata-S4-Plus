@@ -118,179 +118,45 @@ void record_rendering(const VkRenderingInfo* info) {
  * This never changes the guest's render dimensions. Unsupported cases leave
  * the original shadPS4 command sequence untouched.
  */
+// The Android port's RunScaled never dispatches at vkCmdBeginRendering
+// merely because an attachment is 1280x720. That old R13 hook was still
+// consuming the completed scene before the positively identified HUD draw:
+// CABE26EE proved the candidate was consumed without ANY temporal dispatch.
+// This function now ONLY observes completed single-color RGBA8 LDR passes.
+// A first recognized HUD *draw* (bs4_port_ui_try_activate) is the sole
+// permitted FSR/composition trigger.
 bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
                         VkRenderingInfo& modified,
                         std::vector<VkRenderingAttachmentInfo>& overrides) {
-    if (!cmd || !info || !info->colorAttachmentCount ||
-        !info->pColorAttachments || !info->pColorAttachments[0].imageView)
+    (void)modified;
+    (void)overrides;
+    if(!cmd||!info||info->pNext||info->colorAttachmentCount!=1||
+       !info->pColorAttachments||!info->pColorAttachments[0].imageView)
         return false;
     const uint32_t w=info->renderArea.extent.width;
     const uint32_t h=info->renderArea.extent.height;
-    const auto view=info->pColorAttachments[0].imageView;
-    ScenePass completed{};
-    VkImage dst=VK_NULL_HANDLE, src=VK_NULL_HANDLE;
-    const VkImageLayout dst_layout=info->pColorAttachments[0].imageLayout;
-    VkImageLayout dst_previous_layout=VK_IMAGE_LAYOUT_UNDEFINED;
-    uint32_t dst_w=0,dst_h=0;
-    {
-        std::lock_guard lock{mutex};
-        auto& stage=command_scenes[cmd];
-        // Never activate on menu frames that did not contain a 3D scene.
-        // Support 640x360, 960x540, 1152x648; 1280x720 does not need
-        // temporal upscale if the requested presentation is also 720p.
-        if (w>=600 && w<1280 && h>=320 && h<720) {
-            const auto v=views.find(view);
-            if (v!=views.end()) {
-                const auto i=images.find(v->second.image);
-                if (i!=images.end() &&
-                    // The port's RunScaled uses the *tonemapped* LDR scene.
-                    // fmt=122 is the earlier HDR G-buffer: never use it here.
-                    i->second.format==VK_FORMAT_R8G8B8A8_UNORM &&
-                    (i->second.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) &&
-                    (i->second.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) &&
-                    i->second.size.width>=w && i->second.size.width<=1920 &&
-                    i->second.size.height>=h && i->second.size.height<=1080 &&
-                    // Only exact reduced images or 1920x1080 guest allocations
-                    // with a reduced upper-left viewport (real port case).
-                    ((i->second.size.width==w &&
-                      i->second.size.height==h) ||
-                     (i->second.size.width==1920 &&
-                      i->second.size.height==1080))) {
-                    stage.color=view;
-                    stage.depth=info->pDepthAttachment?
-                        info->pDepthAttachment->imageView:VK_NULL_HANDLE;
-                    stage.extent={w,h};
-                    stage.inside=true;
-                    stage.ready=false;
-                }
-            }
-            return false;
-        }
-        // This is the first full-size UI pass following a completed small
-        // 3D scene on the SAME command buffer. Cross-CB ordering is unknown:
-        // never issue Vulkan commands based on unproven inter-CB ordering.
-        // The original game usually begins its UI at 1920x1080; never
-        // consume or clear the reduced scene on this pass. Real RunScaled
-        // will use it at the positively identified HUD shader draw.
-        if(w!=1280 || h!=720)return false;
-        // LDR pass often has no depth attachment. The original port takes
-        // G-buffer depth from CameraMotion, not the LDR target's depth.
-        if(w<1280||h<700||!stage.ready||!stage.color||stage.color==view)
-            return false;
-        const auto dst_v=views.find(view);
-        if(dst_v==views.end())return false;
-        const auto dst_i=images.find(dst_v->second.image);
-        if(dst_i==images.end() ||
-            !(dst_i->second.usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
-            return false;
-        dst=dst_v->second.image;
-        dst_previous_layout=dst_i->second.layout;
-        dst_w=dst_i->second.size.width;
-        dst_h=dst_i->second.size.height;
-        completed=stage;
-        stage.ready=false;
-        stage.color=VK_NULL_HANDLE;
-    }
-    if (!pre_ui_eligible_logged) {
-        pre_ui_eligible_logged=true;
-        std::fprintf(stderr,
-           "[BS4_FSR31] pre-UI candidate scene=%ux%u output=%ux%u "
-           "ui_target=%ux%u\\n",
-           completed.extent.width,completed.extent.height,w,h,dst_w,dst_h);
-    }
-    if(dst_w<w||dst_h<h)return false;
-    // Port RunScaled composes a separate host RGBA8 UI surface at 720p.
-    // The current 024 hook receives a 1920x1080 guest HUD surface, and
-    // the old blit was the R14/R18/R20 corruption path. Do not substitute
-    // the output into that surface; core024 requires native UI redirection.
-    if(w!=1280 || h!=720 || dst_w!=1280 || dst_h!=720)return false;
-    const VkExtent2D upscale_extent{1280,720};
-    // Only genuine scene constants, associated with the actual 640x360
-    // G-buffer in the SAME command buffer, may feed the temporal path.
-    // Unavailable camera history never falls back to invented motion vectors.
-    BachataCamera::Push port_push{};
-    const VkImageView true_depth=bs4_port_camera_for_scene(
-        cmd,completed.extent,&port_push,sizeof(port_push));
-    if(!true_depth ||
-       !bs4_fsr31_supply_port_camera(
-           cmd,true_depth,&port_push,sizeof(port_push)))return false;
-    completed.depth=true_depth;
-    VkImage upscaled=VK_NULL_HANDLE;
-    if(!bs4_fsr31_pre_ui_dispatch(cmd,completed.color,completed.depth,
-                                    completed.extent,upscale_extent,&upscaled)||!upscaled)
+    if(w<600||w>=1280||h<320||h>=720)return false;
+    const VkImageView view=info->pColorAttachments[0].imageView;
+    std::lock_guard lock{mutex};
+    const auto v=views.find(view);
+    if(v==views.end() || v->second.format!=VK_FORMAT_R8G8B8A8_UNORM)
         return false;
-    // Pre-UI barrier + blit: both images are outside a rendering instance.
-    // Return the UI attachment to its original layout before vkCmdBeginRendering.
-    VkImageMemoryBarrier2 bars[2]{};
-    for(auto& b:bars) {
-        b.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-        b.srcStageMask=VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-        b.srcAccessMask=VK_ACCESS_2_MEMORY_READ_BIT|
-                        VK_ACCESS_2_MEMORY_WRITE_BIT;
-        b.dstStageMask=VK_PIPELINE_STAGE_2_TRANSFER_BIT;
-        b.dstAccessMask=VK_ACCESS_2_TRANSFER_READ_BIT|
-                        VK_ACCESS_2_TRANSFER_WRITE_BIT;
-        b.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
-        b.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
-        b.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
-    }
-    bars[0].image=upscaled;
-    bars[0].oldLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    bars[0].newLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    bars[1].image=dst;
-    // An UNDEFINED attachment would discard the newly upscaled background.
-    // Switch it to a valid color attachment layout before the HUD begins.
-    const VkImageLayout ui_layout =
-        dst_layout==VK_IMAGE_LAYOUT_UNDEFINED ?
-        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : dst_layout;
-    // AttachmentInfo::imageLayout is the layout required *during* the UI
-    // pass, not necessarily the current image layout before its first draw.
-    // The Vulkan barrier tracker stores the preceding transition.
-    bars[1].oldLayout=dst_previous_layout;
-    bars[1].newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-    dep.imageMemoryBarrierCount=2;
-    dep.pImageMemoryBarriers=bars;
-    vkCmdPipelineBarrier2(cmd,&dep);
-    VkImageBlit blit{};
-    blit.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
-    blit.srcOffsets[1]={1280,720,1};
-    blit.dstSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
-    blit.dstOffsets[1]={int32_t(w),int32_t(h),1};
-    vkCmdBlitImage(cmd,upscaled,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-        dst,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&blit,VK_FILTER_LINEAR);
-    for(auto& b:bars) {
-        std::swap(b.oldLayout,b.newLayout);
-        b.srcStageMask=VK_PIPELINE_STAGE_2_TRANSFER_BIT;
-        b.srcAccessMask=VK_ACCESS_2_TRANSFER_READ_BIT|
-                        VK_ACCESS_2_TRANSFER_WRITE_BIT;
-        b.dstStageMask=VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-        b.dstAccessMask=VK_ACCESS_2_MEMORY_READ_BIT|
-                        VK_ACCESS_2_MEMORY_WRITE_BIT;
-    }
-    bars[1].newLayout=ui_layout;
-    vkCmdPipelineBarrier2(cmd,&dep);
-    {
-        std::lock_guard lock{mutex};
-        const auto current=images.find(dst);
-        if(current!=images.end())current->second.layout=ui_layout;
-    }
-    // The background is now populated. Preserve it when the game's UI
-    // starts drawing; otherwise a CLEAR loadOp would erase the FSR result.
-    modified=*info;
-    overrides.assign(info->pColorAttachments,
-                     info->pColorAttachments+info->colorAttachmentCount);
-    overrides[0].loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;
-    overrides[0].imageLayout=ui_layout;
-    modified.pColorAttachments=overrides.data();
-    if(!pre_ui_dispatch_logged){
-        pre_ui_dispatch_logged=true;
-        std::fprintf(stderr,
-            "[BS4_FSR31] FIRST_PRE_UI_COMPOSITE FSR=1280x720 "
-            "HUD_target=%ux%u\\n",w,h);
-    }
-    return true;
+    const auto img=images.find(v->second.image);
+    if(img==images.end() ||
+       !(img->second.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) ||
+       !(img->second.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) ||
+       !(img->second.size.width==w && img->second.size.height==h) &&
+       !(img->second.size.width==1920 && img->second.size.height==1080))
+        return false;
+    auto& stage=command_scenes[cmd];
+    stage.color=view;
+    stage.depth=VK_NULL_HANDLE; // true G-buffer depth from port camera hook
+    stage.extent={w,h};
+    stage.inside=true;
+    stage.ready=false;
+    return false; // NEVER change the guest rendering or its attachments
 }
+
 void scene_rendering_ended(VkCommandBuffer command) {
     std::lock_guard lock{mutex};
     const auto it=command_scenes.find(command);
