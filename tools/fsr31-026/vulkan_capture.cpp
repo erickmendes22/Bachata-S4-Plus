@@ -59,6 +59,14 @@ std::unordered_map<VkPipeline,bool> known_ui_pipeline;
 constexpr uint64_t kGuestHdrSceneCopy = 0xccbf44a6ULL;
 std::unordered_map<VkPipeline,bool> known_hdr_copy_pipeline;
 std::unordered_map<VkCommandBuffer,VkPipeline> graphics_pipeline_bound;
+struct SampledSourceBinding {
+    VkPipelineLayout layout=VK_NULL_HANDLE;
+    uint32_t set=0,binding=0,arrayElement=0;
+    VkDescriptorType descriptorType=VK_DESCRIPTOR_TYPE_MAX_ENUM;
+    VkDescriptorImageInfo image{};
+};
+std::unordered_map<VkCommandBuffer,std::vector<SampledSourceBinding>>
+    graphics_push_samples;
 struct ActiveRendering {
     VkRenderingInfo info{};
     std::vector<VkRenderingAttachmentInfo> color;
@@ -84,6 +92,8 @@ bool hdr_copy_candidate_logged=false;
 using PreUiDispatch=int (*)(VkCommandBuffer,VkImageView,VkExtent2D,VkExtent2D,VkImage*);
 extern "C" int bs4_fsr31_pre_ui_dispatch(VkCommandBuffer,VkImageView,
                 VkImageView,VkExtent2D,VkExtent2D,VkImage*);
+extern "C" VkImageView bs4_fsr31_hdr_scene_source(
+    VkCommandBuffer,VkImageView,VkImageView,VkExtent2D,VkExtent2D);
 
 PFN_vkBeginCommandBuffer original_begin_command{};
 PFN_vkResetCommandBuffer original_reset_command{};
@@ -106,6 +116,7 @@ PFN_vkCmdDraw original_draw{};
 PFN_vkCmdDrawIndexed original_draw_indexed{};
 PFN_vkCmdDrawIndirect original_draw_indirect{};
 PFN_vkCmdDrawIndexedIndirect original_draw_indexed_indirect{};
+PFN_vkCmdPushDescriptorSetKHR original_push_descriptors{};
 
 using DlsymFn = void* (*)(void*, const char*);
 PFN_vkGetDeviceProcAddr next_device_proc_addr() {
