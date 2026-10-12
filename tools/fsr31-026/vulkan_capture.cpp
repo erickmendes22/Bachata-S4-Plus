@@ -42,6 +42,38 @@ struct ScenePass {
     bool ready = false;
 };
 std::unordered_map<VkCommandBuffer, ScenePass> command_scenes;
+/* Shader identity is supplied by the *existing core024* via Vulkan debug
+ * object names: Vertex_0x0000000034e8a281, etc. Those are guest hashes, not
+ * hashes fabricated from recompiled SPIR-V.
+ * The known Bloodborne HUD hashes come from IFreemz's real pre-HUD path.
+ * Unrecognized games retain the original R13 rendering unchanged. */
+bool known_first_hud_shader(uint64_t hash) {
+    return hash==0x34e8a281ULL || hash==0x81d336ceULL ||
+           hash==0x09957251ULL || hash==0x24042a9bULL ||
+           hash==0xa400228bULL;
+}
+std::unordered_map<VkShaderModule,uint64_t> vertex_module_hash;
+std::unordered_map<VkPipeline,bool> known_ui_pipeline;
+std::unordered_map<VkCommandBuffer,VkPipeline> graphics_pipeline_bound;
+struct ActiveRendering {
+    VkRenderingInfo info{};
+    std::vector<VkRenderingAttachmentInfo> color;
+    VkRenderingAttachmentInfo depth{},stencil{};
+    bool has_depth=false,has_stencil=false,khr=false,attempted=false,valid=false;
+};
+std::unordered_map<VkCommandBuffer,ActiveRendering> active_rendering;
+ActiveRendering copy_rendering(const VkRenderingInfo* in,bool khr) {
+    ActiveRendering r{};
+    if (!in || in->pNext || !in->pColorAttachments || !in->colorAttachmentCount)
+        return r;
+    r.info=*in;
+    r.color.assign(in->pColorAttachments,in->pColorAttachments+in->colorAttachmentCount);
+    if(in->pDepthAttachment){r.has_depth=true;r.depth=*in->pDepthAttachment;}
+    if(in->pStencilAttachment){r.has_stencil=true;r.stencil=*in->pStencilAttachment;}
+    r.khr=khr;r.valid=true;
+    return r;
+}
+
 bool pre_ui_dispatch_logged=false;
 bool pre_ui_eligible_logged=false;
 using PreUiDispatch=int (*)(VkCommandBuffer,VkImageView,VkExtent2D,VkExtent2D,VkImage*);
@@ -61,6 +93,15 @@ PFN_vkCmdPipelineBarrier2 original_barrier2{};
 PFN_vkCmdBeginRenderingKHR original_begin_rendering_khr{};
 PFN_vkCmdEndRenderingKHR original_end_rendering_khr{};
 PFN_vkCmdPipelineBarrier2KHR original_barrier2_khr{};
+PFN_vkSetDebugUtilsObjectNameEXT original_object_name{};
+PFN_vkCreateGraphicsPipelines original_create_graphics_pipelines{};
+PFN_vkDestroyPipeline original_destroy_pipeline{};
+PFN_vkCmdBindPipeline original_bind_pipeline{};
+PFN_vkCmdDraw original_draw{};
+PFN_vkCmdDrawIndexed original_draw_indexed{};
+PFN_vkCmdDrawIndirect original_draw_indirect{};
+PFN_vkCmdDrawIndexedIndirect original_draw_indexed_indirect{};
+
 using DlsymFn = void* (*)(void*, const char*);
 PFN_vkGetDeviceProcAddr next_device_proc_addr() {
     static auto original = [] {
