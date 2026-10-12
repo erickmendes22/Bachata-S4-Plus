@@ -8,6 +8,9 @@
 #include <cstdio>
 #include <mutex>
 #include <fstream>
+#include <dlfcn.h>
+#include <atomic>
+#include <cstring>
 #include <cstdlib>
 #include <string>
 namespace {
@@ -174,7 +177,10 @@ BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice 
     vkGetPhysicalDeviceFeatures(physical, &features);
     // The BACHATA Vulkan device may not enable this optional capability.
     // Do not claim enabled features solely from physical-device support.
-    info.shaderStorageImageWriteWithoutFormatEnabled = VK_FALSE;
+    // Read only the actual vkCreateDevice interception result, never physical support.
+    extern std::atomic<bool> fsr31_storage_feature_enabled;
+    info.shaderStorageImageWriteWithoutFormatEnabled =
+        fsr31_storage_feature_enabled.load() ? VK_TRUE : VK_FALSE;
     acquired_device = info;
     device_attached = true;
     VkPhysicalDeviceProperties props{};
@@ -189,4 +195,95 @@ BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice 
 BS4_PUBLIC int bs4_fsr31_attachment_ready() {
     std::lock_guard<std::mutex> lock(guard);
     return device_attached ? 1 : 0;
+}
+
+std::atomic<bool> fsr31_storage_feature_enabled{false};
+
+namespace {
+PFN_vkCreateDevice real_create_device = nullptr;
+using RealDlsym = void* (*)(void*, const char*);
+RealDlsym real_dlsym() {
+    // glibc's versioned lookup avoids recursion through our dlsym interposer.
+    return reinterpret_cast<RealDlsym>(
+        dlvsym(RTLD_NEXT, "dlsym", "GLIBC_2.34"));
+}
+PFN_vkGetInstanceProcAddr real_gipa() {
+    static auto fn = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
+        dlvsym(RTLD_NEXT, "vkGetInstanceProcAddr", "GLIBC_2.34"));
+    if (!fn) {
+        if (auto ds = real_dlsym()) {
+            fn = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
+                ds(RTLD_NEXT, "vkGetInstanceProcAddr"));
+        }
+    }
+    return fn;
+}
+bool fsr31_requested() {
+    const char* mode = std::getenv("BACHATA_FSR31_MODE");
+    return mode && mode[0] >= '0' && mode[0] <= '4' && mode[1] == 0;
+}
+VKAPI_ATTR VkResult VKAPI_CALL fsr31_create_device(
+        VkPhysicalDevice physical, const VkDeviceCreateInfo* requested,
+        const VkAllocationCallbacks* allocator, VkDevice* output) {
+    if (!real_create_device || !requested)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    if (!fsr31_requested())
+        return real_create_device(physical, requested, allocator, output);
+    VkPhysicalDeviceFeatures supported{};
+    vkGetPhysicalDeviceFeatures(physical, &supported);
+    if (!supported.shaderStorageImageWriteWithoutFormat) {
+        std::fprintf(stderr, "[BS4_FSR31] GPU feature unsupported, using FSR1\\n");
+        return real_create_device(physical, requested, allocator, output);
+    }
+    VkDeviceCreateInfo ci = *requested;
+    VkPhysicalDeviceFeatures2 f2{};
+    VkPhysicalDeviceFeatures legacy{};
+    bool enabled = false;
+    if (ci.pNext) {
+        auto head = reinterpret_cast<const VkBaseInStructure*>(ci.pNext);
+        if (head->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2) {
+            f2 = *reinterpret_cast<const VkPhysicalDeviceFeatures2*>(head);
+            f2.features.shaderStorageImageWriteWithoutFormat = VK_TRUE;
+            ci.pNext = &f2;
+            enabled = true;
+        }
+    } else if (ci.pEnabledFeatures) {
+        legacy = *ci.pEnabledFeatures;
+        legacy.shaderStorageImageWriteWithoutFormat = VK_TRUE;
+        ci.pEnabledFeatures = &legacy;
+        enabled = true;
+    }
+    if (!enabled) {
+        std::fprintf(stderr,
+            "[BS4_FSR31] unsupported device-create feature chain, unchanged\\n");
+        return real_create_device(physical, requested, allocator, output);
+    }
+    VkResult result = real_create_device(physical, &ci, allocator, output);
+    fsr31_storage_feature_enabled.store(result == VK_SUCCESS);
+    std::fprintf(stderr, "[BS4_FSR31] vkCreateDevice feature enable result=%d\\n",
+                 int(result));
+    return result;
+}
+}
+
+extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(
+        VkInstance instance, const char* name) {
+    const auto original = real_gipa();
+    if (!original || !name) return nullptr;
+    const auto out = original(instance, name);
+    if (std::strcmp(name, "vkCreateDevice") == 0 && out && fsr31_requested()) {
+        real_create_device = reinterpret_cast<PFN_vkCreateDevice>(out);
+        return reinterpret_cast<PFN_vkVoidFunction>(&fsr31_create_device);
+    }
+    return out;
+}
+
+extern "C" void* dlsym(void* handle, const char* symbol) {
+    auto resolve = real_dlsym();
+    if (!resolve) return nullptr;
+    if (symbol && std::strcmp(symbol, "vkGetInstanceProcAddr") == 0 &&
+        fsr31_requested()) {
+        return reinterpret_cast<void*>(&vkGetInstanceProcAddr);
+    }
+    return resolve(handle, symbol);
 }
