@@ -52,6 +52,16 @@ inline bool Parse(const void* src,size_t bytes,Scene& out) {
     out.projection={f[52],f[57],f[62],f[63]};
     return true;
 }
+// Exact Bloodborne Port signal: >=5 MRTs + depth target. The guest
+// camera render area is a subregion of native-sized Vulkan attachments.
+inline bool GBufferCanContainScene(unsigned mrt_count,bool has_depth,
+                                   unsigned area_width,unsigned area_height,
+                                   const Scene& camera) {
+    return has_depth && mrt_count>=5 &&
+           camera.width>=64 && camera.height>=64 &&
+           camera.width<=area_width && camera.height<=area_height &&
+           area_width<=4096 && area_height<=4096;
+}
 inline std::array<float,12> Multiply(const std::array<float,12>& a,
                                       const std::array<float,12>& b) {
     std::array<float,12> o{};
