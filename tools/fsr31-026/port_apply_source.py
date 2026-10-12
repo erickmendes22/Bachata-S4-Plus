@@ -99,13 +99,33 @@ body = r'''
         d.cameraConstantsValid = (mrt >= 5 && d.depthId) ||
                                  fsr31PortCamera.HasCameraForDepth(d.depthId);
         const auto event = fsr31PortStage.Observe(d);
-        // The port performs the temporal dispatch BEFORE this known
-        // UI shader's draw and redirects it to a separately allocated UI
-        // surface. That redirect still needs a verified Renderer integration;
-        // do not inject a Vulkan blit here.
-        (void)event; // HUD is NOT a frame boundary; Presenter owns history advancement.
+        // Identify the real scene target BEFORE the first Scaleform draw.
+        // Never use the final VideoOut image as temporal scene input.
+        if (event == Bachata::Fsr31::Event::GBuffer) {
+            fsr31PortLdr = {};
+            fsr31PortUi->CancelFrame();
+        } else if (event == Bachata::Fsr31::Event::LDRScene) {
+            fsr31PortLdr = cb_descs[0].first;
+        } else if (event == Bachata::Fsr31::Event::BeginHUD && fsr31PortLdr) {
+            auto& scene = texture_cache.GetImage(fsr31PortLdr);
+            const auto* depth = db_desc.first
+                ? &texture_cache.GetImage(db_desc.first) : nullptr;
+            // R13 policy: 640x360 scene -> 1280x720 composited frame.
+            // Spatial blit is only a fallback until temporal dispatch is wired.
+            const vk::Extent2D out{1280,720};
+            if (scene.info.size.width < out.width &&
+                scene.info.size.height < out.height) {
+                fsr31PortUi->Begin(scene, fsr31PortLdr, cb_descs[0].first,
+                                   depth, db_desc.first, out);
+            }
+        }
     }
 '''
+src = replace_once(src,
+    '      pipeline_cache{instance, scheduler, liverpool} {',
+    '      pipeline_cache{instance, scheduler, liverpool} {\n'
+    '    fsr31PortUi = std::make_unique<Bachata::Fsr31::PortUiSurface>(instance, scheduler);')
+
 src = replace_once(src,
     "    } else {\n        db_desc.first = {};\n    }\n}\n\nstatic std::pair<u32, u32> GetDrawOffsets(",
     "    } else {\n        db_desc.first = {};\n    }\n" + body +
@@ -137,6 +157,11 @@ void Rasterizer::Fsr31PortOnPresentedFrame() {
     // earlier mixes motion history from different frames.
     fsr31PortCamera.OnDisplayFrame();
     fsr31PortStage.OnDisplayFrame();
+    fsr31PortLdr = {};
+}
+Bachata::Fsr31::PortUiSurface::Display Rasterizer::Fsr31PortTakeDisplay() {
+    return fsr31PortUi ? fsr31PortUi->TakeDisplay()
+                       : Bachata::Fsr31::PortUiSurface::Display{};
 }
 '''
 src = replace_once(src,
