@@ -12,7 +12,7 @@ EXPECTED_BRANCH=0x1400062a  # R15 VA 0x10758 -> original dispatcher VA 0x12000
 def patch(original,stub):
     b=bytearray(Path(original).read_bytes())
     hook=Path(stub).read_bytes()
-    assert b[:4]==b'\\x7fELF', 'Invalid original dispatcher'
+    assert b[:4]==b'\x7fELF', 'Invalid original dispatcher'
     assert len(hook)<0x600, 'Hook exceeds reserved executable cave'
     assert struct.unpack_from('<I',b,EXEC_CALL_OFFSET)[0]==EXPECTED_BRANCH, 'Unexpected dispatcher version'
     assert not any(b[PRELOAD_HOOK_OFFSET:PRELOAD_HOOK_OFFSET+len(hook)]), 'Occupied cave'
