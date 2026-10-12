@@ -31,6 +31,18 @@ std::atomic<VkPhysicalDevice> fsr31_tracked_physical{VK_NULL_HANDLE};
 bool valid = false;
 }
 #define BS4_PUBLIC extern "C" __attribute__((visibility("default")))
+/* The stock R15 Android launcher has no FSR3.1 preference bridge.
+ * The R16 FEX loader preloads this library ONLY for shadps4-arm64-025.
+ * Enable Ultra Performance there by default, matching the requested
+ * 640x360 -> 1280x720 RunScaled path. The explicit environment always
+ * wins: -1=off, 0=Native AA, 1=Quality, 2=Balanced, 3=Performance,
+ * 4=Ultra Performance. Never interpose a different core. */
+BS4_PUBLIC int bs4_fsr31_selected_preset() {
+    const char* mode=std::getenv("BACHATA_FSR31_MODE");
+    if(!mode)return 4; // R16 core025-only preload, UI integration pending
+    if(mode[0]>='0' && mode[0]<='4' && mode[1]==0)return mode[0]-'0';
+    return -1;
+}
 BS4_PUBLIC int bs4_fsr31_abi() { return 0x00030104; }
 BS4_PUBLIC int bs4_fsr31_create(const FfxVkPortableDeviceInfo* dev,
                                const FfxVkPortableUpscaleCreateInfo* ci) {
@@ -107,35 +119,12 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(
     // Preference written by BACHATA 0.2.6's native Android settings UI.
     // Its absence or unreadability leaves the existing FSR 1 path untouched.
     static unsigned polls = 0;
-    static bool enabled = false;
-    static int preset = 1; // 0 Native AA, 1 Quality, 2 Balanced, 3 Performance, 4 Ultra
-    if (++polls % 120u == 1u) {
-        enabled = false;
-        preset = 1;
-        // The runtime launcher explicitly forwards this preference into
-        // GLIBC/FEX via BACHATA_FSR31_MODE. -1 = disabled, 0..4 = preset.
-        // This also works when the Linux rootfs hides Android /data paths.
-        if (const char* mode = std::getenv("BACHATA_FSR31_MODE")) {
-            if (*mode >= '0' && *mode <= '4' && mode[1] == '\0') {
-                enabled = true;
-                preset = *mode - '0';
-            }
-        } else for (const char* path : {
-              "/data/user/0/com.bachatas4.plusapp/shared_prefs/bs4_fsr31.xml",
-              "/data/data/com.bachatas4.plusapp/shared_prefs/bs4_fsr31.xml"}) {
-            std::ifstream settings(path);
-            if (!settings) continue;
-            const std::string contents{std::istreambuf_iterator<char>{settings}, {}};
-            if (contents.find("name=\"enabled\" value=\"true\"") != std::string::npos)
-                enabled = true;
-            const std::string tag = "name=\"preset\" value=\"";
-            const auto at = contents.find(tag);
-            if (at != std::string::npos && at + tag.size() < contents.size()) {
-                const char n = contents[at + tag.size()];
-                if (n >= '0' && n <= '4') preset = n - '0';
-            }
-            break;
-        }
+    static bool enabled = true;
+    static int preset = 4;
+    if(++polls % 120u == 1u) {
+        const int chosen=bs4_fsr31_selected_preset();
+        enabled=chosen>=0;
+        preset=enabled?chosen:4;
     }
     static bool logged_render = false;
     if (!logged_render) {
@@ -187,15 +176,11 @@ BS4_PUBLIC int bs4_fsr31_pre_ui_dispatch(
     if (!command || !scene_color || !scene_depth || !scene_extent.width ||
         !scene_extent.height) return 0;
     FfxVkPortableDeviceInfo info{};
-    int preset = -1;
+    const int preset=bs4_fsr31_selected_preset();
     {
         std::lock_guard<std::mutex> lock(guard);
         if (!device_attached) return 0;
         info = acquired_device;
-        if (const char* mode=std::getenv("BACHATA_FSR31_MODE")) {
-            if (mode[0]>='0'&&mode[0]<='4'&&mode[1]==0)
-                preset=mode[0]-'0';
-        }
     }
     if (preset < 0) return 0;
     const auto upscaled = bs4_fsr31_generic_render(
@@ -220,10 +205,10 @@ BS4_PUBLIC int bs4_fsr31_pre_ui_dispatch(
 BS4_PUBLIC VkImageView bs4_fsr31_prepare_resources(
     VkCommandBuffer cb,VkImageView color,VkImageView depth,
     VkExtent2D scene,VkExtent2D output) {
-    FfxVkPortableDeviceInfo info{};int preset=-1;
+    FfxVkPortableDeviceInfo info{};
+    const int preset=bs4_fsr31_selected_preset();
     {std::lock_guard<std::mutex> lock(guard);if(!device_attached)return VK_NULL_HANDLE;
-     info=acquired_device;const char* mode=std::getenv("BACHATA_FSR31_MODE");
-     if(mode&&mode[0]>='0'&&mode[0]<='4'&&mode[1]==0)preset=mode[0]-'0';}
+     info=acquired_device;}
     if(preset<0)return VK_NULL_HANDLE;
     return reinterpret_cast<VkImageView>(bs4_fsr31_generic_render(
         &info,cb,color,scene,output,preset,0,2,depth));
@@ -349,8 +334,7 @@ PFN_vkGetInstanceProcAddr real_gipa() {
     return fn;
 }
 bool fsr31_requested() {
-    const char* mode = std::getenv("BACHATA_FSR31_MODE");
-    if(!(mode && mode[0]>='0' && mode[0]<='4' && mode[1]==0))return false;
+    if(bs4_fsr31_selected_preset()<0)return false;
     // The R15 dispatcher retains cores 020/023/024. Forwarding a preference
     // must never interpose their Vulkan renderer: only the patched 025 owns
     // this ABI. /proc/maps also works when invoked through the GLIBC loader.
