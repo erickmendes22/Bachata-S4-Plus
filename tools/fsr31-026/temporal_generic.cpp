@@ -245,7 +245,7 @@ void flow(VkCommandBuffer cb,const Frame& f,VkExtent2D size) {
 
 extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_render(
     const FfxVkPortableDeviceInfo* owned,VkCommandBuffer cb,VkImageView input,
-    VkExtent2D input_extent,VkExtent2D output_extent,int preset,int hdr) {
+    VkExtent2D input_extent,VkExtent2D output_extent,int preset,int hdr,int pre_ui) {
     if(!owned||!cb||!input||hdr||preset<0||preset>4){report_once(1,"missing arguments or HDR/preset unsupported");return 0;}
     if(!owned->shaderStorageImageWriteWithoutFormatEnabled){report_once(2,"storage image write without format disabled");return 0;}
     if(output_extent.width==0||output_extent.height==0 ||
@@ -312,8 +312,18 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     VkExtent2D internal{input_extent.width, input_extent.height};
     const float actual_x = float(output_extent.width)/float(internal.width);
     const float actual_y = float(output_extent.height)/float(internal.height);
-    if(std::abs(actual_x-ratio[preset])>0.20f ||
-       std::abs(actual_y-ratio[preset])>0.20f) {
+    // The preset configures the guest's *internal* size. In pre-UI mode
+    // the output is deliberately 720p: Ultra renders 640x360 -> 1280x720
+    // (2x rather than the 3x ratio of a nominal 1080p Ultra preset).
+    if (pre_ui) {
+        if (actual_x < 1.0f || actual_y < 1.0f ||
+            actual_x > 4.0f || actual_y > 4.0f ||
+            std::abs(actual_x-actual_y)>0.06f) {
+            report_once(15,"invalid pre-UI scene to 720p scale");
+            return 0;
+        }
+    } else if (std::abs(actual_x-ratio[preset])>0.20f ||
+               std::abs(actual_y-ratio[preset])>0.20f) {
         report_once(15,"actual scene dimensions do not match selected quality preset");
         return 0;
     }
@@ -429,4 +439,13 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
         std::fprintf(stderr,"[BS4_FSR31] real FSR3.1 dispatch recorded (%ux%u->%ux%u)\n",
              internal.width,internal.height,output_extent.width,output_extent.height);
     return reinterpret_cast<uint64_t>(f.output.view);
+}
+
+extern "C" __attribute__((visibility("default"))) VkImage
+bs4_fsr31_output_image(VkImageView view) {
+    std::lock_guard lock{mutex};
+    if (!view || !fsr) return VK_NULL_HANDLE;
+    for (const auto& frame:frames)
+        if (frame.output.view == view) return frame.output.image;
+    return VK_NULL_HANDLE;
 }
