@@ -34,6 +34,7 @@ struct State {
     VkViewport viewport{};
     VkRect2D scissor{};
     bool haveViewport=false,haveScissor=false;
+    bool viewportWithCount=false,scissorWithCount=false;
     bool jitterActive=false;
     float jitterX=0,jitterY=0;
     VkImageView candidateScene=VK_NULL_HANDLE;
@@ -66,6 +67,8 @@ PFN_vkDestroyPipeline realDestroyPipeline{};
 PFN_vkCmdBindPipeline realBindPipeline{};
 PFN_vkCmdSetViewport realSetViewport{};
 PFN_vkCmdSetScissor realSetScissor{};
+PFN_vkCmdSetViewportWithCount realSetViewportWithCount{};
+PFN_vkCmdSetScissorWithCount realSetScissorWithCount{};
 PFN_vkCmdBeginRendering realBegin{};
 PFN_vkCmdEndRendering realEnd{};
 PFN_vkCmdBeginRenderingKHR realBeginKHR{};
@@ -95,23 +98,37 @@ VkImageAspectFlags aspects(VkFormat f) {
 
 // This is the port's subpixel viewport technique. It is called only AFTER
 // genuine guest camera constants are found on a live G-buffer draw.
+// Core025 supports VK_EXT_extended_dynamic_state; native viewport/scissor
+// calls can be WithCount rather than old first/count. Preserve the exact
+// dynamic-state family used by the game, for both camera and UI.
+void native_viewport(VkCommandBuffer cb,const State& s,const VkViewport* v){
+    if(s.viewportWithCount && realSetViewportWithCount)
+        realSetViewportWithCount(cb,1,v);
+    else if(realSetViewport)realSetViewport(cb,0,1,v);
+}
+void native_scissor(VkCommandBuffer cb,const State& s,const VkRect2D* rect){
+    if(s.scissorWithCount && realSetScissorWithCount)
+        realSetScissorWithCount(cb,1,rect);
+    else if(realSetScissor)realSetScissor(cb,0,1,rect);
+}
 extern "C" int bs4_port_ui_apply_camera_jitter(
     VkCommandBuffer cb,float x,float y) {
     if(!cb || !std::isfinite(x) || !std::isfinite(y) ||
-       std::abs(x)>0.501f || std::abs(y)>0.501f || !realSetViewport)
+       std::abs(x)>0.501f || std::abs(y)>0.501f ||
+       (!realSetViewport && !realSetViewportWithCount))
         return 0;
     std::lock_guard lock{uiMutex};
     const auto it=cmds.find(cb);
     if(it==cmds.end())return 0;
     auto& s=it->second;
     if(!s.inside || s.uiPhase || !s.haveViewport ||
-       s.guest.colorAttachmentCount<2 || !s.hasDepth ||
-       s.guest.renderArea.extent.width>1280 ||
-       s.guest.renderArea.extent.height>720)return 0;
+       s.guest.colorAttachmentCount<5 || !s.hasDepth ||
+       s.guest.renderArea.extent.width>4096 ||
+       s.guest.renderArea.extent.height>4096)return 0;
     if(s.jitterActive)return 1;
     VkViewport p=s.viewport;
     p.x+=x;p.y+=y;
-    realSetViewport(cb,0,1,&p);
+    native_viewport(cb,s,&p);
     s.jitterActive=true;s.jitterX=x;s.jitterY=y;
     return 1;
 }
@@ -380,8 +397,8 @@ extern "C" void bs4_port_ui_redirect_end(VkCommandBuffer cb) {
         }
     }
     s.uiPass=false;
-    if(s.jitterActive && realSetViewport) {
-        realSetViewport(cb,0,1,&s.viewport);
+    if(s.jitterActive && (realSetViewport || realSetViewportWithCount)) {
+        native_viewport(cb,s,&s.viewport);
         s.jitterActive=false;s.jitterX=s.jitterY=0;
     }
 }
@@ -479,8 +496,8 @@ extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer cb) {
     // The game bound a 1920x1080 viewport, now the host HUD is 1280x720.
     const VkViewport vp=scaled(s.viewport);
     const VkRect2D sc=scaled(s.scissor);
-    realSetViewport(cb,0,1,&vp);
-    realSetScissor(cb,0,1,&sc);
+    native_viewport(cb,s,&vp);
+    native_scissor(cb,s,&sc);
     s.uiPhase=true;s.uiPass=true;
     s.originalUI=s.color.empty()?s.candidateScene:s.color[0].imageView;
     s.output=out;s.everRedirected=true;
@@ -562,6 +579,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_viewport(
     if(first==0&&count==1&&v) {
         std::lock_guard lock{uiMutex};
         auto& s=cmds[cb];s.viewport=*v;s.haveViewport=true;
+        s.viewportWithCount=false;
         redirect=s.uiPass || s.jitterActive;
         if(s.uiPass)out=scaled(*v);
         else if(s.jitterActive) {
@@ -578,10 +596,45 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_scissor(
     if(first==0&&count==1&&rect) {
         std::lock_guard lock{uiMutex};
         auto& s=cmds[cb];s.scissor=*rect;s.haveScissor=true;
+        s.scissorWithCount=false;
         redirect=s.uiPass; if(redirect)out=scaled(*rect);
     }
     if(realSetScissor)
         realSetScissor(cb,first,count,redirect?&out:rect);
+}
+// Vulkan 1.3 extended dynamic-state entry points. Ignoring these made
+// s.haveViewport / s.haveScissor false on core025, so no camera, no HUD,
+// and therefore no FSR dispatch despite correct attach/preset logs.
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_viewport_with_count(
+    VkCommandBuffer cb,uint32_t count,const VkViewport* views) {
+    bool redirect=false;
+    VkViewport out{};
+    if(count==1 && views) {
+        std::lock_guard lock{uiMutex};
+        auto& s=cmds[cb];
+        s.viewport=*views;s.haveViewport=true;s.viewportWithCount=true;
+        redirect=s.uiPass || s.jitterActive;
+        if(s.uiPass)out=scaled(*views);
+        else if(s.jitterActive){
+            out=*views;out.x+=s.jitterX;out.y+=s.jitterY;
+        }
+    }
+    if(realSetViewportWithCount)
+        realSetViewportWithCount(cb,count,redirect?&out:views);
+}
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_scissor_with_count(
+    VkCommandBuffer cb,uint32_t count,const VkRect2D* rects) {
+    bool redirect=false;
+    VkRect2D out{};
+    if(count==1 && rects) {
+        std::lock_guard lock{uiMutex};
+        auto& s=cmds[cb];
+        s.scissor=*rects;s.haveScissor=true;s.scissorWithCount=true;
+        redirect=s.uiPass;
+        if(redirect)out=scaled(*rects);
+    }
+    if(realSetScissorWithCount)
+        realSetScissorWithCount(cb,count,redirect?&out:rects);
 }
 extern "C" PFN_vkVoidFunction bs4_port_ui_wrap_proc(
     const char* name,PFN_vkVoidFunction proc){
@@ -595,6 +648,10 @@ extern "C" PFN_vkVoidFunction bs4_port_ui_wrap_proc(
     UI_WRAP(realBindPipeline,"vkCmdBindPipeline",bs4_port_ui_bind_pipeline)
     UI_WRAP(realSetViewport,"vkCmdSetViewport",bs4_port_ui_viewport)
     UI_WRAP(realSetScissor,"vkCmdSetScissor",bs4_port_ui_scissor)
+    UI_WRAP(realSetViewportWithCount,"vkCmdSetViewportWithCount",bs4_port_ui_viewport_with_count)
+    UI_WRAP(realSetScissorWithCount,"vkCmdSetScissorWithCount",bs4_port_ui_scissor_with_count)
+    UI_WRAP(realSetViewportWithCount,"vkCmdSetViewportWithCountEXT",bs4_port_ui_viewport_with_count)
+    UI_WRAP(realSetScissorWithCount,"vkCmdSetScissorWithCountEXT",bs4_port_ui_scissor_with_count)
 #undef UI_WRAP
     return proc;
 }
