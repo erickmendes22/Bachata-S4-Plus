@@ -128,6 +128,11 @@ jobs:
           Path('generated/port_camera_motion_spv.h').write_text(h)
           print('Port depth reprojection shader bytes:',len(raw))
           PY
+          # Reject invalid scene-camera buffers before cross-compilation.
+          g++ -std=c++17 -O2 -Wall -Wextra -Werror \
+            -Itools/fsr31-026 tools/fsr31-026/port_camera_constants_test.cpp \
+            -o /tmp/port_camera_contract_test
+          /tmp/port_camera_contract_test
           cmake -S . -B build -GNinja -DCMAKE_TOOLCHAIN_FILE=fsr-aarch64.ini -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target bachata_fsr31 -j 6
       - name: Validate ARM64 and exports
