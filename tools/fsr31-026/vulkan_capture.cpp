@@ -412,6 +412,34 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_destroy_pipeline(
     }
     if(original_destroy_pipeline)original_destroy_pipeline(d,pipeline,allocator);
 }
+/* Capture the real graphics descriptor for the guest HDR-copy shader.
+ * Only sampled descriptors are eligible; never replace storage images,
+ * display attachments or resource layouts on a size-based guess. */
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_push_descriptor_set(
+    VkCommandBuffer cb,VkPipelineBindPoint point,VkPipelineLayout layout,
+    uint32_t set,uint32_t count,const VkWriteDescriptorSet* writes) {
+    if(point==VK_PIPELINE_BIND_POINT_GRAPHICS && cb && writes) {
+        std::vector<SampledSourceBinding> captured;
+        for(uint32_t i=0;i<count;i++) {
+            const auto& w=writes[i];
+            if(w.descriptorType!=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER &&
+               w.descriptorType!=VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE) continue;
+            if(!w.pImageInfo || !w.descriptorCount)continue;
+            for(uint32_t k=0;k<w.descriptorCount;k++) {
+                const auto& info=w.pImageInfo[k];
+                if(!info.imageView)continue;
+                captured.push_back({
+                    layout,set,w.dstBinding,w.dstArrayElement+k,
+                    w.descriptorType,info});
+            }
+        }
+        std::lock_guard lock{mutex};
+        graphics_push_samples[cb]=std::move(captured);
+    }
+    if(original_push_descriptors)
+        original_push_descriptors(cb,point,layout,set,count,writes);
+}
+
 thread_local VkCommandBuffer currently_bound_cb=VK_NULL_HANDLE;
 thread_local bool currently_bound_ui_shader=false;
 thread_local bool currently_bound_hdr_copy=false;
