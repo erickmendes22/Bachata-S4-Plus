@@ -189,9 +189,15 @@ FfxVkPortableImage describe(const Surface& s,FfxVkPortableResourceState state) {
     im.aspect=s.aspect;im.state=state;return im;
 }
 bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D output,
-                  VkFormat color_format,VkFormat depth_format) {
+                  VkFormat color_format,VkFormat depth_format,
+                  uint32_t context_flags) {
     free_all();
     config={};config.structSize=sizeof(config);
+    // Source VkFormat 122 (B10G11R11_UFLOAT) is LINEAR HDR.
+    // R20 fed HDR values into an FSR context with flags=0 (LDR), then
+    // overwrote the already tonemapped HUD. Port uses HDR FSR context
+    // BEFORE Bloodborne's HDR scene-copy/post-processing pipeline.
+    config.flags=context_flags;
     config.maxRenderSize={render.width,render.height};
     config.maxOutputSize={output.width,output.height};
     if(!build_compute())return false;
@@ -216,8 +222,10 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
         std::fprintf(stderr,"[BS4_FSR31] FSR3.1 Vulkan context error=%d\n",int(r));
         return false;
     }
-    std::fprintf(stderr,"[BS4_FSR31] temporal context ready %ux%u->%ux%u\n",
-         render.width,render.height,output.width,output.height);
+    std::fprintf(stderr,
+        "[BS4_FSR31] temporal context ready %ux%u->%ux%u hdr=%d\n",
+        render.width,render.height,output.width,output.height,
+        int(!!(config.flags&FFX_VK_PORTABLE_CONTEXT_HDR_COLOR_INPUT)));
     return true;
 }
 void flow(VkCommandBuffer cb,const Frame& f,VkExtent2D size) {
@@ -310,6 +318,12 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
        depth.format!=VK_FORMAT_D32_SFLOAT_S8_UINT &&
        depth.format!=VK_FORMAT_D24_UNORM_S8_UINT){report_once(9,"depth pixel format unsupported");return 0;}
     if(!color.image||!depth.image){report_once(10,"null captured image handle");return 0;}
+    const bool source_is_hdr =
+        color.format==VK_FORMAT_B10G11R11_UFLOAT_PACK32 ||
+        color.format==VK_FORMAT_R16G16B16A16_SFLOAT ||
+        color.format==VK_FORMAT_R32G32B32A32_SFLOAT;
+    const uint32_t context_flags=source_is_hdr?
+        FFX_VK_PORTABLE_CONTEXT_HDR_COLOR_INPUT:0u;
     if (pre_ui && (depth.size.width < input_extent.width ||
                    depth.size.height < input_extent.height)) {
         report_once(11,"scene depth extent smaller than scene render area");
@@ -355,8 +369,9 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
        config.maxRenderSize.height!=internal.height ||
        config.maxOutputSize.width!=output_extent.width ||
        config.maxOutputSize.height!=output_extent.height ||
+       config.flags!=context_flags ||
        frames[0].scene.format!=VK_FORMAT_R16G16B16A16_SFLOAT ||frames[0].depth.format!=depth.format) {
-        if(!allocate_for(*owned,internal,output_extent,VK_FORMAT_R16G16B16A16_SFLOAT,depth.format)){report_once(13,"FSR resource or context creation failed");return 0;}
+        if(!allocate_for(*owned,internal,output_extent,VK_FORMAT_R16G16B16A16_SFLOAT,depth.format,context_flags)){report_once(13,"FSR resource or context creation failed");return 0;}
     }
     Frame& f=frames[cursor++%frames.size()];
     transit(cb,f.scene,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
