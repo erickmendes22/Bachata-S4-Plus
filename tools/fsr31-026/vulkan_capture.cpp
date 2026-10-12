@@ -43,6 +43,7 @@ bool pre_ui_eligible_logged=false;
 using PreUiDispatch=int (*)(VkCommandBuffer,VkImageView,VkExtent2D,VkExtent2D,VkImage*);
 extern "C" int bs4_fsr31_pre_ui_dispatch(VkCommandBuffer,VkImageView,
                 VkImageView,VkExtent2D,VkExtent2D,VkImage*);
+extern "C" int bs4_fsr31_is_presenter_input(VkImageView);
 
 PFN_vkBeginCommandBuffer original_begin_command{};
 PFN_vkResetCommandBuffer original_reset_command{};
@@ -123,9 +124,11 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
         // temporal upscale if the requested presentation is also 720p.
         if (w>=600 && w<1280 && h>=320 && h<720) {
             const auto v=views.find(view);
-            if (v!=views.end()) {
+            if (v!=views.end() &&
+                (v->second.aspects & VK_IMAGE_ASPECT_COLOR_BIT)) {
                 const auto i=images.find(v->second.image);
                 if (i!=images.end() &&
+                    (i->second.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) &&
                     (i->second.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) &&
                     i->second.size.width>=w && i->second.size.width<=w+32 &&
                     i->second.size.height>=h && i->second.size.height<=h+32) {
@@ -145,10 +148,23 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
         if(w<1280||h<700||!stage.ready||!stage.color||
            !stage.depth||stage.color==view)
             return false;
+        // Prevent the R14/R18 visual glitch: geometry passes can also
+        // render at full output size. The only safe destination is a real
+        // VideoOut surface registered by the existing core024 Presenter.
+        if (!bs4_fsr31_is_presenter_input(view)) {
+            static bool rejected_once=false;
+            if(!rejected_once) {
+                rejected_once=true;
+                std::fprintf(stderr,
+                  "[BS4_FSR31] pre-UI rejected: unverified VideoOut target\\n");
+            }
+            return false;
+        }
         const auto dst_v=views.find(view);
         if(dst_v==views.end())return false;
         const auto dst_i=images.find(dst_v->second.image);
         if(dst_i==images.end() ||
+            !(dst_i->second.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) ||
             !(dst_i->second.usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
             return false;
         dst=dst_v->second.image;
