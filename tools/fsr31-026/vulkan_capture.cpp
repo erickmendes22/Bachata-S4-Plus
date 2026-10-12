@@ -659,14 +659,14 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_begin_command(
         VkCommandBuffer cb,const VkCommandBufferBeginInfo* info) {
     if (!original_begin_command) return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_begin_command(cb,info);
-    if(status==VK_SUCCESS){std::lock_guard lock{mutex};command_scenes.erase(cb);active_rendering.erase(cb);graphics_pipeline_bound.erase(cb);}
+    if(status==VK_SUCCESS){std::lock_guard lock{mutex};command_scenes.erase(cb);active_rendering.erase(cb);graphics_pipeline_bound.erase(cb);graphics_push_samples.erase(cb);}
     return status;
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_reset_command(
         VkCommandBuffer cb,VkCommandBufferResetFlags flags) {
     if(!original_reset_command)return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_reset_command(cb,flags);
-    if(status==VK_SUCCESS){std::lock_guard lock{mutex};command_scenes.erase(cb);active_rendering.erase(cb);graphics_pipeline_bound.erase(cb);}
+    if(status==VK_SUCCESS){std::lock_guard lock{mutex};command_scenes.erase(cb);active_rendering.erase(cb);graphics_pipeline_bound.erase(cb);graphics_push_samples.erase(cb);}
     return status;
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_free_commands(
@@ -676,6 +676,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_free_commands(
             command_scenes.erase(cb[i]);
             active_rendering.erase(cb[i]);
             graphics_pipeline_bound.erase(cb[i]);
+            graphics_push_samples.erase(cb[i]);
         }}
     if(original_free_commands)original_free_commands(device,pool,count,cb);
 }
@@ -797,6 +798,7 @@ extern "C" PFN_vkVoidFunction bs4_fsr31_wrap_vulkan_proc(
     BS4_WRAP_GIPA(original_draw_indexed,"vkCmdDrawIndexed",&bs4_cap_draw_indexed)
     BS4_WRAP_GIPA(original_draw_indirect,"vkCmdDrawIndirect",&bs4_cap_draw_indirect)
     BS4_WRAP_GIPA(original_draw_indexed_indirect,"vkCmdDrawIndexedIndirect",&bs4_cap_draw_indexed_indirect)
+    BS4_WRAP_GIPA(original_push_descriptors,"vkCmdPushDescriptorSetKHR",&bs4_cap_push_descriptor_set)
     #undef BS4_WRAP_GIPA
     return proc;
 }
@@ -833,6 +835,7 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
     BS4_WRAP(original_draw_indexed,"vkCmdDrawIndexed",&bs4_cap_draw_indexed)
     BS4_WRAP(original_draw_indirect,"vkCmdDrawIndirect",&bs4_cap_draw_indirect)
     BS4_WRAP(original_draw_indexed_indirect,"vkCmdDrawIndexedIndirect",&bs4_cap_draw_indexed_indirect)
+    BS4_WRAP(original_push_descriptors,"vkCmdPushDescriptorSetKHR",&bs4_cap_push_descriptor_set)
     #undef BS4_WRAP
     return proc;
 }
