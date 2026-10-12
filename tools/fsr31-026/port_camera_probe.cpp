@@ -29,6 +29,8 @@ std::unordered_map<VkDescriptorSet,std::vector<VkDescriptorBufferInfo>> sets;
 std::unordered_map<VkCommandBuffer,VkImageView> active_depth;
 std::unordered_map<VkCommandBuffer,VkExtent2D> active_extent;
 std::unordered_map<VkCommandBuffer,CameraRecord> recorded;
+std::unordered_map<VkCommandBuffer,std::vector<VkDescriptorBufferInfo>> pending_push;
+std::unordered_map<VkCommandBuffer,std::vector<VkDescriptorSet>> bound_sets;
 CameraRecord previous_frame{},last_frame_camera{};
 uint64_t frame_sequence=1;
 std::atomic<int> seen{0};
@@ -41,6 +43,10 @@ PFN_vkDestroyBuffer real_destroy_buffer{};
 PFN_vkCmdPushDescriptorSetKHR real_push_desc{};
 PFN_vkCmdBindDescriptorSets real_bind_sets{};
 PFN_vkUpdateDescriptorSets real_update_desc{};
+PFN_vkCmdDraw real_draw{};
+PFN_vkCmdDrawIndexed real_draw_indexed{};
+PFN_vkCmdDrawIndirect real_draw_indirect{};
+PFN_vkCmdDrawIndexedIndirect real_draw_indexed_indirect{};
 using DlsymFn=void*(*)(void*,const char*);
 inline bool from_descriptor(const VkDescriptorBufferInfo& info,
                             BachataCamera::Scene& camera) {
@@ -124,13 +130,14 @@ extern "C" void bs4_port_on_present() {
     if(last_frame_camera.valid && last_frame_camera.frame==frame_sequence)
         previous_frame=last_frame_camera;
     ++frame_sequence;
-    recorded.clear();
+    recorded.clear();pending_push.clear();bound_sets.clear();
     active_depth.clear();
     active_extent.clear();
 }
 extern "C" void bs4_port_reset_cb(VkCommandBuffer cb) {
     std::lock_guard lock{guard};
     recorded.erase(cb);active_depth.erase(cb);active_extent.erase(cb);
+    pending_push.erase(cb);bound_sets.erase(cb);
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_port_map(
     VkDevice d,VkDeviceMemory mem,VkDeviceSize off,VkDeviceSize len,
@@ -180,7 +187,18 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_push_desc(
     VkCommandBuffer cb,VkPipelineBindPoint point,VkPipelineLayout layout,
     uint32_t set,uint32_t count,const VkWriteDescriptorSet* writes) {
     if(point==VK_PIPELINE_BIND_POINT_GRAPHICS) {
-        std::lock_guard lock{guard};inspect_writes(cb,count,writes);
+        std::lock_guard lock{guard};
+        inspect_writes(cb,count,writes);
+        auto& samples=pending_push[cb];
+        samples.clear();
+        for(uint32_t i=0;i<count;i++) {
+            const auto& w=writes[i];
+            if((w.descriptorType!=VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER &&
+                w.descriptorType!=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) ||
+               !w.pBufferInfo)continue;
+            for(uint32_t j=0;j<w.descriptorCount;j++)
+                samples.push_back(w.pBufferInfo[j]);
+        }
     }
     if(real_push_desc)real_push_desc(cb,point,layout,set,count,writes);
 }
@@ -211,6 +229,8 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_bind_sets(
     uint32_t dynamic_count,const uint32_t* offsets) {
     if(point==VK_PIPELINE_BIND_POINT_GRAPHICS && descriptor_sets){
         std::lock_guard lock{guard};
+        auto& active=bound_sets[cb];
+        active.assign(descriptor_sets,descriptor_sets+count);
         for(uint32_t i=0;i<count;i++) {
             auto set=sets.find(descriptor_sets[i]);
             if(set==sets.end())continue;
@@ -219,6 +239,46 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_bind_sets(
     }
     if(real_bind_sets)real_bind_sets(cb,point,layout,first,count,
                                    descriptor_sets,dynamic_count,offsets);
+}
+// Descriptor recording and scene beginning can have different order.
+// Inspect again at the actual G-buffer draw, after both are known.
+void bs4_port_scan_at_draw(VkCommandBuffer cb) {
+    std::lock_guard lock{guard};
+    auto existing=recorded.find(cb);
+    if(existing!=recorded.end() && existing->second.frame==frame_sequence)
+        return;
+    auto p=pending_push.find(cb);
+    if(p!=pending_push.end())
+        for(const auto& b:p->second) inspect_buffer(cb,b);
+    auto bound_it=bound_sets.find(cb);
+    if(bound_it!=bound_sets.end())
+        for(const auto& set_id:bound_it->second) {
+            auto set=sets.find(set_id);
+            if(set==sets.end())continue;
+            for(const auto& b:set->second)
+                if(b.buffer)inspect_buffer(cb,b);
+        }
+}
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_draw(
+    VkCommandBuffer cb,uint32_t v,uint32_t n,uint32_t first,uint32_t instance) {
+    bs4_port_scan_at_draw(cb);
+    if(real_draw)real_draw(cb,v,n,first,instance);
+}
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_draw_indexed(
+    VkCommandBuffer cb,uint32_t v,uint32_t n,uint32_t first,
+    int32_t base,uint32_t instance) {
+    bs4_port_scan_at_draw(cb);
+    if(real_draw_indexed)real_draw_indexed(cb,v,n,first,base,instance);
+}
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_draw_indirect(
+    VkCommandBuffer cb,VkBuffer buf,VkDeviceSize offset,uint32_t n,uint32_t stride) {
+    bs4_port_scan_at_draw(cb);
+    if(real_draw_indirect)real_draw_indirect(cb,buf,offset,n,stride);
+}
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_draw_indexed_indirect(
+    VkCommandBuffer cb,VkBuffer buf,VkDeviceSize offset,uint32_t n,uint32_t stride) {
+    bs4_port_scan_at_draw(cb);
+    if(real_draw_indexed_indirect)real_draw_indexed_indirect(cb,buf,offset,n,stride);
 }
 extern "C" PFN_vkVoidFunction bs4_port_wrap_proc(
                   const char* name,PFN_vkVoidFunction proc) {
@@ -235,6 +295,10 @@ extern "C" PFN_vkVoidFunction bs4_port_wrap_proc(
     PORT_WRAP(real_push_desc,"vkCmdPushDescriptorSetKHR",bs4_port_push_desc)
     PORT_WRAP(real_update_desc,"vkUpdateDescriptorSets",bs4_port_update_desc)
     PORT_WRAP(real_bind_sets,"vkCmdBindDescriptorSets",bs4_port_bind_sets)
+    PORT_WRAP(real_draw,"vkCmdDraw",bs4_port_draw)
+    PORT_WRAP(real_draw_indexed,"vkCmdDrawIndexed",bs4_port_draw_indexed)
+    PORT_WRAP(real_draw_indirect,"vkCmdDrawIndirect",bs4_port_draw_indirect)
+    PORT_WRAP(real_draw_indexed_indirect,"vkCmdDrawIndexedIndirect",bs4_port_draw_indexed_indirect)
 #undef PORT_WRAP
     return proc;
 }
