@@ -674,6 +674,15 @@ extern "C" PFN_vkVoidFunction bs4_fsr31_wrap_vulkan_proc(
     BS4_WRAP_GIPA(original_begin_rendering_khr,"vkCmdBeginRenderingKHR",&bs4_cap_begin_rendering_khr)
     BS4_WRAP_GIPA(original_end_rendering_khr,"vkCmdEndRenderingKHR",&bs4_cap_end_rendering_khr)
     BS4_WRAP_GIPA(original_barrier2_khr,"vkCmdPipelineBarrier2KHR",&bs4_cap_barrier2_khr)
+
+    BS4_WRAP_GIPA(original_object_name,"vkSetDebugUtilsObjectNameEXT",&bs4_cap_object_name)
+    BS4_WRAP_GIPA(original_create_graphics_pipelines,"vkCreateGraphicsPipelines",&bs4_cap_create_graphics_pipelines)
+    BS4_WRAP_GIPA(original_destroy_pipeline,"vkDestroyPipeline",&bs4_cap_destroy_pipeline)
+    BS4_WRAP_GIPA(original_bind_pipeline,"vkCmdBindPipeline",&bs4_cap_bind_pipeline)
+    BS4_WRAP_GIPA(original_draw,"vkCmdDraw",&bs4_cap_draw)
+    BS4_WRAP_GIPA(original_draw_indexed,"vkCmdDrawIndexed",&bs4_cap_draw_indexed)
+    BS4_WRAP_GIPA(original_draw_indirect,"vkCmdDrawIndirect",&bs4_cap_draw_indirect)
+    BS4_WRAP_GIPA(original_draw_indexed_indirect,"vkCmdDrawIndexedIndirect",&bs4_cap_draw_indexed_indirect)
     #undef BS4_WRAP_GIPA
     return proc;
 }
@@ -701,6 +710,15 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
     BS4_WRAP(original_begin_rendering_khr,"vkCmdBeginRenderingKHR",&bs4_cap_begin_rendering_khr)
     BS4_WRAP(original_end_rendering_khr,"vkCmdEndRenderingKHR",&bs4_cap_end_rendering_khr)
     BS4_WRAP(original_barrier2_khr,"vkCmdPipelineBarrier2KHR",&bs4_cap_barrier2_khr)
+
+    BS4_WRAP(original_object_name,"vkSetDebugUtilsObjectNameEXT",&bs4_cap_object_name)
+    BS4_WRAP(original_create_graphics_pipelines,"vkCreateGraphicsPipelines",&bs4_cap_create_graphics_pipelines)
+    BS4_WRAP(original_destroy_pipeline,"vkDestroyPipeline",&bs4_cap_destroy_pipeline)
+    BS4_WRAP(original_bind_pipeline,"vkCmdBindPipeline",&bs4_cap_bind_pipeline)
+    BS4_WRAP(original_draw,"vkCmdDraw",&bs4_cap_draw)
+    BS4_WRAP(original_draw_indexed,"vkCmdDrawIndexed",&bs4_cap_draw_indexed)
+    BS4_WRAP(original_draw_indirect,"vkCmdDrawIndirect",&bs4_cap_draw_indirect)
+    BS4_WRAP(original_draw_indexed_indirect,"vkCmdDrawIndexedIndirect",&bs4_cap_draw_indexed_indirect)
     #undef BS4_WRAP
     return proc;
 }
