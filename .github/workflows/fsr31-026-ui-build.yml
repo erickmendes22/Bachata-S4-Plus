@@ -4,6 +4,7 @@ on:
     branches: [feature/fsr31-026-existing-core]
     paths:
       - '.github/workflows/fsr31-026-ui-build.yml'
+      - 'tools/fsr31-026/Fsr3Resolution.java'
 permissions: {contents: read}
 jobs:
   ui:
