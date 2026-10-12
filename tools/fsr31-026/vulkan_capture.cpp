@@ -31,6 +31,10 @@ std::mutex mutex;
 // Keep the original Vulkan calls unmodified.
 std::atomic<bool> capture_active{true};
 std::atomic<uint64_t> barrier_calls{0}, rendering_calls{0};
+std::atomic<uint64_t> small_scene_passes{0}, native_ui_passes{0};
+std::atomic<uint64_t> other_scene_passes{0};
+std::atomic<uint32_t> first_small_color_fmt{0},first_small_image_w{0},
+    first_small_image_h{0},first_small_render_w{0},first_small_render_h{0};
 std::unordered_map<VkImage, Image> images;
 std::unordered_map<VkImageView, View> views;
 uint64_t depth_counter{};
@@ -67,6 +71,32 @@ void update_layout(uint32_t count, const VkImageMemoryBarrier2* barriers) {
 void record_rendering(const VkRenderingInfo* info) {
     if (!capture_active.load(std::memory_order_relaxed))return;
     rendering_calls.fetch_add(1,std::memory_order_relaxed);
+    if (info) {
+        const auto w=info->renderArea.extent.width;
+        const auto h=info->renderArea.extent.height;
+        if (w >= 600 && w <= 800 && h >= 320 && h <= 470) {
+            small_scene_passes.fetch_add(1, std::memory_order_relaxed);
+            if (info->colorAttachmentCount && info->pColorAttachments) {
+                const auto view=info->pColorAttachments[0].imageView;
+                std::lock_guard lock{mutex};
+                const auto v=views.find(view);
+                if (v!=views.end()) {
+                    const auto i=images.find(v->second.image);
+                    if (i!=images.end() && !first_small_render_w.load(std::memory_order_relaxed)) {
+                        first_small_color_fmt.store(unsigned(v->second.format),std::memory_order_relaxed);
+                        first_small_image_w.store(i->second.size.width,std::memory_order_relaxed);
+                        first_small_image_h.store(i->second.size.height,std::memory_order_relaxed);
+                        first_small_render_w.store(w,std::memory_order_relaxed);
+                        first_small_render_h.store(h,std::memory_order_relaxed);
+                    }
+                }
+            }
+        } else if (w>=1800 && h>=1000) {
+            native_ui_passes.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            other_scene_passes.fetch_add(1,std::memory_order_relaxed);
+        }
+    }
     if (!info || !info->pDepthAttachment ||
         !info->pDepthAttachment->imageView) return;
     const auto view = info->pDepthAttachment->imageView;
@@ -95,10 +125,18 @@ extern "C" __attribute__((visibility("default"))) void bs4_fsr31_suspend_capture
         views.clear();
         std::fprintf(stderr,
           "[BS4_FSR31] inactive renderer capture disabled: "
-          "barriers=%llu renderpasses=%llu images=%zu views=%zu\\n",
+          "barriers=%llu renderpasses=%llu images=%zu views=%zu "
+          "scene_small=%llu ui_1080=%llu scene_other=%llu "
+          "small_source=%ux%u renderArea=%ux%u format=%u\\n",
           static_cast<unsigned long long>(barriers),
           static_cast<unsigned long long>(draws),
-          tracked_images,tracked_views);
+          tracked_images,tracked_views,
+          static_cast<unsigned long long>(small_scene_passes.load()),
+          static_cast<unsigned long long>(native_ui_passes.load()),
+          static_cast<unsigned long long>(other_scene_passes.load()),
+          first_small_image_w.load(),first_small_image_h.load(),
+          first_small_render_w.load(),first_small_render_h.load(),
+          first_small_color_fmt.load());
     }
 }
 extern "C" int bs4_fsr31_capture_image(VkImageView view, Bs4FsrCaptureImage* out) {
