@@ -66,7 +66,17 @@ jobs:
               SharedPreferences p=ctx.getSharedPreferences(PREF,Context.MODE_PRIVATE);
               int preset=p.getInt("preset",1);
               if(preset<0||preset>4)preset=1;
-              env.put("BACHATA_FSR31_MODE", p.getBoolean("enabled",false)?Integer.toString(preset):"-1");
+              final boolean on=p.getBoolean("enabled",false);
+              env.put("BACHATA_FSR31_MODE",on?Integer.toString(preset):"-1");
+              // Device creation precedes FsrPass::Create. Load the FSR module
+              // before the emulator initializes Vulkan when temporal upscale
+              // is explicitly selected; preserve existing LD_PRELOAD entries.
+              if(on) {
+                String old=env.get("LD_PRELOAD");
+                String module="libbachata_fsr31.so";
+                if(old==null||old.isEmpty())env.put("LD_PRELOAD",module);
+                else if(!old.contains(module))env.put("LD_PRELOAD",old+" "+module);
+              }
             }
             public static void enrichProcessEnvironment(Map<String,String> env){
               enrichEnvironment(appContext,env);
