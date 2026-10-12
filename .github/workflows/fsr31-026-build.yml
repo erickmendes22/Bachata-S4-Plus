@@ -84,6 +84,7 @@ jobs:
             tools/fsr31-026/bridge.cpp
             tools/fsr31-026/vulkan_capture.cpp
             tools/fsr31-026/port_camera_probe.cpp
+            tools/fsr31-026/port_ui_redirect.cpp
             tools/fsr31-026/temporal_generic.cpp)
           target_compile_features(bachata_fsr31 PRIVATE cxx_std_17)
           target_include_directories(bachata_fsr31 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/generated")
