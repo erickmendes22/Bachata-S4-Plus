@@ -110,6 +110,7 @@ extern "C" int bs4_port_ui_apply_camera_jitter(
     s.jitterActive=true;s.jitterX=x;s.jitterY=y;
     return 1;
 }
+extern "C" int bs4_port_jitter_for_pass(VkExtent2D,float*,float*);
 extern "C" VkImageView bs4_port_prepare_ui(VkCommandBuffer);
 extern "C" VkImage bs4_fsr31_output_image(VkImageView);
 extern "C" int bs4_fsr31_set_output_layout(VkImageView,VkImageLayout);
@@ -272,6 +273,19 @@ extern "C" bool bs4_port_ui_redirect_begin(
     s.hasStencil=input->pStencilAttachment!=nullptr;
     if(s.hasDepth)s.depth=*input->pDepthAttachment;
     if(s.hasStencil)s.stencil=*input->pStencilAttachment;
+    // The Port jitters G-buffer geometry BEFORE the first draw. Once a real
+    // previous Bloodborne camera identifies this pass, apply the port's
+    // Halton offset at the pass boundary, and restore it at pass end.
+    if(!s.uiPhase && s.hasDepth && input->colorAttachmentCount>=2) {
+        float jx=0,jy=0;
+        if(bs4_port_jitter_for_pass(input->renderArea.extent,&jx,&jy)) {
+            s.jitterActive=true;s.jitterX=jx;s.jitterY=jy;
+            if(s.haveViewport && realSetViewport) {
+                VkViewport p=s.viewport;p.x+=jx;p.y+=jy;
+                realSetViewport(cb,0,1,&p);
+            }
+        }
+    }
     if(s.uiPhase && s.originalUI && input->colorAttachmentCount==1 &&
        input->pColorAttachments && input->pColorAttachments[0].imageView==s.originalUI) {
         auto depth=uiDepth.find(s.output);
