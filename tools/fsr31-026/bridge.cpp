@@ -82,6 +82,8 @@ BS4_PUBLIC int bs4_fsr31_supply_temporal_frame(
     return 1;
 }
 extern "C" void bs4_port_on_present();
+extern "C" VkImageView bs4_port_ui_present(VkCommandBuffer);
+extern "C" void bs4_port_ui_finish_present(VkCommandBuffer);
 BS4_PUBLIC uint64_t bs4_fsr31_try_render(
     uint64_t fsrPassObject, uint64_t commandBuffer, uint64_t inputView,
     uint64_t renderExtent, uint64_t outputExtent, uint64_t settings, uint64_t hdr) {
@@ -91,9 +93,15 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(
     (void)outputExtent;
     (void)settings;
     (void)hdr;
-    // Port-style frame boundary: previous scene camera is committed only
-    // when core024 reaches the real existing Presenter/FsrPass hook.
-    // This does not depend on wall-clock time or assume another game's frame.
+    // The port renders its final 720p HUD in the FSR output and gives that
+    // image directly to the original FsrPass/Presenter. The game 1080p
+    // attachment remains untouched. A partially prepared output is NEVER used.
+    const auto cb=reinterpret_cast<VkCommandBuffer>(commandBuffer);
+    if(const VkImageView ui=bs4_port_ui_present(cb);ui) {
+        bs4_port_ui_finish_present(cb);
+        bs4_port_on_present();
+        return reinterpret_cast<uint64_t>(ui);
+    }
     bs4_port_on_present();
     std::lock_guard<std::mutex> lock(guard);
     // Preference written by BACHATA 0.2.6's native Android settings UI.
@@ -213,6 +221,16 @@ BS4_PUBLIC int bs4_fsr31_pre_ui_dispatch(
           output_extent.width,output_extent.height,preset);
     }
     return 1;
+}
+
+BS4_PUBLIC int bs4_fsr31_ui_device(
+    VkDevice* out_device,VkPhysicalDevice* out_physical) {
+    if(!out_device||!out_physical)return 0;
+    std::lock_guard<std::mutex> lock(guard);
+    if(!device_attached)return 0;
+    *out_device=acquired_device.device;
+    *out_physical=acquired_device.physicalDevice;
+    return !!(*out_device) && !!(*out_physical);
 }
 
 BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice device,
