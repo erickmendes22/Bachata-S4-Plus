@@ -92,6 +92,14 @@ jobs:
           EOF
           mkdir -p generated
           glslangValidator -V --target-env vulkan1.2 -S comp -o /tmp/flow.spv tools/fsr31-026/flow.comp
+          # Compile the unchanged motion reprojection shader from the *real*
+          # Bloodborne Android Port (not another guessed optical-flow shader).
+          glslangValidator -V --target-env vulkan1.2 -S comp \
+            -o /tmp/port_camera_motion.spv tools/fsr31-026/port_camera_motion.comp
+          test -s /tmp/port_camera_motion.spv
+          if command -v spirv-val >/dev/null; then
+            spirv-val --target-env vulkan1.2 /tmp/port_camera_motion.spv
+          fi
           python3 - <<'PY'
           from pathlib import Path
           import struct
