@@ -2,6 +2,7 @@
 // Capture real Vulkan image descriptions from the renderer. No guest shader
 // hashes, no Mesa/Turnip private memory-layout reads.
 #include "vulkan_capture.h"
+#include "port_camera_constants.h"
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -43,6 +44,13 @@ bool pre_ui_eligible_logged=false;
 using PreUiDispatch=int (*)(VkCommandBuffer,VkImageView,VkExtent2D,VkExtent2D,VkImage*);
 extern "C" int bs4_fsr31_pre_ui_dispatch(VkCommandBuffer,VkImageView,
                 VkImageView,VkExtent2D,VkExtent2D,VkImage*);
+extern "C" int bs4_fsr31_supply_port_camera(
+    VkCommandBuffer,VkImageView,const void*,uint32_t);
+extern "C" void bs4_port_note_render(VkCommandBuffer,VkImageView,VkExtent2D,uint32_t);
+extern "C" VkImageView bs4_port_camera_for_scene(
+    VkCommandBuffer,VkExtent2D,void*,uint32_t);
+extern "C" void bs4_port_reset_cb(VkCommandBuffer);
+extern "C" PFN_vkVoidFunction bs4_port_wrap_proc(const char*,PFN_vkVoidFunction);
 
 PFN_vkBeginCommandBuffer original_begin_command{};
 PFN_vkResetCommandBuffer original_reset_command{};
@@ -145,8 +153,9 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
         // This is the first full-size UI pass following a completed small
         // 3D scene on the SAME command buffer. Cross-CB ordering is unknown:
         // never issue Vulkan commands based on unproven inter-CB ordering.
-        if(w<1280||h<700||!stage.ready||!stage.color||
-           !stage.depth||stage.color==view)
+        // LDR pass often has no depth attachment. The original port takes
+        // G-buffer depth from CameraMotion, not the LDR target's depth.
+        if(w<1280||h<700||!stage.ready||!stage.color||stage.color==view)
             return false;
         const auto dst_v=views.find(view);
         if(dst_v==views.end())return false;
@@ -176,6 +185,16 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     // the output into that surface; core024 requires native UI redirection.
     if(w!=1280 || h!=720 || dst_w!=1280 || dst_h!=720)return false;
     const VkExtent2D upscale_extent{1280,720};
+    // Only genuine scene constants, associated with the actual 640x360
+    // G-buffer in the SAME command buffer, may feed the temporal path.
+    // Unavailable camera history never falls back to invented motion vectors.
+    BachataCamera::Push port_push{};
+    const VkImageView true_depth=bs4_port_camera_for_scene(
+        cmd,completed.extent,&port_push,sizeof(port_push));
+    if(!true_depth ||
+       !bs4_fsr31_supply_port_camera(
+           cmd,true_depth,&port_push,sizeof(port_push)))return false;
+    completed.depth=true_depth;
     VkImage upscaled=VK_NULL_HANDLE;
     if(!bs4_fsr31_pre_ui_dispatch(cmd,completed.color,completed.depth,
                                     completed.extent,upscale_extent,&upscaled)||!upscaled)
@@ -330,6 +349,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_begin_command(
     if (!original_begin_command) return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_begin_command(cb,info);
     if(status==VK_SUCCESS){std::lock_guard lock{mutex};command_scenes.erase(cb);}
+    bs4_port_reset_cb(cb);
     return status;
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_reset_command(
@@ -337,12 +357,14 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_reset_command(
     if(!original_reset_command)return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_reset_command(cb,flags);
     if(status==VK_SUCCESS){std::lock_guard lock{mutex};command_scenes.erase(cb);}
+    bs4_port_reset_cb(cb);
     return status;
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_free_commands(
         VkDevice device,VkCommandPool pool,uint32_t count,const VkCommandBuffer* cb) {
     if(cb&&count){std::lock_guard lock{mutex};
-        for(uint32_t i=0;i<count;++i)command_scenes.erase(cb[i]);}
+        for(uint32_t i=0;i<count;++i){command_scenes.erase(cb[i]);
+            bs4_port_reset_cb(cb[i]);}}
     if(original_free_commands)original_free_commands(device,pool,count,cb);
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image(
@@ -385,6 +407,9 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering(
     std::vector<VkRenderingAttachmentInfo> overrides;
     const bool composite=first_pre_ui_color(cb,info,modified,overrides);
     record_rendering(info);
+    if(info)bs4_port_note_render(cb,
+        info->pDepthAttachment?info->pDepthAttachment->imageView:VK_NULL_HANDLE,
+        info->renderArea.extent,info->colorAttachmentCount);
     if(original_begin_rendering)
         original_begin_rendering(cb,composite?&modified:info);
 }
@@ -405,6 +430,9 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering_khr(
     std::vector<VkRenderingAttachmentInfo> overrides;
     const bool composite=first_pre_ui_color(cb,info,modified,overrides);
     record_rendering(info);
+    if(info)bs4_port_note_render(cb,
+        info->pDepthAttachment?info->pDepthAttachment->imageView:VK_NULL_HANDLE,
+        info->renderArea.extent,info->colorAttachmentCount);
     if(original_begin_rendering_khr)
         original_begin_rendering_khr(cb,composite?&modified:info);
 }
@@ -441,7 +469,7 @@ extern "C" PFN_vkVoidFunction bs4_fsr31_wrap_vulkan_proc(
     BS4_WRAP_GIPA(original_end_rendering_khr,"vkCmdEndRenderingKHR",&bs4_cap_end_rendering_khr)
     BS4_WRAP_GIPA(original_barrier2_khr,"vkCmdPipelineBarrier2KHR",&bs4_cap_barrier2_khr)
     #undef BS4_WRAP_GIPA
-    return proc;
+    return bs4_port_wrap_proc(name,proc);
 }
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
     VkDevice device,const char* name) {
@@ -468,5 +496,5 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
     BS4_WRAP(original_end_rendering_khr,"vkCmdEndRenderingKHR",&bs4_cap_end_rendering_khr)
     BS4_WRAP(original_barrier2_khr,"vkCmdPipelineBarrier2KHR",&bs4_cap_barrier2_khr)
     #undef BS4_WRAP
-    return proc;
+    return bs4_port_wrap_proc(name,proc);
 }
