@@ -3,6 +3,9 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.util.Log;
 import java.io.File;
+import java.io.InputStream;
+import java.io.ByteArrayOutputStream;
+import org.json.JSONObject;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
@@ -17,7 +20,22 @@ import java.util.regex.Pattern;
  *  Existing non-FSR resolution selections are restored when disabling FSR3.
  */
 public final class Fsr3Resolution {
-  private static final String RUNTIME = "bachata-s4-plus-0.2.6-r";
+  /** Read the runtime identity shipped with the APK. Do not hardcode the
+   *  extraction suffix: the R13->R14 rename caused the 640x360 patch to vanish. */
+  private static String activeRuntime(Context ctx) throws Exception {
+    try (InputStream in=ctx.getAssets().open("runtime/manifest.json");
+         ByteArrayOutputStream buffer=new ByteArrayOutputStream()) {
+      byte[] chunk=new byte[8192];
+      int n;
+      while((n=in.read(chunk))!=-1) buffer.write(chunk,0,n);
+      String version=new JSONObject(
+          new String(buffer.toByteArray(),StandardCharsets.UTF_8))
+          .getString("runtimeVersion");
+      if(!version.matches("bachata-s4-plus-0\\.2\\.6-[a-zA-Z0-9]+"))
+          throw new IllegalStateException("Invalid active runtime name");
+      return version;
+    }
+  }
   private static final String SAVED = "fsr31_bb_original_resolution";
   private static final String CONTROLLED = "fsr31_bb_controls_resolution";
   private static final String PREFIX = "Decoupled 1080p UI (";
@@ -39,14 +57,15 @@ public final class Fsr3Resolution {
   }
   public static synchronized void apply(Context ctx,boolean enabled,int preset) {
     if(ctx==null||preset<0||preset>4)return;
-    final File xml=new File(ctx.getFilesDir(),"runtime/"+RUNTIME+
-        "/user/patches/bachata-official/Bloodborne.xml");
-    if(!xml.isFile()) {
-      Log.w("BS4_FSR31","Internal resolution XML not installed yet: "+xml);
-      return;
-    }
     SharedPreferences preferences=ctx.getSharedPreferences("bs4_fsr31",Context.MODE_PRIVATE);
     try {
+      final String currentRuntime=activeRuntime(ctx);
+      final File xml=new File(ctx.getFilesDir(),"runtime/"+currentRuntime+
+          "/user/patches/bachata-official/Bloodborne.xml");
+      if(!xml.isFile()) {
+        Log.e("BS4_FSR31","Active runtime resolution patch file missing: "+xml);
+        return;
+      }
       String before=new String(Files.readAllBytes(xml.toPath()),StandardCharsets.UTF_8);
       if(!before.contains("<ID>CUSA00900</ID>"))return;
       boolean controlled=preferences.getBoolean(CONTROLLED,false);
@@ -89,7 +108,7 @@ public final class Fsr3Resolution {
                    StandardCopyOption.ATOMIC_MOVE);
       }
       if(restoring)preferences.edit().remove(SAVED).putBoolean(CONTROLLED,false).apply();
-      Log.i("BS4_FSR31","Bloodborne game-native scene="+
+      Log.i("BS4_FSR31","activeRuntime="+currentRuntime+" Bloodborne game-native scene="+
           (selected.isEmpty()?"original":SIZES[preset])+" UI=1920x1080 edits="+changes);
     } catch(Exception e) {
       Log.e("BS4_FSR31","Cannot set game-native render resolution",e);
