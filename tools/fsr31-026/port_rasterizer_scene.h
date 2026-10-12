@@ -37,12 +37,14 @@ public:
     bool HUDStarted() const { return hudStarted_; }
     Event Observe(const DrawState& draw) {
         if (draw.displayBuffer) { OnDisplayFrame(); return Event::None; }
-        if (hudStarted_ || !draw.colorId) return Event::None;
+        if (!draw.colorId) return Event::None;
         const unsigned mrt=std::popcount(draw.mrtMask);
         if (mrt>=5 && draw.depthId && draw.cameraConstantsValid) {
-            mainDepth_=draw.depthId; scene_={};
+            // A new main-camera GBuffer begins the next scene after UI.
+            mainDepth_=draw.depthId; scene_={}; hudStarted_=false;
             return Event::GBuffer;
         }
+        if (hudStarted_) return Event::None;
         const bool sceneDepth=draw.cameraConstantsValid && mainDepth_ &&
                               draw.depthId==mainDepth_;
         const bool sizesMatch=draw.colorWidth && draw.colorHeight &&
