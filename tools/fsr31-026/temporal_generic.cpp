@@ -245,7 +245,8 @@ void flow(VkCommandBuffer cb,const Frame& f,VkExtent2D size) {
 
 extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_render(
     const FfxVkPortableDeviceInfo* owned,VkCommandBuffer cb,VkImageView input,
-    VkExtent2D input_extent,VkExtent2D output_extent,int preset,int hdr,int pre_ui) {
+    VkExtent2D input_extent,VkExtent2D output_extent,int preset,int hdr,int pre_ui,
+    VkImageView scene_depth_view) {
     if(!owned||!cb||!input||hdr||preset<0||preset>4){report_once(1,"missing arguments or HDR/preset unsupported");return 0;}
     if(!owned->shaderStorageImageWriteWithoutFormatEnabled){report_once(2,"storage image write without format disabled");return 0;}
     if(output_extent.width==0||output_extent.height==0 ||
@@ -264,7 +265,18 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     }
     Bs4FsrCaptureImage color{},depth{};
     if(!bs4_fsr31_capture_image(input,&color)){report_once(4,"Vulkan color image view not captured");return 0;}
-    if(!bs4_fsr31_capture_depth(input_extent,&depth)){report_once(5,"depth image matching render extent not captured");return 0;}
+    if (pre_ui) {
+        // Depth must originate in the same completed Vulkan render pass as
+        // the selected reduced scene, not merely the globally newest image.
+        if (!scene_depth_view || !bs4_fsr31_capture_image(scene_depth_view,&depth) ||
+            !(depth.aspects & VK_IMAGE_ASPECT_DEPTH_BIT)) {
+            report_once(5,"pre-UI matching scene depth image not available");
+            return 0;
+        }
+    } else if (!bs4_fsr31_capture_depth(input_extent,&depth)) {
+        report_once(5,"depth image matching render extent not captured");
+        return 0;
+    }
     if(!(color.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)){report_once(6,"color image lacks transfer-source usage");return 0;}
     if(!(depth.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)){report_once(7,"depth image lacks transfer-source usage");return 0;}
     // Begin with the formats available in the native FSR Vulkan backend.
@@ -298,6 +310,11 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
        depth.format!=VK_FORMAT_D32_SFLOAT_S8_UINT &&
        depth.format!=VK_FORMAT_D24_UNORM_S8_UINT){report_once(9,"depth pixel format unsupported");return 0;}
     if(!color.image||!depth.image){report_once(10,"null captured image handle");return 0;}
+    if (pre_ui && (depth.size.width < input_extent.width ||
+                   depth.size.height < input_extent.height)) {
+        report_once(11,"scene depth extent smaller than scene render area");
+        return 0;
+    }
     VkFormatProperties depth_features{};
     vkGetPhysicalDeviceFormatProperties(owned->physicalDevice,depth.format,&depth_features);
     const bool depth_can_blit =
