@@ -6,7 +6,7 @@
 #include <ffx_vk_portable.h>
 extern "C" uint64_t bs4_fsr31_generic_render(const FfxVkPortableDeviceInfo* info,
     VkCommandBuffer cmd,VkImageView input,VkExtent2D inputSize,
-    VkExtent2D outputSize,int preset,int hdr,int pre_ui);
+    VkExtent2D outputSize,int preset,int hdr,int pre_ui,VkImageView forced_depth);
 extern "C" VkImage bs4_fsr31_output_image(VkImageView);
 #include <cstdint>
 #include <cmath>
@@ -143,7 +143,7 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(
         return bs4_fsr31_generic_render(&acquired_device,
             reinterpret_cast<VkCommandBuffer>(commandBuffer),
             reinterpret_cast<VkImageView>(inputView),input_size,output_size,
-            preset,int(hdr != 0),0);
+            preset,int(hdr != 0),0,VK_NULL_HANDLE);
     }
     auto info = pending.info;
     // Preset scales are constraints on the *actual scene render extent*, never
@@ -173,12 +173,12 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(
  * target to the first full-size UI render target. This uses the existing
  * FSR 3.1 backend and keeps the stock presenter as a fallback. */
 BS4_PUBLIC int bs4_fsr31_pre_ui_dispatch(
-        VkCommandBuffer command, VkImageView scene_color,
+        VkCommandBuffer command, VkImageView scene_color, VkImageView scene_depth,
         VkExtent2D scene_extent, VkExtent2D output_extent,
         VkImage* output_image) {
     if (!output_image) return 0;
     *output_image = VK_NULL_HANDLE;
-    if (!command || !scene_color || !scene_extent.width ||
+    if (!command || !scene_color || !scene_depth || !scene_extent.width ||
         !scene_extent.height) return 0;
     FfxVkPortableDeviceInfo info{};
     int preset = -1;
@@ -193,7 +193,7 @@ BS4_PUBLIC int bs4_fsr31_pre_ui_dispatch(
     }
     if (preset < 0) return 0;
     const auto upscaled = bs4_fsr31_generic_render(
-        &info,command,scene_color,scene_extent,output_extent,preset,0,1);
+        &info,command,scene_color,scene_extent,output_extent,preset,0,1,scene_depth);
     if (!upscaled) return 0;
     const auto image = bs4_fsr31_output_image(
         reinterpret_cast<VkImageView>(upscaled));
