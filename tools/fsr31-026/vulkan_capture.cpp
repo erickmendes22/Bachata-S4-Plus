@@ -201,10 +201,10 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_barrier2_khr(
 extern "C" PFN_vkVoidFunction bs4_fsr31_wrap_vulkan_proc(
         const char* name, PFN_vkVoidFunction proc) {
     if(!name||!proc)return proc;
-    #define BS4_WRAP_GIPA(method,symbol,target) \\
-        if(std::strcmp(name,symbol)==0) { \\
-            method=reinterpret_cast<decltype(method)>(proc); \\
-            return reinterpret_cast<PFN_vkVoidFunction>(target); \\
+    #define BS4_WRAP_GIPA(method,symbol,target) \
+        if(std::strcmp(name,symbol)==0) { \
+            method=reinterpret_cast<decltype(method)>(proc); \
+            return reinterpret_cast<PFN_vkVoidFunction>(target); \
         }
     BS4_WRAP_GIPA(original_create_image,"vkCreateImage",&bs4_cap_create_image)
     BS4_WRAP_GIPA(original_destroy_image,"vkDestroyImage",&bs4_cap_destroy_image)
