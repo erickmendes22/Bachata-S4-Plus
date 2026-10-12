@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <vector>
 #include <algorithm>
+#include <cmath>
 namespace {
 struct Image {
     VkFormat format = VK_FORMAT_UNDEFINED;
@@ -88,17 +89,52 @@ extern "C" int bs4_fsr31_capture_image(VkImageView view, Bs4FsrCaptureImage* out
 extern "C" int bs4_fsr31_capture_depth(VkExtent2D expected, Bs4FsrCaptureImage* out) {
     if(!out) return 0;
     std::lock_guard lock{mutex};
+    // Guest games commonly render depth at a resolution different from
+    // VideoOut (e.g. dynamic resolution, 3D scene vs 1080p UI). Requiring
+    // exact 1920x1080 was the proven R10 fallback reason 5.
     uint64_t best=0;
-    for(const auto& [handle, img] : images) {
-        if(!img.last_depth_use || img.last_depth_use <= best) continue;
-        if(img.size.width!=expected.width || img.size.height!=expected.height)
-            continue;
-        if(!(img.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))continue;
-        // Original depth is copied into a sampled image owned by the FSR backend;
-        // the guest attachment itself need not support sampling.
+    uint32_t tracked_depth=0,used_depth=0,transfer_depth=0;
+    uint64_t closest_area=0;
+    VkExtent2D closest{};
+    VkFormat closest_format=VK_FORMAT_UNDEFINED;
+    VkImageUsageFlags closest_usage=0;
+    for (const auto& [handle,img] : images) {
+        if (!(img.usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) continue;
+        tracked_depth++;
+        if (!img.last_depth_use) continue;
+        used_depth++;
+        const uint64_t area=uint64_t(img.size.width)*img.size.height;
+        if (area>closest_area) {
+            closest_area=area;
+            closest=img.size;closest_format=img.format;closest_usage=img.usage;
+        }
+        if (!(img.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)) continue;
+        transfer_depth++;
+        if (!expected.width || !expected.height || !img.size.height) continue;
+        const float actual=float(img.size.width)/float(img.size.height);
+        const float desired=float(expected.width)/float(expected.height);
+        if (std::abs(actual-desired)>0.085f*desired) continue;
+        if (img.last_depth_use<=best) continue;
         best=img.last_depth_use;
         *out={handle,img.format,img.size,img.usage,img.layout,
-            VK_IMAGE_ASPECT_DEPTH_BIT};
+              VK_IMAGE_ASPECT_DEPTH_BIT};
+    }
+    static bool reported_any=false;
+    static bool reported_missing=false;
+    if (best && !reported_any) {
+        reported_any=true;
+        std::fprintf(stderr,
+          "[BS4_FSR31] depth selected real=%ux%u fmt=%u usage=0x%x expected=%ux%u\\n",
+          out->size.width,out->size.height,unsigned(out->format),
+          unsigned(out->usage),expected.width,expected.height);
+    } else if (!best && !reported_missing) {
+        reported_missing=true;
+        std::fprintf(stderr,
+          "[BS4_FSR31] depth candidates tracked=%u rendered=%u transferable=%u "
+          "largest=%ux%u fmt=%u usage=0x%x expected=%ux%u\\n",
+          tracked_depth,used_depth,transfer_depth,
+          closest.width,closest.height,unsigned(closest_format),
+          unsigned(closest_usage),expected.width,expected.height);
     }
     return best ? 1 : 0;
 }
@@ -159,6 +195,29 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_barrier2_khr(
     VkCommandBuffer cb,const VkDependencyInfo* dep) {
     if(dep)update_layout(dep->imageMemoryBarrierCount,dep->pImageMemoryBarriers);
     if(original_barrier2_khr)original_barrier2_khr(cb,dep);
+}
+// Vulkan-hpp may resolve device commands through vkGetInstanceProcAddr,
+// rather than vkGetDeviceProcAddr. Both paths must be intercepted.
+extern "C" PFN_vkVoidFunction bs4_fsr31_wrap_vulkan_proc(
+        const char* name, PFN_vkVoidFunction proc) {
+    if(!name||!proc)return proc;
+    #define BS4_WRAP_GIPA(method,symbol,target) \\
+        if(std::strcmp(name,symbol)==0) { \\
+            method=reinterpret_cast<decltype(method)>(proc); \\
+            return reinterpret_cast<PFN_vkVoidFunction>(target); \\
+        }
+    BS4_WRAP_GIPA(original_create_image,"vkCreateImage",&bs4_cap_create_image)
+    BS4_WRAP_GIPA(original_destroy_image,"vkDestroyImage",&bs4_cap_destroy_image)
+    BS4_WRAP_GIPA(original_create_image_view,"vkCreateImageView",&bs4_cap_create_image_view)
+    BS4_WRAP_GIPA(original_destroy_image_view,"vkDestroyImageView",&bs4_cap_destroy_image_view)
+    BS4_WRAP_GIPA(original_begin_rendering,"vkCmdBeginRendering",&bs4_cap_begin_rendering)
+    BS4_WRAP_GIPA(original_end_rendering,"vkCmdEndRendering",&bs4_cap_end_rendering)
+    BS4_WRAP_GIPA(original_barrier2,"vkCmdPipelineBarrier2",&bs4_cap_barrier2)
+    BS4_WRAP_GIPA(original_begin_rendering_khr,"vkCmdBeginRenderingKHR",&bs4_cap_begin_rendering_khr)
+    BS4_WRAP_GIPA(original_end_rendering_khr,"vkCmdEndRenderingKHR",&bs4_cap_end_rendering_khr)
+    BS4_WRAP_GIPA(original_barrier2_khr,"vkCmdPipelineBarrier2KHR",&bs4_cap_barrier2_khr)
+    #undef BS4_WRAP_GIPA
+    return proc;
 }
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
     VkDevice device,const char* name) {
