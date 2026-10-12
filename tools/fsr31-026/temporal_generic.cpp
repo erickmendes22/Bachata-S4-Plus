@@ -255,8 +255,32 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     if(!(color.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)){report_once(6,"color image lacks transfer-source usage");return 0;}
     if(!(depth.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)){report_once(7,"depth image lacks transfer-source usage");return 0;}
     // Begin with the formats available in the native FSR Vulkan backend.
-    if(color.format!=VK_FORMAT_R8G8B8A8_UNORM &&
-       color.format!=VK_FORMAT_B8G8R8A8_UNORM){report_once(8,"color pixel format unsupported");return 0;}
+    // The guest video output may use sRGB, 10-bit UNORM, or RGBA16f,
+    // which the R10 format whitelist incorrectly rejected. Convert the
+    // real source to the portable FSR backend's RGBA8 intermediate through
+    // vkCmdBlitImage; first verify that format supports blitting.
+    VkFormatProperties color_props{},rgba_props{};
+    vkGetPhysicalDeviceFormatProperties(owned->physicalDevice,color.format,&color_props);
+    vkGetPhysicalDeviceFormatProperties(owned->physicalDevice,
+                                         VK_FORMAT_R8G8B8A8_UNORM,&rgba_props);
+    if (!(color_props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) ||
+        !(rgba_props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT)) {
+        std::fprintf(stderr,
+          "[BS4_FSR31] color source fmt=%d size=%ux%u usage=0x%x "
+          "blit_src=%d destination blit_dst=%d\\n",int(color.format),
+          color.size.width,color.size.height,unsigned(color.usage),
+          !!(color_props.optimalTilingFeatures&VK_FORMAT_FEATURE_BLIT_SRC_BIT),
+          !!(rgba_props.optimalTilingFeatures&VK_FORMAT_FEATURE_BLIT_DST_BIT));
+        report_once(8,"color source/destination cannot be blitted to RGBA8");
+        return 0;
+    }
+    static bool reported_color=false;
+    if(!reported_color) {
+        reported_color=true;
+        std::fprintf(stderr,
+           "[BS4_FSR31] color source fmt=%d size=%ux%u usage=0x%x -> RGBA8\\n",
+           int(color.format),color.size.width,color.size.height,unsigned(color.usage));
+    }
     if(depth.format!=VK_FORMAT_D32_SFLOAT &&
        depth.format!=VK_FORMAT_D32_SFLOAT_S8_UINT &&
        depth.format!=VK_FORMAT_D24_UNORM_S8_UINT){report_once(9,"depth pixel format unsupported");return 0;}
@@ -273,15 +297,18 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
         std::max(1u,uint32_t(std::lround(output_extent.width/ratio[preset]))),
         std::max(1u,uint32_t(std::lround(output_extent.height/ratio[preset])))};
     // A depth copy cannot be made from a mismatched guest depth target.
-    if(depth.size.width!=input_extent.width || depth.size.height!=input_extent.height){report_once(11,"depth dimensions mismatch");return 0;}
+    // PS4 scene depth commonly has a different size than the displayed
+    // VideoOut image. Its pixels are resampled to the same render extent as
+    // the color intermediate (using nearest depth blit only if supported).
+    if(!depth.size.width||!depth.size.height){report_once(11,"depth extent invalid");return 0;}
     if ((internal.width!=depth.size.width || internal.height!=depth.size.height) &&
         !depth_can_blit){report_once(12,"scaled depth blit unsupported by GPU");return 0;}
     if(!fsr || config.maxRenderSize.width!=internal.width ||
        config.maxRenderSize.height!=internal.height ||
        config.maxOutputSize.width!=output_extent.width ||
        config.maxOutputSize.height!=output_extent.height ||
-       frames[0].scene.format!=color.format ||frames[0].depth.format!=depth.format) {
-        if(!allocate_for(*owned,internal,output_extent,color.format,depth.format)){report_once(13,"FSR resource or context creation failed");return 0;}
+       frames[0].scene.format!=VK_FORMAT_R8G8B8A8_UNORM ||frames[0].depth.format!=depth.format) {
+        if(!allocate_for(*owned,internal,output_extent,VK_FORMAT_R8G8B8A8_UNORM,depth.format)){report_once(13,"FSR resource or context creation failed");return 0;}
     }
     Frame& f=frames[cursor++%frames.size()];
     transit(cb,f.scene,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -289,7 +316,7 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     VkImageBlit blit{};
     blit.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
-    blit.srcOffsets[1]={int32_t(input_extent.width),int32_t(input_extent.height),1};
+    blit.srcOffsets[1]={int32_t(color.size.width),int32_t(color.size.height),1};
     blit.dstSubresource=blit.srcSubresource;
     blit.dstOffsets[1]={int32_t(internal.width),int32_t(internal.height),1};
     vkCmdBlitImage(cb,color.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
