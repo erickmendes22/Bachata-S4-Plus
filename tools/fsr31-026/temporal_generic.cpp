@@ -193,6 +193,47 @@ bool build_compute(){
     auto r=vkCreateComputePipelines(device,VK_NULL_HANDLE,1,&ci,nullptr,&flow_pipeline);
     vkDestroyShaderModule(device,module,nullptr);
     if(!result(r,"flow compute pipeline"))return false;
+    // Actual depth-based motion shader from the Android port, with the
+    // unchanged push layout and depth/object/storage bindings.
+    VkDescriptorSetLayoutBinding port_bindings[3]{};
+    for(uint32_t i=0;i<3;++i){
+        port_bindings[i].binding=i;port_bindings[i].descriptorCount=1;
+        port_bindings[i].stageFlags=VK_SHADER_STAGE_COMPUTE_BIT;
+        port_bindings[i].descriptorType=(i==1)?
+            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    }
+    VkDescriptorSetLayoutCreateInfo port_dci{
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    port_dci.bindingCount=3;port_dci.pBindings=port_bindings;
+    if(!result(vkCreateDescriptorSetLayout(device,&port_dci,nullptr,
+                                           &port_desc_layout),"port motion layout"))
+        return false;
+    VkPushConstantRange port_push{VK_SHADER_STAGE_COMPUTE_BIT,0,
+                                  uint32_t(sizeof(PortCameraPush))};
+    VkPipelineLayoutCreateInfo port_pci{
+        VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    port_pci.setLayoutCount=1;port_pci.pSetLayouts=&port_desc_layout;
+    port_pci.pushConstantRangeCount=1;port_pci.pPushConstantRanges=&port_push;
+    if(!result(vkCreatePipelineLayout(device,&port_pci,nullptr,
+                                      &port_pipeline_layout),"port pipeline layout"))
+        return false;
+    VkShaderModule port_module{};
+    VkShaderModuleCreateInfo port_sm{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    port_sm.codeSize=sizeof(BS4_PORT_CAMERA_MOTION_SPV);
+    port_sm.pCode=BS4_PORT_CAMERA_MOTION_SPV;
+    if(!result(vkCreateShaderModule(device,&port_sm,nullptr,
+                                    &port_module),"port camera shader"))
+        return false;
+    VkComputePipelineCreateInfo port_ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    port_ci.stage={VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+    port_ci.stage.stage=VK_SHADER_STAGE_COMPUTE_BIT;
+    port_ci.stage.module=port_module;
+    port_ci.stage.pName="main";
+    port_ci.layout=port_pipeline_layout;
+    auto port_result=vkCreateComputePipelines(device,VK_NULL_HANDLE,1,
+                   &port_ci,nullptr,&port_pipeline);
+    vkDestroyShaderModule(device,port_module,nullptr);
+    if(!result(port_result,"port camera pipeline"))return false;
     VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sci.magFilter=VK_FILTER_LINEAR;sci.minFilter=VK_FILTER_LINEAR;
     sci.addressModeU=VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
@@ -201,9 +242,10 @@ bool build_compute(){
     if(!result(vkCreateSampler(device,&sci,nullptr,&sampler),"motion sampler"))return false;
     VkDescriptorPoolSize sizes[]={
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,16},
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,8}};
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,16},
+        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,12}};
     VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    pi.maxSets=6;pi.poolSizeCount=2;pi.pPoolSizes=sizes;
+    pi.maxSets=10;pi.poolSizeCount=3;pi.pPoolSizes=sizes;
     return result(vkCreateDescriptorPool(device,&pi,nullptr,&descriptors),"flow descriptor pool");
 }
 FfxVkPortableImage describe(const Surface& s,FfxVkPortableResourceState state) {
@@ -235,6 +277,9 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
         VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         ai.descriptorPool=descriptors;ai.descriptorSetCount=1;ai.pSetLayouts=&desc_layout;
         if(!result(vkAllocateDescriptorSets(device,&ai,&f.descriptor),"descriptors"))return false;
+        ai.pSetLayouts=&port_desc_layout;
+        if(!result(vkAllocateDescriptorSets(device,&ai,&f.port_motion_descriptor),
+                   "port camera descriptors"))return false;
     }
     if(!alloc(previous,color_format,render,sampled,VK_IMAGE_ASPECT_COLOR_BIT))return false;
     const auto r=ffxVkPortableUpscaleContextCreate(&info,&config,&fsr);
