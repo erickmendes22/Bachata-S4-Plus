@@ -333,10 +333,12 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_destroy_image_view(
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering(
     VkCommandBuffer cb,const VkRenderingInfo* info) {
-    record_rendering(info);
+    // Dispatch BEFORE recording the UI depth attachment; otherwise generic
+    // FSR3 would select the newly-starting UI depth instead of scene depth.
     VkRenderingInfo modified{};
     std::vector<VkRenderingAttachmentInfo> overrides;
     const bool composite=first_pre_ui_color(cb,info,modified,overrides);
+    record_rendering(info);
     if(original_begin_rendering)
         original_begin_rendering(cb,composite?&modified:info);
 }
@@ -351,10 +353,12 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_barrier2(
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering_khr(
     VkCommandBuffer cb,const VkRenderingInfo* info) {
-    record_rendering(info);
+    // Dispatch BEFORE recording the UI depth attachment; otherwise generic
+    // FSR3 would select the newly-starting UI depth instead of scene depth.
     VkRenderingInfo modified{};
     std::vector<VkRenderingAttachmentInfo> overrides;
     const bool composite=first_pre_ui_color(cb,info,modified,overrides);
+    record_rendering(info);
     if(original_begin_rendering_khr)
         original_begin_rendering_khr(cb,composite?&modified:info);
 }
