@@ -1,0 +1,36 @@
+name: Verify port-based renderer and original core024 ABI
+on:
+  push:
+    branches: [feature/fsr31-026-port-rasterizer]
+    paths:
+      - 'tools/fsr31-026/port_*.h'
+      - 'tools/fsr31-026/test_port_*.cpp'
+      - 'tools/fsr31-026/verify_core024_rasterizer_abi.py'
+      - '.github/workflows/fsr31-026-port-verify.yml'
+permissions: {contents: read}
+jobs:
+  port-static:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and run guest stage and camera regression tests
+        run: |
+          set -euo pipefail
+          cd tools/fsr31-026
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror test_port_rasterizer_scene.cpp -o /tmp/port-scene
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror test_port_camera_state.cpp -o /tmp/port-camera
+          /tmp/port-scene
+          /tmp/port-camera
+      - name: Confirm stripped core024 renderer entry points without guesswork
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.6/Bachata-S4-Plus-v0.2.6.apk' -o /tmp/base.apk
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,io
+          with zipfile.ZipFile('/tmp/base.apk') as apk:
+              with zipfile.ZipFile(io.BytesIO(apk.read('assets/runtime/runtime.zip'))) as runtime:
+                  binary=runtime.read('host/shadps4-arm64-024')
+          Path('/tmp/core024').write_bytes(binary)
+          PY
+          python3 tools/fsr31-026/verify_core024_rasterizer_abi.py /tmp/core024
