@@ -1,9 +1,10 @@
 name: Patch BACHATA 026 interface for FSR3 control
 on:
   push:
-    branches: [feature/fsr31-026-existing-core]
+    branches: [feature/fsr31-026-existing-core, feature/fsr31-026-r13-pre-ui]
     paths:
       - '.github/workflows/fsr31-026-ui-build.yml'
+      - 'tools/fsr31-026/Fsr3Resolution.java'
 permissions: {contents: read}
 jobs:
   ui:
