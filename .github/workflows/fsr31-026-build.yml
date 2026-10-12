@@ -1,7 +1,7 @@
 name: Build Android GLIBC FSR3 SDK for existing core 024
 on:
   push:
-    branches: [feature/fsr31-026-existing-core]
+    branches: [feature/fsr31-026-existing-core, feature/fsr31-026-port-rasterizer]
     paths:
       - 'tools/fsr31-026/**'
       - '.github/workflows/fsr31-026-build.yml'
@@ -52,7 +52,7 @@ jobs:
           git clone --filter=blob:none https://github.com/FireBurn/FSR-Vulkan.git fsr-vulkan
           git -C fsr-vulkan checkout --detach c64f093404125e960813f95f1996c14780f0dd69
           for name in 0002-Vulkan-backend-device-local-memory-on-unified-memory-GPUs.patch 0003-Frame-generation-free-per-frame-descriptor-pools-and-constant-buffers.patch; do
-            curl -fLsS "https://raw.githubusercontent.com/ducvd89/Bloodborne-Android/android-0.5.2/gpu/patches/fsr-vulkan/$name" -o "/tmp/$name"
+            curl -fLsS "https://raw.githubusercontent.com/ducvd89/Bloodborne-Android/b7f3a7546fb0c3d7c72eabbdc69a5af44e32ee89/gpu/patches/fsr-vulkan/$name" -o "/tmp/$name"
             git -C fsr-vulkan apply --check "/tmp/$name"
             git -C fsr-vulkan apply "/tmp/$name"
           done
@@ -104,6 +104,21 @@ jobs:
           content+='};\n'
           Path('generated/flow_spv.h').write_text(content)
           print('Optical flow shader bytes:',len(raw))
+          PY
+          glslangValidator -V --target-env vulkan1.2 -S comp -o /tmp/camera.spv \
+            tools/fsr31-026/port_camera_motion.comp
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+          raw=Path('/tmp/camera.spv').read_bytes()
+          assert len(raw)%4==0 and raw[:4] == bytes.fromhex('03022307')
+          words=struct.unpack('<%dI'%(len(raw)//4),raw)
+          content='#pragma once\n#include <stdint.h>\nstatic const uint32_t BS4_FSR31_CAMERA_SPV[] = {\n'
+          for i in range(0,len(words),8):
+              content += '    '+', '.join('0x%08x'%v for v in words[i:i+8])+',\n'
+          content+='};\n'
+          Path('generated/port_camera_spv.h').write_text(content)
+          print('Port camera motion shader bytes:',len(raw))
           PY
           cmake -S . -B build -GNinja -DCMAKE_TOOLCHAIN_FILE=fsr-aarch64.ini -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target bachata_fsr31 -j 6
