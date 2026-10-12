@@ -7,6 +7,7 @@
 #include "flow_spv.h"
 #include <vulkan/vulkan.h>
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -49,6 +50,13 @@ bool has_previous=false;
 uint64_t frame_id=0;
 std::chrono::steady_clock::time_point last_frame{};
 bool once_logged=false;
+std::atomic<uint64_t> reported_reasons{0};
+void report_once(unsigned reason, const char* description) {
+    const uint64_t bit = uint64_t(1) << reason;
+    if (!(reported_reasons.fetch_or(bit, std::memory_order_relaxed) & bit))
+        std::fprintf(stderr, "[BS4_FSR31] generic fallback reason=%u %s\\n",
+                     reason, description);
+}
 
 bool result(VkResult r, const char* name) {
     if(r==VK_SUCCESS) return true;
@@ -238,21 +246,21 @@ void flow(VkCommandBuffer cb,const Frame& f,VkExtent2D size) {
 extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_render(
     const FfxVkPortableDeviceInfo* owned,VkCommandBuffer cb,VkImageView input,
     VkExtent2D input_extent,VkExtent2D output_extent,int preset,int hdr) {
-    if(!owned||!cb||!input||hdr||preset<0||preset>4)return 0;
-    if(!owned->shaderStorageImageWriteWithoutFormatEnabled)return 0;
-    if(output_extent.width==0||output_extent.height==0)return 0;
+    if(!owned||!cb||!input||hdr||preset<0||preset>4){report_once(1,"missing arguments or HDR/preset unsupported");return 0;}
+    if(!owned->shaderStorageImageWriteWithoutFormatEnabled){report_once(2,"storage image write without format disabled");return 0;}
+    if(output_extent.width==0||output_extent.height==0){report_once(3,"output extent zero");return 0;}
     Bs4FsrCaptureImage color{},depth{};
-    if(!bs4_fsr31_capture_image(input,&color))return 0;
-    if(!bs4_fsr31_capture_depth(input_extent,&depth))return 0;
-    if(!(color.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT))return 0;
-    if(!(depth.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT))return 0;
+    if(!bs4_fsr31_capture_image(input,&color)){report_once(4,"Vulkan color image view not captured");return 0;}
+    if(!bs4_fsr31_capture_depth(input_extent,&depth)){report_once(5,"depth image matching render extent not captured");return 0;}
+    if(!(color.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)){report_once(6,"color image lacks transfer-source usage");return 0;}
+    if(!(depth.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)){report_once(7,"depth image lacks transfer-source usage");return 0;}
     // Begin with the formats available in the native FSR Vulkan backend.
     if(color.format!=VK_FORMAT_R8G8B8A8_UNORM &&
-       color.format!=VK_FORMAT_B8G8R8A8_UNORM)return 0;
+       color.format!=VK_FORMAT_B8G8R8A8_UNORM){report_once(8,"color pixel format unsupported");return 0;}
     if(depth.format!=VK_FORMAT_D32_SFLOAT &&
        depth.format!=VK_FORMAT_D32_SFLOAT_S8_UINT &&
-       depth.format!=VK_FORMAT_D24_UNORM_S8_UINT)return 0;
-    if(!color.image||!depth.image)return 0;
+       depth.format!=VK_FORMAT_D24_UNORM_S8_UINT){report_once(9,"depth pixel format unsupported");return 0;}
+    if(!color.image||!depth.image){report_once(10,"null captured image handle");return 0;}
     VkFormatProperties depth_features{};
     vkGetPhysicalDeviceFormatProperties(owned->physicalDevice,depth.format,&depth_features);
     const bool depth_can_blit =
@@ -265,16 +273,15 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
         std::max(1u,uint32_t(std::lround(output_extent.width/ratio[preset]))),
         std::max(1u,uint32_t(std::lround(output_extent.height/ratio[preset])))};
     // A depth copy cannot be made from a mismatched guest depth target.
-    if(depth.size.width!=input_extent.width || depth.size.height!=input_extent.height)
-        return 0;
+    if(depth.size.width!=input_extent.width || depth.size.height!=input_extent.height){report_once(11,"depth dimensions mismatch");return 0;}
     if ((internal.width!=depth.size.width || internal.height!=depth.size.height) &&
-        !depth_can_blit) return 0;
+        !depth_can_blit){report_once(12,"scaled depth blit unsupported by GPU");return 0;}
     if(!fsr || config.maxRenderSize.width!=internal.width ||
        config.maxRenderSize.height!=internal.height ||
        config.maxOutputSize.width!=output_extent.width ||
        config.maxOutputSize.height!=output_extent.height ||
        frames[0].scene.format!=color.format ||frames[0].depth.format!=depth.format) {
-        if(!allocate_for(*owned,internal,output_extent,color.format,depth.format))return 0;
+        if(!allocate_for(*owned,internal,output_extent,color.format,depth.format)){report_once(13,"FSR resource or context creation failed");return 0;}
     }
     Frame& f=frames[cursor++%frames.size()];
     transit(cb,f.scene,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
