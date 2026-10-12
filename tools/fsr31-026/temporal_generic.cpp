@@ -5,6 +5,8 @@
 #include "vulkan_capture.h"
 #include "ffx_vk_portable.h"
 #include "flow_spv.h"
+#include "port_camera_spv.h"
+#include "port_camera_motion_math.h"
 #include <vulkan/vulkan.h>
 #include <algorithm>
 #include <atomic>
@@ -32,6 +34,7 @@ struct Frame {
     Surface motion;
     Surface output;
     VkDescriptorSet descriptor{};
+    VkDescriptorSet cameraDescriptor{};
 };
 std::mutex mutex;
 VkDevice device{};
@@ -42,11 +45,24 @@ VkDescriptorPool descriptors{};
 VkDescriptorSetLayout desc_layout{};
 VkPipelineLayout pipeline_layout{};
 VkPipeline flow_pipeline{};
+VkPipeline camera_pipeline{};
+VkPipelineLayout camera_pipeline_layout{};
+VkDescriptorSetLayout camera_desc_layout{};
+VkDescriptorPool camera_pool{};
 VkSampler sampler{};
 std::vector<Frame> frames;
 Surface previous;
 size_t cursor=0;
 bool has_previous=false;
+struct DirectFrame {
+    Bs4FsrCaptureImage color{}, depth{};
+    VkImage uiImage{};
+    VkFormat uiFormat{};
+    VkExtent2D uiExtent{};
+    Bachata::Fsr31::MotionPush camera{};
+    bool active{}, validCamera{};
+};
+thread_local DirectFrame direct;
 uint64_t frame_id=0;
 std::chrono::steady_clock::time_point last_frame{};
 bool once_logged=false;
@@ -129,11 +145,16 @@ void free_all() {
     if(device)vkDeviceWaitIdle(device);
     if(fsr) {ffxVkPortableUpscaleContextDestroy(fsr);fsr=nullptr;}
     if(flow_pipeline)vkDestroyPipeline(device,flow_pipeline,nullptr);
+    if(camera_pipeline)vkDestroyPipeline(device,camera_pipeline,nullptr);
+    if(camera_pipeline_layout)vkDestroyPipelineLayout(device,camera_pipeline_layout,nullptr);
+    if(camera_desc_layout)vkDestroyDescriptorSetLayout(device,camera_desc_layout,nullptr);
+    if(camera_pool)vkDestroyDescriptorPool(device,camera_pool,nullptr);
     if(pipeline_layout)vkDestroyPipelineLayout(device,pipeline_layout,nullptr);
     if(desc_layout)vkDestroyDescriptorSetLayout(device,desc_layout,nullptr);
     if(descriptors)vkDestroyDescriptorPool(device,descriptors,nullptr);
     if(sampler)vkDestroySampler(device,sampler,nullptr);
     flow_pipeline={};pipeline_layout={};desc_layout={};
+    camera_pipeline={};camera_pipeline_layout={};camera_desc_layout={};camera_pool={};
     descriptors={};sampler={};
     for(auto& f:frames){free_surface(f.scene);free_surface(f.depth);
         free_surface(f.motion);free_surface(f.output);}
@@ -198,7 +219,7 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
     const VkImageUsageFlags sampled=VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT|
                                     VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     const VkImageUsageFlags storage=VK_IMAGE_USAGE_STORAGE_BIT|VK_IMAGE_USAGE_SAMPLED_BIT|
-                                    VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+                                    VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     frames.resize(4);
     for(auto& f:frames) {
         if(!alloc(f.scene,color_format,render,sampled,VK_IMAGE_ASPECT_COLOR_BIT) ||
@@ -246,7 +267,7 @@ void flow(VkCommandBuffer cb,const Frame& f,VkExtent2D size) {
 extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_render(
     const FfxVkPortableDeviceInfo* owned,VkCommandBuffer cb,VkImageView input,
     VkExtent2D input_extent,VkExtent2D output_extent,int preset,int hdr) {
-    if(!owned||!cb||!input||hdr||preset<0||preset>4){report_once(1,"missing arguments or HDR/preset unsupported");return 0;}
+    if(!owned||!cb||(!input&&!direct.active)||hdr||preset<0||preset>4){report_once(1,"missing arguments or HDR/preset unsupported");return 0;}
     if(!owned->shaderStorageImageWriteWithoutFormatEnabled){report_once(2,"storage image write without format disabled");return 0;}
     if(output_extent.width==0||output_extent.height==0 ||
        input_extent.width==0||input_extent.height==0) {
@@ -263,8 +284,11 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
         return 0;
     }
     Bs4FsrCaptureImage color{},depth{};
-    if(!bs4_fsr31_capture_image(input,&color)){report_once(4,"Vulkan color image view not captured");return 0;}
-    if(!bs4_fsr31_capture_depth(input_extent,&depth)){report_once(5,"depth image matching render extent not captured");return 0;}
+    if (direct.active) {color=direct.color;depth=direct.depth;}
+    else {
+        if(!bs4_fsr31_capture_image(input,&color)){report_once(4,"Vulkan color image view not captured");return 0;}
+        if(!bs4_fsr31_capture_depth(input_extent,&depth)){report_once(5,"depth image matching render extent not captured");return 0;}
+    }
     if(!(color.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)){report_once(6,"color image lacks transfer-source usage");return 0;}
     if(!(depth.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)){report_once(7,"depth image lacks transfer-source usage");return 0;}
     // Begin with the formats available in the native FSR Vulkan backend.
@@ -377,7 +401,8 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
         transit(cb,previous,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
     transit(cb,f.motion,VK_IMAGE_LAYOUT_GENERAL);
-    flow(cb,f,internal);
+    if (direct.active && direct.validCamera) camera_flow(cb,f,internal,direct.camera);
+    else flow(cb,f,internal);
     // Shader storage writes must be visible to the FSR 3.1 compute passes.
     barrier(cb,f.motion.image,VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -395,6 +420,9 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     info.renderSize={internal.width,internal.height};
     info.outputSize={output_extent.width,output_extent.height};
     info.motionVectorScale={1,1};info.jitterOffset={0,0};
+    if (direct.active && direct.validCamera) {
+        info.jitterOffset = {direct.camera.jitter[0], direct.camera.jitter[1]};
+    }
     const auto now=std::chrono::steady_clock::now();
     float dt=16.6667f;
     if(frame_id)dt=std::clamp(
@@ -403,6 +431,13 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     info.frameTimeMilliseconds=dt;info.preExposure=1.0f;
     info.cameraNear=0.1f;info.cameraFar=1000.f;
     info.cameraVerticalFovRadians=1.0f;info.viewSpaceToMeters=1.0f;
+    if (direct.active && direct.validCamera) {
+        const float a=direct.camera.proj[2], b=direct.camera.proj[3];
+        info.cameraNear=a ? -b/a : .1f;
+        info.cameraFar=3000.f;
+        const float fy=direct.camera.proj[1];
+        info.cameraVerticalFovRadians=fy ? 2.f*std::atan(1.f/std::abs(fy)) : 1.f;
+    }
     info.sharpness=0.2f;info.enableSharpening=VK_TRUE;
     info.reset=has_previous?VK_FALSE:VK_TRUE;info.frameId=frame_id++;
     const auto result=ffxVkPortableUpscaleContextRecordDispatch(fsr,&info);
