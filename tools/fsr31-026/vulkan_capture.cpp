@@ -191,7 +191,7 @@ extern "C" int bs4_port_can_prepare_ui(VkCommandBuffer cb) {
             return 0;
     }
     const char* mode=std::getenv("BACHATA_FSR31_MODE");
-    if(!mode || mode[0]<'0'||mode[0]>'4'||mode[1]!='\\0')
+    if(!mode || mode[0]<'0'||mode[0]>'4'||mode[1]!='\0')
         return 0;
     BachataCamera::Push push{};
     const VkImageView depth=bs4_port_camera_for_scene(
