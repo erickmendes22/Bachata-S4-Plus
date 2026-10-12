@@ -463,29 +463,63 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_bind_pipeline(
  * the first HUD draw (R20 bug). Replace exactly this draw with FSR3 output,
  * preserving the following game's HDR->LDR and HUD passes.
  */
+/* The R21 error was to skip this shader and blit over its HDR output.
+ * R22 keeps the guest shader and gives it the temporally upscaled source.
+ * No render-target writes from the bridge and no speculative format conversion.
+ * A descriptor is changed ONLY when its image aliases the actual completed
+ * 640x360 scene image from the same command buffer. */
 bool bs4_dispatch_at_hdr_scene_copy(VkCommandBuffer cb) {
-    if(cb!=currently_bound_cb || !currently_bound_hdr_copy)return false;
+    if(cb!=currently_bound_cb || !currently_bound_hdr_copy ||
+       !original_push_descriptors) return false;
     ActiveRendering record{};
+    ScenePass scene{};
+    SampledSourceBinding source{};
+    bool matched=false,ambiguous=false;
     {
         std::lock_guard lock{mutex};
-        auto live=active_rendering.find(cb);
-        auto scene=command_scenes.find(cb);
+        const auto live=active_rendering.find(cb);
+        const auto scene_it=command_scenes.find(cb);
+        const auto push=graphics_push_samples.find(cb);
         if(live==active_rendering.end() || !live->second.valid ||
-           live->second.attempted || !scene_ready_for_ui(live->second,scene))
-           return false;
-        live->second.attempted=true;
+           live->second.attempted || !scene_ready_for_ui(live->second,scene_it) ||
+           push==graphics_push_samples.end())
+            return false;
         record=live->second;
+        scene=scene_it->second;
+        if(record.color.size()!=1 || record.info.pNext ||
+           !record.color[0].imageView ||
+           record.color[0].storeOp!=VK_ATTACHMENT_STORE_OP_STORE ||
+           record.color[0].resolveImageView ||
+           (record.info.flags&(VK_RENDERING_SUSPENDING_BIT |
+                                VK_RENDERING_RESUMING_BIT)))
+            return false;
+        // HDR scene copy must write an HDR attachment, NOT a tonemapped UI.
+        auto dst_view=views.find(record.color[0].imageView);
+        if(dst_view==views.end() ||
+           (dst_view->second.format!=VK_FORMAT_B10G11R11_UFLOAT_PACK32 &&
+            dst_view->second.format!=VK_FORMAT_R16G16B16A16_SFLOAT))
+            return false;
+        auto color_view=views.find(scene.color);
+        auto depth_view=views.find(scene.depth);
+        if(color_view==views.end() || depth_view==views.end()) return false;
+        const VkImage scene_image=color_view->second.image;
+        if(!scene_image || !depth_view->second.image)return false;
+        for(const auto& candidate:push->second) {
+            const auto src_view=views.find(candidate.image.imageView);
+            if(src_view==views.end() ||
+               src_view->second.image!=scene_image) continue;
+            if(matched){ambiguous=true;break;}
+            source=candidate;
+            matched=true;
+        }
+        if(!matched || ambiguous)return false;
+        // Set the attempted flag only once the correct shader texture was
+        // identified; otherwise leave all original Vulkan commands intact.
+        live->second.attempted=true;
     }
-    auto end_fn=record.khr?original_end_rendering_khr:original_end_rendering;
-    auto begin_fn=record.khr?original_begin_rendering_khr:original_begin_rendering;
+    const auto end_fn=record.khr?original_end_rendering_khr:original_end_rendering;
+    const auto begin_fn=record.khr?original_begin_rendering_khr:original_begin_rendering;
     if(!end_fn || !begin_fn)return false;
-    // pNext chains and suspend/resume attachments cannot be safely replayed.
-    if(record.info.pNext || record.color.size()!=1 ||
-       record.color[0].storeOp!=VK_ATTACHMENT_STORE_OP_STORE ||
-       !record.color[0].imageView ||
-       record.color[0].resolveImageView!=VK_NULL_HANDLE ||
-       (record.info.flags & (VK_RENDERING_SUSPENDING_BIT |
-                             VK_RENDERING_RESUMING_BIT)))return false;
 
     VkRenderingInfo resume=record.info;
     resume.pColorAttachments=record.color.data();
@@ -499,46 +533,60 @@ bool bs4_dispatch_at_hdr_scene_copy(VkCommandBuffer cb) {
         record.stencil.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;
         resume.pStencilAttachment=&record.stencil;
     }
+
     end_fn(cb);
-    VkRenderingInfo modified{};
-    std::vector<VkRenderingAttachmentInfo> overrides;
-    const bool upscaled=first_pre_ui_color(cb,&resume,modified,overrides,true);
-    // Regardless of dispatch outcome: this is a RESUMED render pass.
-    // Clearing would destroy existing contents before drawing the HUD.
-    if(upscaled)resume=modified;
+    // Keep the successful 640x360->1280x720 temporal dispatch, but return
+    // its sampled image view, not its pixels blitted over the game target.
+    const VkExtent2D fsr_output{1280,720};
+    const VkImageView temporal=bs4_fsr31_hdr_scene_source(
+        cb,scene.color,scene.depth,scene.extent,fsr_output);
     begin_fn(cb,&resume);
-    if(upscaled){
-        static bool once=false;
-        if(!once){
-            once=true;
-            std::fprintf(stderr,
-                "[BS4_FSR31] FIRST_HDR_SCENE_COPY temporal applied "
-                "before guest post-processing and HUD\\n");
-        }
+    if(!temporal) return false;
+
+    VkDescriptorImageInfo patched=source.image;
+    patched.imageView=temporal;
+    patched.imageLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet=VK_NULL_HANDLE; // Vulkan push descriptors.
+    write.dstBinding=source.binding;
+    write.dstArrayElement=source.arrayElement;
+    write.descriptorCount=1;
+    write.descriptorType=source.descriptorType;
+    write.pImageInfo=&patched;
+    original_push_descriptors(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              source.layout,source.set,1,&write);
+
+    static bool reported=false;
+    if(!reported) {
+        reported=true;
+        std::fprintf(stderr,
+          "[BS4_FSR31] R22_HDR_COPY_SHADER_PRESERVED "
+          "640x360->1280x720 slot=%u binding=%u original_draw=1\\n",
+          source.set,source.binding);
     }
-    return upscaled;
+    return true;
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_draw(
     VkCommandBuffer cb,uint32_t vertexCount,uint32_t instanceCount,
     uint32_t firstVertex,uint32_t firstInstance) {
-    if(bs4_dispatch_at_hdr_scene_copy(cb))return;
+    bs4_dispatch_at_hdr_scene_copy(cb);
     if(original_draw)original_draw(cb,vertexCount,instanceCount,firstVertex,firstInstance);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_draw_indexed(
     VkCommandBuffer cb,uint32_t indexCount,uint32_t instanceCount,
     uint32_t firstIndex,int32_t vertexOffset,uint32_t firstInstance) {
-    if(bs4_dispatch_at_hdr_scene_copy(cb))return;
+    bs4_dispatch_at_hdr_scene_copy(cb);
     if(original_draw_indexed)original_draw_indexed(
         cb,indexCount,instanceCount,firstIndex,vertexOffset,firstInstance);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_draw_indirect(
     VkCommandBuffer cb,VkBuffer buffer,VkDeviceSize offset,uint32_t drawCount,uint32_t stride) {
-    if(bs4_dispatch_at_hdr_scene_copy(cb))return;
+    bs4_dispatch_at_hdr_scene_copy(cb);
     if(original_draw_indirect) original_draw_indirect(cb,buffer,offset,drawCount,stride);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_draw_indexed_indirect(
     VkCommandBuffer cb,VkBuffer buffer,VkDeviceSize offset,uint32_t drawCount,uint32_t stride) {
-    if(bs4_dispatch_at_hdr_scene_copy(cb))return;
+    bs4_dispatch_at_hdr_scene_copy(cb);
     if(original_draw_indexed_indirect)original_draw_indexed_indirect(
         cb,buffer,offset,drawCount,stride);
 }
