@@ -3,6 +3,9 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.util.Log;
 import java.io.File;
+import java.io.InputStream;
+import java.io.ByteArrayOutputStream;
+import org.json.JSONObject;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
@@ -17,7 +20,21 @@ import java.util.regex.Pattern;
  *  Existing non-FSR resolution selections are restored when disabling FSR3.
  */
 public final class Fsr3Resolution {
-  private static final String RUNTIME = "bachata-s4-plus-0.2.6-r";
+  private static String installedRuntimeName(Context ctx) throws Exception {
+    // APK assets are authoritative: changing the suffix from -r during
+    // re-extraction must NOT silently drop the actual game resolution patch.
+    try (InputStream in=ctx.getAssets().open("runtime/manifest.json");
+         ByteArrayOutputStream bytes=new ByteArrayOutputStream()) {
+      byte[] data=new byte[8192];int n;
+      while((n=in.read(data))>0)bytes.write(data,0,n);
+      final String name=new JSONObject(
+          new String(bytes.toByteArray(),StandardCharsets.UTF_8))
+          .getString("runtimeVersion");
+      if(!name.matches("bachata-s4-plus-0\\.2\\.6-[a-zA-Z0-9]+"))
+        throw new IllegalStateException("Unrecognized BACHATA runtime name");
+      return name;
+    }
+  }
   private static final String SAVED = "fsr31_bb_original_resolution";
   private static final String CONTROLLED = "fsr31_bb_controls_resolution";
   private static final String PREFIX = "Decoupled 1080p UI (";
@@ -39,14 +56,14 @@ public final class Fsr3Resolution {
   }
   public static synchronized void apply(Context ctx,boolean enabled,int preset) {
     if(ctx==null||preset<0||preset>4)return;
-    final File xml=new File(ctx.getFilesDir(),"runtime/"+RUNTIME+
-        "/user/patches/bachata-official/Bloodborne.xml");
-    if(!xml.isFile()) {
-      Log.w("BS4_FSR31","Internal resolution XML not installed yet: "+xml);
-      return;
-    }
     SharedPreferences preferences=ctx.getSharedPreferences("bs4_fsr31",Context.MODE_PRIVATE);
     try {
+      final File xml=new File(ctx.getFilesDir(),"runtime/"+installedRuntimeName(ctx)+
+          "/user/patches/bachata-official/Bloodborne.xml");
+      if(!xml.isFile()) {
+        Log.e("BS4_FSR31","Installed runtime patch file is absent: "+xml);
+        return;
+      }
       String before=new String(Files.readAllBytes(xml.toPath()),StandardCharsets.UTF_8);
       if(!before.contains("<ID>CUSA00900</ID>"))return;
       boolean controlled=preferences.getBoolean(CONTROLLED,false);
