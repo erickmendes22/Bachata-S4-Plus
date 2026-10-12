@@ -1,7 +1,7 @@
 name: Build Android GLIBC FSR3 SDK for existing core 025
 on:
   push:
-    branches: [feature/fsr31-026-existing-core, feature/fsr31-026-r13-pre-ui, feature/fsr31-port-runscaled-024, feature/fsr31-port-runscaled-024-validated-scene, feature/fsr31-core025-scene-transaction]
+    branches: [feature/fsr31-026-existing-core, feature/fsr31-026-r13-pre-ui, feature/fsr31-port-runscaled-024, feature/fsr31-port-runscaled-024-validated-scene, feature/fsr31-core025-scene-transaction, feature/fsr31-core025-r18-native-gbuffer-viewport]
     paths:
       - 'tools/fsr31-026/**'
       - 'tools/fsr31-025/**'
