@@ -1,4 +1,5 @@
 #include "vulkan_capture.h"
+#include "port_native_dispatch.h"
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Native FSR 3.1 backend, using FireBurn/FSR-Vulkan c64f093.
 // This is the *effect library* only. The existing core must supply real
@@ -7,6 +8,9 @@
 extern "C" uint64_t bs4_fsr31_generic_render(const FfxVkPortableDeviceInfo* info,
     VkCommandBuffer cmd,VkImageView input,VkExtent2D inputSize,
     VkExtent2D outputSize,int preset,int hdr);
+extern "C" int bs4_fsr31_record_preui_port(const FfxVkPortableDeviceInfo* info,
+    VkCommandBuffer cb,const Bachata::Fsr31::NativePreUiDispatch* frame);
+extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice,const char*);
 #include <cstdint>
 #include <cmath>
 #include <cstdio>
@@ -254,7 +258,46 @@ BS4_PUBLIC int bs4_fsr31_attachment_ready() {
     return device_attached ? 1 : 0;
 }
 
+
 std::atomic<bool> fsr31_storage_feature_enabled{false};
+
+// Called directly by the new source-compiled ARM64 guest Rasterizer.
+// Unlike the stripped 024 hook, the caller passes actual Vulkan handles;
+// no heuristics, guessed C++ member offsets or fake queue handles.
+BS4_PUBLIC int bs4_fsr31_native_dispatch(VkInstance instance,VkPhysicalDevice physical,
+        VkDevice dev,VkQueue queue,uint32_t family,VkCommandBuffer cmd,
+        const Bachata::Fsr31::NativePreUiDispatch* frame) {
+    if(!instance||!physical||!dev||!queue||!cmd||!frame)return 0;
+    std::lock_guard<std::mutex> lock(guard);
+    if (!fsr31_storage_feature_enabled.load()) return 0;
+    if (!device_attached || acquired_device.device!=dev) {
+        uint32_t count=0;
+        if(vkEnumeratePhysicalDevices(instance,&count,nullptr)!=VK_SUCCESS ||
+           !count||count>128)return 0;
+        std::vector<VkPhysicalDevice> found(count);
+        if(vkEnumeratePhysicalDevices(instance,&count,found.data())!=VK_SUCCESS ||
+           std::find(found.begin(),found.end(),physical)==found.end())return 0;
+        uint32_t families=0;
+        vkGetPhysicalDeviceQueueFamilyProperties(physical,&families,nullptr);
+        if(family>=families)return 0;
+        FfxVkPortableDeviceInfo info{};
+        info.structSize=sizeof(info);
+        info.instance=instance;
+        info.physicalDevice=physical;
+        info.device=dev;
+        info.getDeviceProcAddr=vkGetDeviceProcAddr;
+        info.queue=queue;
+        info.queueFamilyIndex=family;
+        info.synchronization2Enabled=VK_TRUE;
+        info.shaderStorageImageWriteWithoutFormatEnabled=VK_TRUE;
+        acquired_device=info;
+        device_attached=true;
+        std::fprintf(stderr,
+            "[BS4_FSR31] real guest Vulkan pre-UI producer attached queueFamily=%u\n",family);
+    }
+    return bs4_fsr31_record_preui_port(&acquired_device,cmd,frame);
+}
+
 
 namespace {
 PFN_vkCreateDevice real_create_device = nullptr;
