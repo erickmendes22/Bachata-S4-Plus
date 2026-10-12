@@ -13,9 +13,11 @@ project = Path(sys.argv[1]).resolve()
 package = Path(__file__).resolve().parent
 raster = project / "src/video_core/renderer_vulkan/vk_rasterizer.cpp"
 header = project / "src/video_core/renderer_vulkan/vk_rasterizer.h"
-assert raster.is_file() and header.is_file()
+presenter = project / "src/video_core/renderer_vulkan/vk_presenter.cpp"
+assert raster.is_file() and header.is_file() and presenter.is_file()
 src = raster.read_text()
 hdr = header.read_text()
+pres = presenter.read_text()
 for filename in ("port_camera_state.h", "port_rasterizer_scene.h"):
     shutil.copyfile(package / filename, raster.parent / filename)
 
@@ -29,6 +31,12 @@ hdr = replace_once(hdr, '#include "common/recursive_lock.h"',
     '#include "common/recursive_lock.h"\n'
     '#include "video_core/renderer_vulkan/port_camera_state.h"\n'
     '#include "video_core/renderer_vulkan/port_rasterizer_scene.h"')
+hdr = replace_once(hdr,
+    "    [[nodiscard]] Scheduler& GetScheduler() noexcept {",
+    "    // Called only when a NEW guest VideoOut buffer is presented. This is\n"
+    "    // the authoritative guest frame boundary; Beginning the HUD is NOT.\n"
+    "    void Fsr31PortOnPresentedFrame();\n\n"
+    "    [[nodiscard]] Scheduler& GetScheduler() noexcept {")
 hdr = replace_once(hdr, "    bool attachment_feedback_loop{};",
     "    bool attachment_feedback_loop{};\n"
     "    Bachata::Fsr31::PortCameraState fsr31PortCamera{};\n"
@@ -38,6 +46,24 @@ src = replace_once(src,
     '#include "video_core/renderer_vulkan/vk_rasterizer.h"',
     '#include "video_core/renderer_vulkan/vk_rasterizer.h"\n'
     '#include <cstdlib>\n#include <cstdio>')
+
+frame_boundary = r'''
+void Rasterizer::Fsr31PortOnPresentedFrame() {
+    // The port advances the previous camera matrix at VideoOut, once per
+    // completed guest frame, not on the first Scaleform UI draw. Doing so
+    // earlier mixes motion history from different frames.
+    fsr31PortCamera.OnDisplayFrame();
+    fsr31PortStage.OnDisplayFrame();
+}
+'''
+src = replace_once(src,
+    "static std::pair<u32, u32> GetDrawOffsets(",
+    frame_boundary + "\nstatic std::pair<u32, u32> GetDrawOffsets(")
+
+pres = replace_once(pres,
+    "    texture_cache.UpdateImage(image_id);",
+    "    texture_cache.UpdateImage(image_id);\n"
+    "    rasterizer->Fsr31PortOnPresentedFrame();")
 
 body = r'''
     // Bloodborne port: classify draws from guest GPU registers, guest shader
@@ -78,9 +104,6 @@ body = r'''
             d.depthHeight = depth.size.height;
         }
         if (mrt >= 5 && d.depthId) {
-            if (fsr31PortStage.HUDStarted()) {
-                fsr31PortCamera.OnDisplayFrame();
-            }
             const auto& vp = regs.viewports[0];
             fsr31PortCamera.OnGBuffer(d.depthId,
                     vp.xscale < 0.f ? -1.f : 1.f,
@@ -93,8 +116,7 @@ body = r'''
         // UI shader's draw and redirects it to a separately allocated UI
         // surface. That redirect still needs a verified Renderer integration;
         // do not inject a Vulkan blit here.
-        if (event == Bachata::Fsr31::Event::BeginHUD)
-            fsr31PortCamera.OnDisplayFrame();
+        (void)event; // HUD is NOT a frame boundary; Presenter owns history advancement.
     }
 '''
 src = replace_once(src,
@@ -123,5 +145,6 @@ src = replace_once(src,
 
 header.write_text(hdr)
 raster.write_text(src)
+presenter.write_text(pres)
 print("Port scene classifier + camera signatures connected to source Rasterizer;",
       "the existing core024 executable is unchanged.")
