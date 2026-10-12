@@ -7,6 +7,7 @@
 #include "flow_spv.h"
 #include "port_camera_spv.h"
 #include "port_camera_motion_math.h"
+#include "port_native_dispatch.h"
 #include <vulkan/vulkan.h>
 #include <algorithm>
 #include <atomic>
@@ -60,6 +61,7 @@ struct DirectFrame {
     VkFormat uiFormat{};
     VkExtent2D uiExtent{};
     Bachata::Fsr31::MotionPush camera{};
+    VkImage generatedOutput{};
     bool active{}, validCamera{};
 };
 thread_local DirectFrame direct;
@@ -469,5 +471,70 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     if(frame_id==1)
         std::fprintf(stderr,"[BS4_FSR31] real FSR3.1 dispatch recorded (%ux%u->%ux%u)\n",
              internal.width,internal.height,output_extent.width,output_extent.height);
+    if(direct.active) direct.generatedOutput=f.output.image;
     return reinterpret_cast<uint64_t>(f.output.view);
+}
+
+
+// Explicit pre-UI producer: accepts the actual guest color/depth handles and
+// writes the temporally reconstructed scene to a separate host UI surface.
+// The GPU commands are recorded in the caller's command buffer; this is NOT
+// a post-VideoOut resize and never changes a PS4 guest render target.
+extern "C" __attribute__((visibility("default"))) int bs4_fsr31_record_preui_port(
+        const FfxVkPortableDeviceInfo* owned, VkCommandBuffer cb,
+        const Bachata::Fsr31::NativePreUiDispatch* source) {
+    if (!owned || !cb || !source || !source->color || !source->depth ||
+        !source->output || !source->colorSize.width || !source->depthSize.width ||
+        source->colorLayout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL ||
+        source->depthLayout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL ||
+        source->outputFormat != VK_FORMAT_R8G8B8A8_UNORM ||
+        !source->outputSize.width || !source->outputSize.height)
+        return 0;
+    // The source must actually permit copying. No guessing from image size.
+    if (!(source->colorUsage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) ||
+        !(source->depthUsage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)) return 0;
+    direct={};
+    direct.active=true;
+    direct.validCamera=source->cameraValid!=0;
+    direct.color={source->color,source->colorFormat,source->colorSize,
+                  source->colorUsage,source->colorLayout,VK_IMAGE_ASPECT_COLOR_BIT};
+    direct.depth={source->depth,source->depthFormat,source->depthSize,
+                  source->depthUsage,source->depthLayout,VK_IMAGE_ASPECT_DEPTH_BIT};
+    direct.uiImage=source->output;direct.uiFormat=source->outputFormat;
+    direct.uiExtent=source->outputSize;direct.camera=source->motion;
+    // R13 uses real 640x360 scene -> 1280x720 output (2x, FSR Performance).
+    // A mismatched resolution fails the generic renderer's preset guard.
+    const uint64_t resultView=bs4_fsr31_generic_render(owned,cb,VK_NULL_HANDLE,
+        source->colorSize,source->outputSize,3,0);
+    const VkImage resultImage=direct.generatedOutput;
+    direct={};
+    if (!resultView || !resultImage) return 0;
+    VkFormatProperties sourceProps{}, destProps{};
+    vkGetPhysicalDeviceFormatProperties(owned->physicalDevice,
+                                        VK_FORMAT_R16G16B16A16_SFLOAT,&sourceProps);
+    vkGetPhysicalDeviceFormatProperties(owned->physicalDevice,
+                                        source->outputFormat,&destProps);
+    if (!(sourceProps.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) ||
+        !(destProps.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT))
+        return 0;
+    barrier(cb,resultImage,VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    barrier(cb,source->output,VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    VkImageBlit region{};
+    region.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
+    region.srcOffsets[1]={int32_t(source->outputSize.width),
+                          int32_t(source->outputSize.height),1};
+    region.dstSubresource=region.srcSubresource;
+    region.dstOffsets[1]=region.srcOffsets[1];
+    vkCmdBlitImage(cb,resultImage,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   source->output,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                   1,&region,VK_FILTER_NEAREST);
+    barrier(cb,source->output,VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_GENERAL);
+    barrier(cb,resultImage,VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    return 1;
 }
