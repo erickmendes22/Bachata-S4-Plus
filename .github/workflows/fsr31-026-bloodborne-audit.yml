@@ -1,0 +1,34 @@
+name: Audit Bloodborne true-render patches in BACHATA 026
+on:
+  push:
+    branches: [feature/fsr31-026-existing-core]
+    paths: [.github/workflows/fsr31-026-bloodborne-audit.yml]
+permissions: {contents: read}
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - shell: bash
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 2 https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.6/Bachata-S4-Plus-v0.2.6.apk -o /tmp/base.apk
+          python3 - <<'PY'
+          import zipfile,io,xml.etree.ElementTree as ET,re
+          with zipfile.ZipFile('/tmp/base.apk') as z:
+              with zipfile.ZipFile(io.BytesIO(z.read('assets/runtime/runtime.zip'))) as r:
+                  for n in ['patches/bachata-official/Bloodborne.xml','user/patches/bachata-official/Bloodborne.xml']:
+                      raw=r.read(n)
+                      print('FILE',n,len(raw))
+                      root=ET.fromstring(raw)
+                      metas=root.findall('.//Metadata')
+                      print('  patches total',len(metas))
+                      for m in metas:
+                          name=m.attrib.get('Name','')
+                          if any(k in name.lower() for k in ['resolution','decoupled','960x','1280x','640x']):
+                              print('  PATCH',name,'app',m.attrib.get('AppVer'), 'enabled attr=',m.attrib.get('isEnabled'), 'lines=',len(m.findall('.//Line')))
+                      print('  XML root attributes',root.attrib)
+                  for n in r.namelist():
+                      if 'patch' in n.lower() and ('manifest' in n.lower() or 'state' in n.lower() or 'preset' in n.lower()):
+                          print('  PATCH_CONFIG',n)
+                  print('  user state candidates',*[n for n in r.namelist() if n.startswith('user/') and any(k in n for k in ['patch-state','session','config','patches.json'])][:25])
+          PY
