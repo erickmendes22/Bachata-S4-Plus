@@ -50,12 +50,17 @@ public:
         const bool sizesMatch=draw.colorWidth && draw.colorHeight &&
                               draw.colorWidth==draw.depthWidth &&
                               draw.colorHeight==draw.depthHeight;
-        // The game-tested Scaleform shader, *different* guest UI target, and
-        // its decoupled 1920x1080 logical size are required together.
-        // A small Vulkan pass followed by a larger one is NOT enough.
+        // The Android port identifies the first Scaleform draw into the
+        // *same* LDR scene target as the HUD boundary. 1920x1080 is its
+        // logical UI viewport, not necessarily the guest color allocation:
+        // decoupled-ui patches can leave that target at 640x360 or 1280x720.
+        // A distinct 1920x1080 UI target is also possible. Both require the
+        // game's known VS signature AND a previously identified camera scene.
+        const bool sameLdrTarget = draw.colorId==scene_.colorId;
+        const bool distinctNativeUi = draw.colorId!=scene_.colorId &&
+                                      draw.colorWidth==1920 && draw.colorHeight==1080;
         if (scene_.ready && IsBloodborneUiShader(draw.vertexShaderHash) &&
-            draw.colorId!=scene_.colorId &&
-            draw.colorWidth==1920 && draw.colorHeight==1080 &&
+            (sameLdrTarget || distinctNativeUi) &&
             (draw.colorFormat==Format::RGBA8UNorm ||
              draw.colorFormat==Format::RGBA8SRgb)) {
             hudStarted_=true;
