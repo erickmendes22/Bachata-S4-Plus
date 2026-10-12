@@ -51,6 +51,14 @@ extern "C" VkImageView bs4_port_camera_for_scene(
     VkCommandBuffer,VkExtent2D,void*,uint32_t);
 extern "C" void bs4_port_reset_cb(VkCommandBuffer);
 extern "C" PFN_vkVoidFunction bs4_port_wrap_proc(const char*,PFN_vkVoidFunction);
+extern "C" PFN_vkVoidFunction bs4_port_ui_wrap_proc(const char*,PFN_vkVoidFunction);
+extern "C" void bs4_port_ui_install_rendering(
+ PFN_vkCmdBeginRendering,PFN_vkCmdEndRendering,
+ PFN_vkCmdBeginRenderingKHR,PFN_vkCmdEndRenderingKHR);
+extern "C" bool bs4_port_ui_redirect_begin(
+ VkCommandBuffer,const VkRenderingInfo*,bool,VkRenderingInfo*);
+extern "C" void bs4_port_ui_redirect_end(VkCommandBuffer);
+extern "C" void bs4_port_ui_reset(VkCommandBuffer);
 extern "C" VkImageView bs4_fsr31_output_view(VkImage);
 
 PFN_vkBeginCommandBuffer original_begin_command{};
@@ -392,6 +400,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_begin_command(
     const auto status=original_begin_command(cb,info);
     if(status==VK_SUCCESS){std::lock_guard lock{mutex};command_scenes.erase(cb);}
     bs4_port_reset_cb(cb);
+    bs4_port_ui_reset(cb);
     return status;
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_reset_command(
@@ -400,13 +409,15 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_reset_command(
     const auto status=original_reset_command(cb,flags);
     if(status==VK_SUCCESS){std::lock_guard lock{mutex};command_scenes.erase(cb);}
     bs4_port_reset_cb(cb);
+    bs4_port_ui_reset(cb);
     return status;
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_free_commands(
         VkDevice device,VkCommandPool pool,uint32_t count,const VkCommandBuffer* cb) {
     if(cb&&count){std::lock_guard lock{mutex};
         for(uint32_t i=0;i<count;++i){command_scenes.erase(cb[i]);
-            bs4_port_reset_cb(cb[i]);}}
+            bs4_port_reset_cb(cb[i]);
+            bs4_port_ui_reset(cb[i]);}}
     if(original_free_commands)original_free_commands(device,pool,count,cb);
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image(
@@ -452,11 +463,17 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering(
     if(info)bs4_port_note_render(cb,
         info->pDepthAttachment?info->pDepthAttachment->imageView:VK_NULL_HANDLE,
         info->renderArea.extent,info->colorAttachmentCount);
+    bs4_port_ui_install_rendering(original_begin_rendering,original_end_rendering,
+       original_begin_rendering_khr,original_end_rendering_khr);
+    VkRenderingInfo redirected{};
+    const VkRenderingInfo* guest=composite?&modified:info;
+    const bool host_redirect=bs4_port_ui_redirect_begin(cb,guest,false,&redirected);
     if(original_begin_rendering)
-        original_begin_rendering(cb,composite?&modified:info);
+        original_begin_rendering(cb,host_redirect?&redirected:guest);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_end_rendering(VkCommandBuffer cb) {
     if(original_end_rendering) original_end_rendering(cb);
+    bs4_port_ui_redirect_end(cb);
     scene_rendering_ended(cb);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_barrier2(
@@ -475,11 +492,17 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering_khr(
     if(info)bs4_port_note_render(cb,
         info->pDepthAttachment?info->pDepthAttachment->imageView:VK_NULL_HANDLE,
         info->renderArea.extent,info->colorAttachmentCount);
+    bs4_port_ui_install_rendering(original_begin_rendering,original_end_rendering,
+       original_begin_rendering_khr,original_end_rendering_khr);
+    VkRenderingInfo redirected{};
+    const VkRenderingInfo* guest=composite?&modified:info;
+    const bool host_redirect=bs4_port_ui_redirect_begin(cb,guest,true,&redirected);
     if(original_begin_rendering_khr)
-        original_begin_rendering_khr(cb,composite?&modified:info);
+        original_begin_rendering_khr(cb,host_redirect?&redirected:guest);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_end_rendering_khr(VkCommandBuffer cb) {
     if(original_end_rendering_khr) original_end_rendering_khr(cb);
+    bs4_port_ui_redirect_end(cb);
     scene_rendering_ended(cb);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_barrier2_khr(
@@ -511,7 +534,7 @@ extern "C" PFN_vkVoidFunction bs4_fsr31_wrap_vulkan_proc(
     BS4_WRAP_GIPA(original_end_rendering_khr,"vkCmdEndRenderingKHR",&bs4_cap_end_rendering_khr)
     BS4_WRAP_GIPA(original_barrier2_khr,"vkCmdPipelineBarrier2KHR",&bs4_cap_barrier2_khr)
     #undef BS4_WRAP_GIPA
-    return bs4_port_wrap_proc(name,proc);
+    return bs4_port_wrap_proc(name,bs4_port_ui_wrap_proc(name,proc));
 }
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
     VkDevice device,const char* name) {
@@ -538,5 +561,5 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
     BS4_WRAP(original_end_rendering_khr,"vkCmdEndRenderingKHR",&bs4_cap_end_rendering_khr)
     BS4_WRAP(original_barrier2_khr,"vkCmdPipelineBarrier2KHR",&bs4_cap_barrier2_khr)
     #undef BS4_WRAP
-    return bs4_port_wrap_proc(name,proc);
+    return bs4_port_wrap_proc(name,bs4_port_ui_wrap_proc(name,proc));
 }
