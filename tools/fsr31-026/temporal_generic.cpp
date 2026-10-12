@@ -47,6 +47,9 @@ std::vector<Frame> frames;
 Surface previous;
 size_t cursor=0;
 bool has_previous=false;
+// The R13 guest pass ends before UI. Only the already-present 024 Presenter
+// hook commits frame history; beginning HUD is not the frame boundary.
+bool pre_ui_history_pending=false;
 uint64_t frame_id=0;
 std::chrono::steady_clock::time_point last_frame{};
 bool once_logged=false;
@@ -138,7 +141,7 @@ void free_all() {
     for(auto& f:frames){free_surface(f.scene);free_surface(f.depth);
         free_surface(f.motion);free_surface(f.output);}
     frames.clear();free_surface(previous);
-    has_previous=false;frame_id=0;cursor=0;
+    has_previous=false;pre_ui_history_pending=false;frame_id=0;cursor=0;
 }
 bool build_compute(){
     VkDescriptorSetLayoutBinding bindings[3]{};
@@ -451,11 +454,23 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
                    previous.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&color_region);
     transit(cb,previous,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     transit(cb,f.scene,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    has_previous=true;
+    if (pre_ui) pre_ui_history_pending=true;
+    else has_previous=true;
     if(frame_id==1)
         std::fprintf(stderr,"[BS4_FSR31] real FSR3.1 dispatch recorded (%ux%u->%ux%u)\n",
              internal.width,internal.height,output_extent.width,output_extent.height);
     return reinterpret_cast<uint64_t>(f.output.view);
+}
+
+// Called by the original shadps4-arm64-024 Presenter hook, not a new core.
+// The GPU copy was recorded on the earlier guest command buffer; only its
+// frame-history validity is committed at VideoOut presentation.
+extern "C" __attribute__((visibility("default"))) void bs4_fsr31_on_presented_frame() {
+    std::lock_guard lock{mutex};
+    if (pre_ui_history_pending) {
+        has_previous=true;
+        pre_ui_history_pending=false;
+    }
 }
 
 extern "C" __attribute__((visibility("default"))) VkImage
