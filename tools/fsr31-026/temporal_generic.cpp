@@ -637,3 +637,13 @@ bs4_fsr31_set_output_layout(VkImageView view,VkImageLayout next) {
     }
     return 0;
 }
+
+
+extern "C" __attribute__((visibility("default"))) VkImageView
+bs4_fsr31_output_view(VkImage target) {
+    std::lock_guard lock{mutex};
+    if(!target || !fsr)return VK_NULL_HANDLE;
+    for(const auto& f:frames)if(f.output.image==target)
+        return f.output.view;
+    return VK_NULL_HANDLE;
+}
