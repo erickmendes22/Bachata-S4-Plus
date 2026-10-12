@@ -36,6 +36,7 @@ struct State {
     bool haveViewport=false,haveScissor=false;
     bool jitterActive=false;
     float jitterX=0,jitterY=0;
+    bool earlierStencilOnlyMask=false;
     VkRenderingInfo resumed{};
     std::array<VkRenderingAttachmentInfo,1> hudColor{};
     VkRenderingAttachmentInfo hudDepth{},hudStencil{};
@@ -135,6 +136,32 @@ extern "C" VkImageView bs4_port_ui_present(VkCommandBuffer cb){
     auto it=lastOutput.find(cb);
     return it==lastOutput.end() || !completedHud.count(cb)?
            VK_NULL_HANDLE:it->second;
+}
+
+extern "C" void bs4_port_ui_note_draw(VkCommandBuffer cb) {
+    std::lock_guard lock{uiMutex};
+    auto it=cmds.find(cb);
+    if(it==cmds.end() || !it->second.inside)return;
+    // Bloodborne UI movie masks sometimes draw into stencil with NO color.
+    // Redirecting only later color draws would lose those masks. For now,
+    // use the unchanged game renderer instead of breaking those frames.
+    if(!it->second.uiPhase && shaderBoundUI[cb] &&
+       it->second.color.empty() && it->second.hasStencil)
+        it->second.earlierStencilOnlyMask=true;
+}
+extern "C" VkImageView bs4_port_ui_redirect_sampled(
+    VkCommandBuffer cb,VkImageView candidate) {
+    if(!cb || !candidate)return VK_NULL_HANDLE;
+    std::lock_guard lock{uiMutex};
+    auto it=cmds.find(cb);
+    if(it==cmds.end())return VK_NULL_HANDLE;
+    const auto& s=it->second;
+    // Only after the HUD render pass has finished. Never create an
+    // attachment-feedback loop by sampling the current UI color target.
+    if(!s.everRedirected || s.inside ||
+       !completedHud.count(cb) || candidate!=s.originalUI)
+       return VK_NULL_HANDLE;
+    return s.output;
 }
 extern "C" void bs4_port_ui_finish_present(VkCommandBuffer cb){
     std::lock_guard lock{uiMutex};
@@ -248,7 +275,8 @@ bool safeOriginal(State& s){
        s.color.size()!=1 || !s.color[0].imageView ||
        s.color[0].storeOp!=VK_ATTACHMENT_STORE_OP_STORE ||
        s.color[0].resolveImageView || s.guest.pNext ||
-       !s.haveViewport || !s.haveScissor)return false;
+       !s.haveViewport || !s.haveScissor ||
+       s.earlierStencilOnlyMask)return false;
     Bs4FsrCaptureImage target{};
     if(!bs4_fsr31_capture_image(s.color[0].imageView,&target) ||
        target.format!=VK_FORMAT_R8G8B8A8_UNORM)return false;
