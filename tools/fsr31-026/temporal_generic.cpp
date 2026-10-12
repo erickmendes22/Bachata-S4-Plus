@@ -401,7 +401,7 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
             report_once(5,"pre-UI matching scene depth image not available");
             return 0;
         }
-        if (!BachataPortScaled::MatchingDepth(input_extent,depth.size)) {
+        if (!BachataPortScaled::MatchingDepth(input_extent,color.size,depth.size)) {
             report_once(17,"RunScaled LDR/depth raster extents mismatch");return 0;
         }
     } else if (!bs4_fsr31_capture_depth(input_extent,&depth)) {
