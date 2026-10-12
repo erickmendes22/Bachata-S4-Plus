@@ -154,6 +154,28 @@ jobs:
           export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name '*lvp*.json' | head -n1)"
           test -n "$VK_ICD_FILENAMES"
           /tmp/shadps4-arm64-025 | tee scene-tests.txt
+      - name: Test R16 core025-only GLIBC FSR preloader
+        run: |
+          set -euxo pipefail
+          gcc -std=c11 -O2 -Wall -Wextra -Werror \
+            tools/fsr31-025/dispatch_preload.c \
+            tools/fsr31-025/dispatch_preload_test.c \
+            -o /tmp/dispatch_preload_test
+          /tmp/dispatch_preload_test
+          aarch64-linux-gnu-gcc -std=c11 -O2 -ffreestanding \
+            -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables \
+            -c tools/fsr31-025/dispatch_preload.c -o /tmp/r16_loader_c.o
+          aarch64-linux-gnu-gcc -c tools/fsr31-025/dispatch_preload.S \
+            -o /tmp/r16_loader_entry.o
+          aarch64-linux-gnu-ld -T tools/fsr31-025/dispatch_preload.ld \
+            /tmp/r16_loader_entry.o /tmp/r16_loader_c.o -o /tmp/r16_loader.elf
+          aarch64-linux-gnu-objcopy -O binary -j .entry \
+            /tmp/r16_loader.elf /tmp/r16_loader.bin
+          test $(wc -c < /tmp/r16_loader.bin) -lt 1536
+          ! readelf -r /tmp/r16_loader.elf | grep -E 'R_AARCH64_'
+          aarch64-linux-gnu-objdump -d /tmp/r16_loader.elf \
+            | grep -q 'bs4_r16_insert_preload'
+          echo 'PASS: core025 GLIBC preload trampoline linked; no unresolved relocation'
       - name: Validate ARM64 and exports
         run: |
           set -euxo pipefail
