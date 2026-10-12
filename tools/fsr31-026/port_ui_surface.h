@@ -5,8 +5,8 @@
 #pragma once
 #include <array>
 #include <dlfcn.h>
-#include "port_native_dispatch.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
+#include "port_native_dispatch.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/image.h"
 #include "video_core/texture_cache/types.h"
