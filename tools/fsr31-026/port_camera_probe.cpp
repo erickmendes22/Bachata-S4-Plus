@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <dlfcn.h>
 
+extern "C" VkImageView bs4_port_ui_redirect_sampled(VkCommandBuffer,VkImageView);
 namespace {
 struct Binding {VkDeviceMemory memory=VK_NULL_HANDLE;VkDeviceSize base=0;};
 struct Mapping {const uint8_t* addr=nullptr;VkDeviceSize offset=0,length=0;};
@@ -300,8 +301,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_bind_sets(
 // Inspect again at the actual G-buffer draw, after both are known.
 extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer);
 extern "C" void bs4_port_ui_note_draw(VkCommandBuffer);
-extern "C" VkImageView bs4_port_ui_redirect_sampled(
-    VkCommandBuffer,VkImageView);
+
 extern "C" int bs4_port_ui_apply_camera_jitter(VkCommandBuffer,float,float);
 static float Halton(unsigned n,unsigned base){
     float f=1.0f,r=0.0f;
