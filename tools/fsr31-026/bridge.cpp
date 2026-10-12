@@ -81,6 +81,7 @@ BS4_PUBLIC int bs4_fsr31_supply_temporal_frame(
     pending.available = true;
     return 1;
 }
+extern "C" void bs4_port_on_present();
 BS4_PUBLIC uint64_t bs4_fsr31_try_render(
     uint64_t fsrPassObject, uint64_t commandBuffer, uint64_t inputView,
     uint64_t renderExtent, uint64_t outputExtent, uint64_t settings, uint64_t hdr) {
@@ -90,6 +91,10 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(
     (void)outputExtent;
     (void)settings;
     (void)hdr;
+    // Port-style frame boundary: previous scene camera is committed only
+    // when core024 reaches the real existing Presenter/FsrPass hook.
+    // This does not depend on wall-clock time or assume another game's frame.
+    bs4_port_on_present();
     std::lock_guard<std::mutex> lock(guard);
     // Preference written by BACHATA 0.2.6's native Android settings UI.
     // Its absence or unreadability leaves the existing FSR 1 path untouched.
