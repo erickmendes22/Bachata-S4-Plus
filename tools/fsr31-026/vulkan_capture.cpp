@@ -51,6 +51,7 @@ extern "C" VkImageView bs4_port_camera_for_scene(
     VkCommandBuffer,VkExtent2D,void*,uint32_t);
 extern "C" void bs4_port_reset_cb(VkCommandBuffer);
 extern "C" PFN_vkVoidFunction bs4_port_wrap_proc(const char*,PFN_vkVoidFunction);
+extern "C" VkImageView bs4_fsr31_output_view(VkImage);
 
 PFN_vkBeginCommandBuffer original_begin_command{};
 PFN_vkResetCommandBuffer original_reset_command{};
@@ -153,6 +154,10 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
         // This is the first full-size UI pass following a completed small
         // 3D scene on the SAME command buffer. Cross-CB ordering is unknown:
         // never issue Vulkan commands based on unproven inter-CB ordering.
+        // The original game usually begins its UI at 1920x1080; never
+        // consume or clear the reduced scene on this pass. Real RunScaled
+        // will use it at the positively identified HUD shader draw.
+        if(w!=1280 || h!=720)return false;
         // LDR pass often has no depth attachment. The original port takes
         // G-buffer depth from CameraMotion, not the LDR target's depth.
         if(w<1280||h<700||!stage.ready||!stage.color||stage.color==view)
@@ -280,6 +285,43 @@ void scene_rendering_ended(VkCommandBuffer command) {
     }
 }
 } // namespace
+/* Port-style temporal scene for the first positively identified HUD draw.
+ * Called OUTSIDE Vulkan dynamic rendering; no speculative guest target blit.
+ */
+extern "C" __attribute__((visibility("default"))) VkImageView
+bs4_port_prepare_ui(VkCommandBuffer cb) {
+    if(!cb)return VK_NULL_HANDLE;
+    ScenePass scene{};
+    {
+        std::lock_guard lock{mutex};
+        const auto it=command_scenes.find(cb);
+        if(it==command_scenes.end() || !it->second.ready ||
+           !it->second.color || it->second.extent.width<600 ||
+           it->second.extent.height<320)return VK_NULL_HANDLE;
+        scene=it->second;
+        const auto v=views.find(scene.color);
+        if(v==views.end() || v->second.format!=VK_FORMAT_R8G8B8A8_UNORM)
+            return VK_NULL_HANDLE;
+    }
+    BachataCamera::Push p{};
+    const VkImageView depth=bs4_port_camera_for_scene(
+        cb,scene.extent,&p,sizeof(p));
+    if(!depth || !bs4_fsr31_supply_port_camera(
+        cb,depth,&p,sizeof(p)))return VK_NULL_HANDLE;
+    VkImage rendered=VK_NULL_HANDLE;
+    const VkExtent2D target{1280,720};
+    if(!bs4_fsr31_pre_ui_dispatch(
+        cb,scene.color,depth,scene.extent,target,&rendered))
+        return VK_NULL_HANDLE;
+    VkImageView result=bs4_fsr31_output_view(rendered);
+    if(result) {
+        std::lock_guard lock{mutex};
+        auto& current=command_scenes[cb];
+        if(current.color==scene.color)current.ready=false;
+    }
+    return result;
+}
+
 extern "C" int bs4_fsr31_capture_image(VkImageView view, Bs4FsrCaptureImage* out) {
     if (!out || !view) return 0;
     std::lock_guard lock{mutex};
