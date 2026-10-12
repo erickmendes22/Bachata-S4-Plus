@@ -6,6 +6,7 @@
 #include "port_runscaled_contract.h"
 #include "ffx_vk_portable.h"
 #include "flow_spv.h"
+#include "port_camera_motion_spv.h"
 #include <vulkan/vulkan.h>
 #include <algorithm>
 #include <atomic>
@@ -28,6 +29,7 @@ struct Surface {
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
 };
 struct Frame {
+    VkDescriptorSet port_motion_descriptor{};
     Surface scene;
     Surface depth;
     Surface motion;
@@ -35,6 +37,24 @@ struct Frame {
     VkDescriptorSet descriptor{};
 };
 std::mutex mutex;
+// Exact GLSL push layout from ducvd89/Bloodborne-Android camera_motion.comp.
+// The renderer must supply *real* scene camera/projection/jitter at its G-buffer
+// boundary; we must not fabricate them from optical-flow estimates.
+struct PortCameraPush {
+    float reproject[12],proj[4],prev_proj[4],size[2],jitter[2],previous_jitter[2];
+    uint32_t mode;
+};
+static_assert(sizeof(PortCameraPush)==108);
+struct PortCameraFrame {
+    PortCameraPush push{};
+    VkCommandBuffer command=VK_NULL_HANDLE;
+    VkImageView depth=VK_NULL_HANDLE;
+    bool valid=false;
+};
+PortCameraFrame port_camera{};
+VkDescriptorSetLayout port_desc_layout{};
+VkPipelineLayout port_pipeline_layout{};
+VkPipeline port_pipeline{};
 VkDevice device{};
 VkPhysicalDevice physical{};
 FfxVkPortableUpscaleContext* fsr{};
@@ -129,6 +149,10 @@ void transit(VkCommandBuffer cb,Surface& s,VkImageLayout next) {
 void free_all() {
     if(device)vkDeviceWaitIdle(device);
     if(fsr) {ffxVkPortableUpscaleContextDestroy(fsr);fsr=nullptr;}
+    if(port_pipeline)vkDestroyPipeline(device,port_pipeline,nullptr);
+    if(port_pipeline_layout)vkDestroyPipelineLayout(device,port_pipeline_layout,nullptr);
+    if(port_desc_layout)vkDestroyDescriptorSetLayout(device,port_desc_layout,nullptr);
+    port_pipeline={};port_pipeline_layout={};port_desc_layout={};
     if(flow_pipeline)vkDestroyPipeline(device,flow_pipeline,nullptr);
     if(pipeline_layout)vkDestroyPipelineLayout(device,pipeline_layout,nullptr);
     if(desc_layout)vkDestroyDescriptorSetLayout(device,desc_layout,nullptr);
@@ -244,6 +268,25 @@ void flow(VkCommandBuffer cb,const Frame& f,VkExtent2D size) {
     vkCmdDispatch(cb,(size.width+7)/8,(size.height+7)/8,1);
 }
 } // namespace
+
+// Explicit port renderer/guest camera handoff. The R13 core024 does NOT yet
+// call this; no "port quality" is claimed unless it is connected and validated.
+extern "C" __attribute__((visibility("default"))) int bs4_fsr31_supply_port_camera(
+    VkCommandBuffer cb,VkImageView scene_depth,const void* camera_push,
+    uint32_t byte_size) {
+    if(!cb || !scene_depth || !camera_push || byte_size!=sizeof(PortCameraPush))
+        return 0;
+    PortCameraPush next{};
+    std::memcpy(&next,camera_push,sizeof(next));
+    if(next.mode!=0 || !std::isfinite(next.proj[0]) ||
+       !std::isfinite(next.proj[1]) || std::abs(next.proj[1])<1e-4f ||
+       next.size[0]<64 || next.size[1]<64 ||
+       next.size[0]>8192 || next.size[1]>8192) return 0;
+    for(float value:next.reproject)if(!std::isfinite(value))return 0;
+    std::lock_guard lock{mutex};
+    port_camera={next,cb,scene_depth,true};
+    return 1;
+}
 
 extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_render(
     const FfxVkPortableDeviceInfo* owned,VkCommandBuffer cb,VkImageView input,
