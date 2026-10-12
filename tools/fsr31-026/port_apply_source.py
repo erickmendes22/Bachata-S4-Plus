@@ -143,8 +143,20 @@ pres = replace_once(pres,
     "    texture_cache.UpdateImage(image_id);\n"
     "    rasterizer->Fsr31PortOnPresentedFrame();")
 
+# The upstream font helper uses reinterpret_cast inside constexpr data() accessors.
+# Clang 18+ rejects these irrespective of the rasterizer change. The helpers
+# operate on the live byte view at runtime; neither must be constexpr.
+font_header = project / "src/core/libraries/font/fontft_internal.h"
+font_src = font_header.read_text()
+for old_signature, new_signature in (
+    ("    constexpr u8* data() {", "    u8* data() {"),
+    ("    constexpr const u8* data() const {", "    const u8* data() const {"),
+):
+    font_src = replace_once(font_src, old_signature, new_signature)
+
 header.write_text(hdr)
 raster.write_text(src)
 presenter.write_text(pres)
+font_header.write_text(font_src)
 print("Port scene classifier + camera signatures connected to source Rasterizer;",
-      "the existing core024 executable is unchanged.")
+      "native Clang constexpr blocker repaired; core024 executable unchanged.")
