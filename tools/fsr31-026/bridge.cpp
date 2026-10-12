@@ -8,6 +8,7 @@ extern "C" uint64_t bs4_fsr31_generic_render(const FfxVkPortableDeviceInfo* info
     VkCommandBuffer cmd,VkImageView input,VkExtent2D inputSize,
     VkExtent2D outputSize,int preset,int hdr,int pre_ui,VkImageView forced_depth);
 extern "C" VkImage bs4_fsr31_output_image(VkImageView);
+extern "C" void bs4_fsr31_on_presented_frame();
 #include <cstdint>
 #include <cmath>
 #include <cstdio>
@@ -91,6 +92,8 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(
     (void)settings;
     (void)hdr;
     std::lock_guard<std::mutex> lock(guard);
+    // Native core024 calls this function when Presenter handles VideoOut.
+    bs4_fsr31_on_presented_frame();
     // Preference written by BACHATA 0.2.6's native Android settings UI.
     // Its absence or unreadability leaves the existing FSR 1 path untouched.
     static unsigned polls = 0;
