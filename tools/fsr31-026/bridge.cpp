@@ -342,6 +342,8 @@ VKAPI_ATTR VkResult VKAPI_CALL fsr31_create_device(
 }
 }
 
+extern "C" PFN_vkVoidFunction bs4_fsr31_wrap_vulkan_proc(
+    const char* name, PFN_vkVoidFunction proc);
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice, const char*);
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(
         VkInstance instance, const char* name) {
@@ -360,7 +362,7 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(
         real_create_device = reinterpret_cast<PFN_vkCreateDevice>(out);
         return reinterpret_cast<PFN_vkVoidFunction>(&fsr31_create_device);
     }
-    return out;
+    return fsr31_requested() ? bs4_fsr31_wrap_vulkan_proc(name, out) : out;
 }
 
 extern "C" void* dlsym(void* handle, const char* symbol) {
