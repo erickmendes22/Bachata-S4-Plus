@@ -44,6 +44,9 @@ using PreUiDispatch=int (*)(VkCommandBuffer,VkImageView,VkExtent2D,VkExtent2D,Vk
 extern "C" int bs4_fsr31_pre_ui_dispatch(VkCommandBuffer,VkImageView,
                 VkExtent2D,VkExtent2D,VkImage*);
 
+PFN_vkBeginCommandBuffer original_begin_command{};
+PFN_vkResetCommandBuffer original_reset_command{};
+PFN_vkFreeCommandBuffers original_free_commands{};
 PFN_vkCreateImage original_create_image{};
 PFN_vkDestroyImage original_destroy_image{};
 PFN_vkCreateImageView original_create_image_view{};
@@ -299,6 +302,27 @@ extern "C" int bs4_fsr31_capture_depth(VkExtent2D expected, Bs4FsrCaptureImage* 
     }
     return best ? 1 : 0;
 }
+
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_begin_command(
+        VkCommandBuffer cb,const VkCommandBufferBeginInfo* info) {
+    if (!original_begin_command) return VK_ERROR_INITIALIZATION_FAILED;
+    const auto status=original_begin_command(cb,info);
+    if(status==VK_SUCCESS){std::lock_guard lock{mutex};command_scenes.erase(cb);}
+    return status;
+}
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_reset_command(
+        VkCommandBuffer cb,VkCommandBufferResetFlags flags) {
+    if(!original_reset_command)return VK_ERROR_INITIALIZATION_FAILED;
+    const auto status=original_reset_command(cb,flags);
+    if(status==VK_SUCCESS){std::lock_guard lock{mutex};command_scenes.erase(cb);}
+    return status;
+}
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_free_commands(
+        VkDevice device,VkCommandPool pool,uint32_t count,const VkCommandBuffer* cb) {
+    if(cb&&count){std::lock_guard lock{mutex};
+        for(uint32_t i=0;i<count;++i)command_scenes.erase(cb[i]);}
+    if(original_free_commands)original_free_commands(device,pool,count,cb);
+}
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image(
     VkDevice dev,const VkImageCreateInfo* ci,const VkAllocationCallbacks* ac,VkImage* img) {
     if(!original_create_image) return VK_ERROR_INITIALIZATION_FAILED;
@@ -381,6 +405,9 @@ extern "C" PFN_vkVoidFunction bs4_fsr31_wrap_vulkan_proc(
             method=reinterpret_cast<decltype(method)>(proc); \
             return reinterpret_cast<PFN_vkVoidFunction>(target); \
         }
+    BS4_WRAP_GIPA(original_begin_command,"vkBeginCommandBuffer",&bs4_cap_begin_command)
+    BS4_WRAP_GIPA(original_reset_command,"vkResetCommandBuffer",&bs4_cap_reset_command)
+    BS4_WRAP_GIPA(original_free_commands,"vkFreeCommandBuffers",&bs4_cap_free_commands)
     BS4_WRAP_GIPA(original_create_image,"vkCreateImage",&bs4_cap_create_image)
     BS4_WRAP_GIPA(original_destroy_image,"vkDestroyImage",&bs4_cap_destroy_image)
     BS4_WRAP_GIPA(original_create_image_view,"vkCreateImageView",&bs4_cap_create_image_view)
@@ -405,6 +432,9 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
             method=reinterpret_cast<decltype(method)>(proc); \
             return reinterpret_cast<PFN_vkVoidFunction>(target); \
         }
+    BS4_WRAP(original_begin_command,"vkBeginCommandBuffer",&bs4_cap_begin_command)
+    BS4_WRAP(original_reset_command,"vkResetCommandBuffer",&bs4_cap_reset_command)
+    BS4_WRAP(original_free_commands,"vkFreeCommandBuffers",&bs4_cap_free_commands)
     BS4_WRAP(original_create_image,"vkCreateImage",&bs4_cap_create_image)
     BS4_WRAP(original_destroy_image,"vkDestroyImage",&bs4_cap_destroy_image)
     BS4_WRAP(original_create_image_view,"vkCreateImageView",&bs4_cap_create_image_view)
