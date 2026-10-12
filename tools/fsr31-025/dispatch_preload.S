@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-.section .entry,"ax",@progbits
+.section .entry,"ax"
 .global bs4_dispatch_preload_entry
 bs4_dispatch_preload_entry:
     // Original dispatcher at VA 0x10758 has x0=ld.so path,
