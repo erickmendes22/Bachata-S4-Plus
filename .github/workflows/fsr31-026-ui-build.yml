@@ -73,7 +73,7 @@ jobs:
               // is explicitly selected; preserve existing LD_PRELOAD entries.
               if(on) {
                 String old=env.get("LD_PRELOAD");
-                String module="libbachata_fsr31.so";
+                String module="$ORIGIN/libbachata_fsr31.so";
                 if(old==null||old.isEmpty())env.put("LD_PRELOAD",module);
                 else if(!old.contains(module))env.put("LD_PRELOAD",old+" "+module);
               }
