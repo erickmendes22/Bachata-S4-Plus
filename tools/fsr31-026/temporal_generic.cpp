@@ -272,7 +272,10 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
         if(!alloc(f.scene,color_format,render,sampled,VK_IMAGE_ASPECT_COLOR_BIT) ||
            !alloc(f.depth,depth_format,render,sampled,VK_IMAGE_ASPECT_DEPTH_BIT) ||
            !alloc(f.motion,VK_FORMAT_R16G16_SFLOAT,render,storage,VK_IMAGE_ASPECT_COLOR_BIT) ||
-           !alloc(f.output,output_format,output,storage,VK_IMAGE_ASPECT_COLOR_BIT))
+           !alloc(f.output,output_format,output,
+                   storage|VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|
+                           VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                   VK_IMAGE_ASPECT_COLOR_BIT))
             return false;
         VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         ai.descriptorPool=descriptors;ai.descriptorSetCount=1;ai.pSetLayouts=&desc_layout;
@@ -619,4 +622,18 @@ bs4_fsr31_output_image(VkImageView view) {
     for (const auto& frame:frames)
         if (frame.output.view == view) return frame.output.image;
     return VK_NULL_HANDLE;
+}
+
+
+// The renderer hook temporarily uses an FSR output as a 720p color attachment
+// for guest HUD draws, before returning it to the Presenter sampled layout.
+extern "C" __attribute__((visibility("default"))) int
+bs4_fsr31_set_output_layout(VkImageView view,VkImageLayout next) {
+    std::lock_guard lock{mutex};
+    for(auto& f:frames) {
+        if(f.output.view==view && f.output.image) {
+            f.output.layout=next;return 1;
+        }
+    }
+    return 0;
 }
