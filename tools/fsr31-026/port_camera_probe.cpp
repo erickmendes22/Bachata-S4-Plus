@@ -127,23 +127,43 @@ extern "C" VkImageView bs4_port_camera_for_scene(VkCommandBuffer cb,
         return VK_NULL_HANDLE;
     std::lock_guard lock{guard};
     const auto it=recorded.find(cb);
-    if(it==recorded.end() || !it->second.valid ||
-       it->second.frame!=frame_sequence ||
+    // Scheduler flushes can split one displayed frame across command buffers.
+    // The handoff is tied to the frame and verified depth, not the CB address.
+    const CameraRecord* current=it==recorded.end()?&last_frame_camera:&it->second;
+    if(!current->valid || current->frame!=frame_sequence ||
        !previous_frame.valid ||
-       previous_frame.frame+1!=it->second.frame ||
-       it->second.camera.width!=size.width ||
-       it->second.camera.height!=size.height ||
+       previous_frame.frame+1!=current->frame ||
+       current->camera.width!=size.width ||
+       current->camera.height!=size.height ||
        previous_frame.camera.width!=size.width ||
        previous_frame.camera.height!=size.height)
        return VK_NULL_HANDLE;
     const auto push=BachataCamera::MakePush(
-        it->second.camera,previous_frame.camera,
-        it->second.jitterApplied?it->second.jitterX:0.f,
-        it->second.jitterApplied?it->second.jitterY:0.f,
+        current->camera,previous_frame.camera,
+        current->jitterApplied?current->jitterX:0.f,
+        current->jitterApplied?current->jitterY:0.f,
         previous_frame.jitterApplied?previous_frame.jitterX:0.f,
         previous_frame.jitterApplied?previous_frame.jitterY:0.f);
     std::memcpy(out_push,&push,sizeof(push));
-    return it->second.depth;
+    return current->depth;
+}
+extern "C" VkImageView bs4_port_current_scene(VkCommandBuffer cb,VkExtent2D* size){
+    if(!cb||!size)return VK_NULL_HANDLE;
+    std::lock_guard lock{guard};
+    const auto it=recorded.find(cb);
+    const CameraRecord& c=it==recorded.end()?last_frame_camera:it->second;
+    if(!c.valid||c.frame!=frame_sequence)return VK_NULL_HANDLE;
+    *size={c.camera.width,c.camera.height};return c.depth;
+}
+extern "C" int bs4_port_camera_range(VkCommandBuffer cb,float* near,float* far){
+    if(!cb||!near||!far)return 0;
+    std::lock_guard lock{guard};const auto it=recorded.find(cb);
+    const auto& c=it==recorded.end()?last_frame_camera:it->second;
+    if(!c.valid||c.frame!=frame_sequence)return 0;
+    *near=c.camera.nearPlane;*far=c.camera.farPlane;return 1;
+}
+extern "C" uint64_t bs4_port_frame_generation(){
+    std::lock_guard lock{guard};return frame_sequence;
 }
 extern "C" void bs4_port_on_present() {
     std::lock_guard lock{guard};
@@ -317,9 +337,12 @@ static float Halton(unsigned n,unsigned base){
     while(n){f/=float(base);r+=f*float(n%base);n/=base;}
     return r;
 }
+extern "C" int bs4_fsr31_attachment_ready();
+extern "C" int bs4_fsr31_camera_resources_ready(VkExtent2D);
 void bs4_port_scan_at_draw(VkCommandBuffer cb) {
+    if(!bs4_fsr31_attachment_ready())return;
     bool valid=false,alreadyJittered=false;
-    uint32_t width=0;
+    uint32_t width=0,height=0;
     uint64_t generation=0;
     {
         std::lock_guard lock{guard};
@@ -342,11 +365,13 @@ void bs4_port_scan_at_draw(VkCommandBuffer cb) {
            existing->second.frame==frame_sequence){
             valid=true;
             width=existing->second.camera.width;
+            height=existing->second.camera.height;
             alreadyJittered=existing->second.jitterApplied;
             generation=frame_sequence;
         }
     }
-    if(!valid || alreadyJittered || !width)return;
+    if(!valid || alreadyJittered || !width ||
+       !bs4_fsr31_camera_resources_ready({width,height}))return;
     const char* mode=std::getenv("BACHATA_FSR31_MODE");
     if(!mode || mode[0]<'0'||mode[0]>'4'||mode[1]!=0)return;
     const double ratio=1280.0/double(width);

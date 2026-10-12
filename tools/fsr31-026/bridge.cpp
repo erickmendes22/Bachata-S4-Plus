@@ -146,18 +146,11 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(
           unsigned(outputExtent), unsigned(outputExtent >> 32));
     }
     if (!enabled) return 0;
-    // No explicit motion/depth producer? Use the generic Vulkan capture +
-    // shader optical-flow path. No fabricated depth texture is permitted.
-    if (!valid || !ctx || !pending.available ||
-        pending.info.commandBuffer != reinterpret_cast<VkCommandBuffer>(commandBuffer)) {
-        if (!device_attached) return 0;
-        auto input_size = VkExtent2D{uint32_t(renderExtent),uint32_t(renderExtent >> 32)};
-        auto output_size = VkExtent2D{uint32_t(outputExtent),uint32_t(outputExtent >> 32)};
-        return bs4_fsr31_generic_render(&acquired_device,
-            reinterpret_cast<VkCommandBuffer>(commandBuffer),
-            reinterpret_cast<VkImageView>(inputView),input_size,output_size,
-            preset,int(hdr != 0),0,VK_NULL_HANDLE);
-    }
+    // Presenter cannot infer scene motion or separate UI from a completed
+    // VideoOut image. The discarded optical-flow path must never be revived.
+    if(!valid || !ctx || !pending.available ||
+       pending.info.commandBuffer!=reinterpret_cast<VkCommandBuffer>(commandBuffer))
+        return 0;
     auto info = pending.info;
     // Preset scales are constraints on the *actual scene render extent*, never
     // post-presentation resizes.  Native AA = 1.0, Quality = 1.5,
@@ -221,6 +214,19 @@ BS4_PUBLIC int bs4_fsr31_pre_ui_dispatch(
           output_extent.width,output_extent.height,preset);
     }
     return 1;
+}
+
+// CPU-only resource preparation. Returns the output that the next dispatch will use.
+BS4_PUBLIC VkImageView bs4_fsr31_prepare_resources(
+    VkCommandBuffer cb,VkImageView color,VkImageView depth,
+    VkExtent2D scene,VkExtent2D output) {
+    FfxVkPortableDeviceInfo info{};int preset=-1;
+    {std::lock_guard<std::mutex> lock(guard);if(!device_attached)return VK_NULL_HANDLE;
+     info=acquired_device;const char* mode=std::getenv("BACHATA_FSR31_MODE");
+     if(mode&&mode[0]>='0'&&mode[0]<='4'&&mode[1]==0)preset=mode[0]-'0';}
+    if(preset<0)return VK_NULL_HANDLE;
+    return reinterpret_cast<VkImageView>(bs4_fsr31_generic_render(
+        &info,cb,color,scene,output,preset,0,2,depth));
 }
 
 BS4_PUBLIC int bs4_fsr31_ui_device(
@@ -309,7 +315,7 @@ BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice 
     std::fprintf(stderr, "[BS4_FSR31] module_base=%p gfx_queue_family=%u\\n",
                  shared_library.dli_fbase, family);
     std::fprintf(stderr,
-        "[BS4_FSR31] attached core024 GPU=%s vendor=0x%x, driver=0x%x, "
+        "[BS4_FSR31] attached core025 GPU=%s vendor=0x%x, driver=0x%x, "
         "shaderStorageImageWriteWithoutFormat-supported=%d\\n",
         props.deviceName, props.vendorID, props.driverVersion,
         int(features.shaderStorageImageWriteWithoutFormat));
@@ -344,7 +350,21 @@ PFN_vkGetInstanceProcAddr real_gipa() {
 }
 bool fsr31_requested() {
     const char* mode = std::getenv("BACHATA_FSR31_MODE");
-    return mode && mode[0] >= '0' && mode[0] <= '4' && mode[1] == 0;
+    if(!(mode && mode[0]>='0' && mode[0]<='4' && mode[1]==0))return false;
+    // The R15 dispatcher retains cores 020/023/024. Forwarding a preference
+    // must never interpose their Vulkan renderer: only the patched 025 owns
+    // this ABI. /proc/maps also works when invoked through the GLIBC loader.
+    static const bool core025=[] {
+        std::ifstream maps("/proc/self/maps");std::string line;
+        while(std::getline(maps,line)) {
+            const auto p=line.find("/shadps4-arm64-025");
+            if(p==std::string::npos)continue;
+            const auto end=p+sizeof("/shadps4-arm64-025")-1;
+            if(end==line.size() || line[end]==' ')return true;
+        }
+        return false;
+    }();
+    return core025;
 }
 VKAPI_ATTR VkResult VKAPI_CALL fsr31_create_instance(
         const VkInstanceCreateInfo* requested,

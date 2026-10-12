@@ -12,6 +12,7 @@ struct Scene {
     std::array<float,12> view{},inverse{};
     std::array<float,4> projection{};
     uint32_t width=0,height=0;
+    float nearPlane=0.f,farPlane=0.f;
 };
 struct Push {
     float reproject[12], proj[4], prev_proj[4],size[2],jitter[2],previous_jitter[2];
@@ -22,7 +23,7 @@ inline bool Parse(const void* src,size_t bytes,Scene& out) {
     if(!src || bytes<216*sizeof(float))return false;
     std::array<float,216> f{};
     std::memcpy(f.data(),src,sizeof(f)); // avoid alignment assumptions
-    if(f[0]!=3000.0f || !std::isfinite(f[1]) ||
+    if(!std::isfinite(f[0]) || f[0]<=0.f || !std::isfinite(f[1]) ||
        std::abs(f[1]*f[0]-1.0f)>1e-3f ||
        !std::isfinite(f[4]) || !std::isfinite(f[5]) ||
        f[4]<64 || f[5]<64 || f[4]>8192 || f[5]>8192 ||
@@ -34,6 +35,17 @@ inline bool Parse(const void* src,size_t bytes,Scene& out) {
     for(unsigned i=0;i<12;++i)
         if(!std::isfinite(f[i+8]) || !std::isfinite(f[i+180]))
             return false;
+    const float nearPlane=-f[63]/f[62];
+    if(!std::isfinite(nearPlane)||nearPlane<=0.f||nearPlane>=f[0])return false;
+    // Recognize the uniform layout by its semantics, never a title ID,
+    // shader hash, fixed far-plane value or arbitrary matrix scan.
+    for(unsigned r=0;r<3;r++)for(unsigned c=0;c<4;c++){
+        float value=c==3?f[8+r*4+3]:0.f;
+        for(unsigned k=0;k<3;k++)value+=f[8+r*4+k]*f[180+k*4+c];
+        const float expected=r==c?1.f:0.f;
+        if(std::abs(value-expected)>0.01f)return false;
+    }
+    out.nearPlane=nearPlane;out.farPlane=f[0];
     out.width=uint32_t(f[4]);out.height=uint32_t(f[5]);
     std::memcpy(out.view.data(),f.data()+8,12*sizeof(float));
     std::memcpy(out.inverse.data(),f.data()+180,12*sizeof(float));

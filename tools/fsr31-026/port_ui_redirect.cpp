@@ -36,6 +36,9 @@ struct State {
     bool haveViewport=false,haveScissor=false;
     bool jitterActive=false;
     float jitterX=0,jitterY=0;
+    VkImageView candidateScene=VK_NULL_HANDLE;
+    VkExtent2D sceneExtent{};
+    uint64_t frame=0;
     bool earlierStencilOnlyMask=false;
     VkRenderingInfo resumed{};
     std::array<VkRenderingAttachmentInfo,1> hudColor{};
@@ -49,6 +52,14 @@ std::unordered_map<VkPipeline,bool> uiPipelines;
 std::unordered_map<VkCommandBuffer,bool> shaderBoundUI;
 std::unordered_map<VkCommandBuffer,VkImageView> lastOutput;
 std::unordered_set<VkCommandBuffer> completedHud;
+struct UiFrame {
+    VkImageView original{},output{};
+    VkImage color{},depth{};
+    uint64_t frame=0;
+    bool complete=false;
+};
+UiFrame currentUi{};
+extern "C" uint64_t bs4_port_frame_generation();
 PFN_vkSetDebugUtilsObjectNameEXT realObjectName{};
 PFN_vkCreateGraphicsPipelines realCreatePipelines{};
 PFN_vkDestroyPipeline realDestroyPipeline{};
@@ -61,13 +72,6 @@ PFN_vkCmdBeginRenderingKHR realBeginKHR{};
 PFN_vkCmdEndRenderingKHR realEndKHR{};
 bool firstReport=false;
 
-bool uiShader(uint64_t hash){
-    return hash==0x34e8a281ULL||hash==0x81d336ceULL||
-           hash==0x09957251ULL||hash==0x24042a9bULL||
-           hash==0xa400228bULL||hash==0xbb4d5f8cULL||
-           hash==0xe94b5b06ULL||hash==0x9951d199ULL||
-           hash==0x44072322ULL||hash==0xa334a845ULL;
-}
 VkViewport scaled(VkViewport v) {
     v.x*=2.f/3.f;v.y*=2.f/3.f;
     v.width*=2.f/3.f;v.height*=2.f/3.f;
@@ -113,6 +117,9 @@ extern "C" int bs4_port_ui_apply_camera_jitter(
 }
 extern "C" int bs4_port_jitter_for_pass(VkExtent2D,float*,float*);
 extern "C" int bs4_port_can_prepare_ui(VkCommandBuffer);
+extern "C" VkImageView bs4_port_prepared_output(VkCommandBuffer);
+extern "C" VkImageView bs4_port_scene_color(VkCommandBuffer);
+extern "C" VkImageView bs4_port_current_scene(VkCommandBuffer,VkExtent2D*);
 extern "C" VkImageView bs4_port_prepare_ui(VkCommandBuffer);
 extern "C" VkImage bs4_fsr31_output_image(VkImageView);
 extern "C" int bs4_fsr31_set_output_layout(VkImageView,VkImageLayout);
@@ -133,10 +140,9 @@ extern "C" void bs4_port_ui_reset(VkCommandBuffer cb){
     completedHud.erase(cb);
 }
 extern "C" VkImageView bs4_port_ui_present(VkCommandBuffer cb){
+    (void)cb;const uint64_t frame=bs4_port_frame_generation();
     std::lock_guard lock{uiMutex};
-    auto it=lastOutput.find(cb);
-    return it==lastOutput.end() || !completedHud.count(cb)?
-           VK_NULL_HANDLE:it->second;
+    return currentUi.complete&&currentUi.frame==frame?currentUi.output:VK_NULL_HANDLE;
 }
 
 // The Port derives the projection-axis signs from the ACTUAL G-buffer
@@ -171,22 +177,24 @@ extern "C" void bs4_port_ui_note_draw(VkCommandBuffer cb) {
 extern "C" VkImageView bs4_port_ui_redirect_sampled(
     VkCommandBuffer cb,VkImageView candidate) {
     if(!cb || !candidate)return VK_NULL_HANDLE;
+    const uint64_t frame=bs4_port_frame_generation();
     std::lock_guard lock{uiMutex};
-    auto it=cmds.find(cb);
-    if(it==cmds.end())return VK_NULL_HANDLE;
-    const auto& s=it->second;
-    // Only after the HUD render pass has finished. Never create an
-    // attachment-feedback loop by sampling the current UI color target.
-    if(!s.everRedirected || s.inside ||
-       !completedHud.count(cb) || candidate!=s.originalUI)
-       return VK_NULL_HANDLE;
-    return s.output;
+    if(!currentUi.complete||currentUi.frame!=frame)return VK_NULL_HANDLE;
+    Bs4FsrCaptureImage sampled{};
+    if(!bs4_fsr31_capture_image(candidate,&sampled) || sampled.image!=currentUi.color ||
+       sampled.format!=VK_FORMAT_R8G8B8A8_UNORM)return VK_NULL_HANDLE;
+    const auto state=cmds.find(cb);
+    // Sampling into a DIFFERENT display target is safe even inside its pass;
+    // sampling our current UI attachment would create feedback and is refused.
+    if(state!=cmds.end() && state->second.inside && state->second.uiPass)
+        return VK_NULL_HANDLE;
+    return currentUi.output;
 }
 extern "C" void bs4_port_ui_finish_present(VkCommandBuffer cb){
-    std::lock_guard lock{uiMutex};
-    lastOutput.erase(cb);
-    completedHud.erase(cb);
+    (void)cb;std::lock_guard lock{uiMutex};
+    lastOutput.clear();completedHud.clear();currentUi={};
 }
+
 namespace {
 bool createDepth(VkImageView output,VkFormat format,Depth& dest){
     VkDevice dev=VK_NULL_HANDLE;
@@ -256,23 +264,25 @@ bool substitute(State& state,VkImageView output,Depth& depth,
                 VkRenderingInfo& result) {
     if(state.guest.pNext || (state.guest.flags & (
        VK_RENDERING_RESUMING_BIT|VK_RENDERING_SUSPENDING_BIT)) ||
-       state.guest.colorAttachmentCount!=1 || state.color.size()!=1)
+       state.guest.colorAttachmentCount>1 || state.color.size()>1)
         return false;
+    if(!state.color.empty()) {
     state.hudColor[0]=state.color[0];
     state.hudColor[0].imageView=output;
     state.hudColor[0].imageLayout=VK_IMAGE_LAYOUT_GENERAL;
     state.hudColor[0].loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;
     state.hudColor[0].resolveImageView=VK_NULL_HANDLE;
     state.hudColor[0].resolveMode=VK_RESOLVE_MODE_NONE;
+    }
     result=state.guest;
     result.renderArea.offset={0,0};
     result.renderArea.extent={1280,720};
-    result.pColorAttachments=state.hudColor.data();
+    result.pColorAttachments=state.color.empty()?nullptr:state.hudColor.data();
     if(state.hasDepth) {
         state.hudDepth=state.depth;
         state.hudDepth.imageView=depth.view;
         state.hudDepth.imageLayout=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        state.hudDepth.loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;
+        state.hudDepth.loadOp=state.uiPhase?VK_ATTACHMENT_LOAD_OP_LOAD:VK_ATTACHMENT_LOAD_OP_CLEAR;
         state.hudDepth.storeOp=VK_ATTACHMENT_STORE_OP_STORE;
         result.pDepthAttachment=&state.hudDepth;
     }
@@ -280,7 +290,7 @@ bool substitute(State& state,VkImageView output,Depth& depth,
         state.hudStencil=state.stencil;
         state.hudStencil.imageView=depth.view;
         state.hudStencil.imageLayout=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        state.hudStencil.loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;
+        state.hudStencil.loadOp=state.uiPhase?VK_ATTACHMENT_LOAD_OP_LOAD:VK_ATTACHMENT_LOAD_OP_CLEAR;
         state.hudStencil.storeOp=VK_ATTACHMENT_STORE_OP_STORE;
         result.pStencilAttachment=&state.hudStencil;
     }
@@ -288,19 +298,20 @@ bool substitute(State& state,VkImageView output,Depth& depth,
 }
 bool safeOriginal(State& s){
     if(!s.inside || s.uiPhase || s.guest.renderArea.offset.x ||
-       s.guest.renderArea.offset.y ||
-       s.guest.renderArea.extent.width!=1920 ||
-       s.guest.renderArea.extent.height!=1080 ||
-       s.color.size()!=1 || !s.color[0].imageView ||
-       s.color[0].storeOp!=VK_ATTACHMENT_STORE_OP_STORE ||
-       s.color[0].resolveImageView || s.guest.pNext ||
-       !s.haveViewport || !s.haveScissor ||
-       s.earlierStencilOnlyMask)return false;
-    Bs4FsrCaptureImage target{};
-    if(!bs4_fsr31_capture_image(s.color[0].imageView,&target) ||
-       target.format!=VK_FORMAT_R8G8B8A8_UNORM)return false;
-    // Do not splice when the shader declares stencil but no matching
-    // proxy image can be allocated, or when attachment samples are invalid.
+       s.guest.renderArea.offset.y || s.guest.renderArea.extent.width!=1920 ||
+       s.guest.renderArea.extent.height!=1080 || s.color.size()>1 ||
+       s.guest.pNext || (s.guest.flags & (VK_RENDERING_RESUMING_BIT|VK_RENDERING_SUSPENDING_BIT)) ||
+       !s.haveViewport || !s.haveScissor || !s.candidateScene ||
+       std::abs(s.viewport.width)<1919.f || std::abs(s.viewport.height)<1079.f)return false;
+    Bs4FsrCaptureImage scene{},target{};
+    if(!bs4_fsr31_capture_image(s.candidateScene,&scene) ||
+       scene.format!=VK_FORMAT_R8G8B8A8_UNORM)return false;
+    if(!s.color.empty()) {
+        const auto& c=s.color[0];
+        if(!c.imageView || c.storeOp!=VK_ATTACHMENT_STORE_OP_STORE || c.resolveImageView ||
+           !bs4_fsr31_capture_image(c.imageView,&target) || target.image!=scene.image ||
+           target.format!=scene.format)return false;
+    } else if(!s.hasStencil || !s.hasDepth) return false;
     return true;
 }
 }
@@ -309,8 +320,16 @@ extern "C" bool bs4_port_ui_redirect_begin(
     VkCommandBuffer cb,const VkRenderingInfo* input,bool khr,
     VkRenderingInfo* output) {
     if(!cb||!input||!output)return false;
+    const VkImageView candidate=bs4_port_scene_color(cb);
+    const uint64_t frame=bs4_port_frame_generation();
+    Bs4FsrCaptureImage color{},z{};
+    if(input->colorAttachmentCount==1 && input->pColorAttachments)
+        bs4_fsr31_capture_image(input->pColorAttachments[0].imageView,&color);
+    if(input->pDepthAttachment)
+        bs4_fsr31_capture_image(input->pDepthAttachment->imageView,&z);
     std::lock_guard lock{uiMutex};
     State& s=cmds[cb];
+    s.candidateScene=candidate;s.frame=frame;
     s.inside=true;s.khr=khr;s.guest=*input;
     s.color.clear();
     if(input->pColorAttachments && input->colorAttachmentCount)
@@ -324,8 +343,13 @@ extern "C" bool bs4_port_ui_redirect_begin(
     // G-buffer. The genuine Port requires CURRENT scene-camera constants
     // before applying jitter. bs4_port_scan_at_draw verifies those constants
     // and applies the Halton viewport shift before the guest draw command.
-    if(s.uiPhase && s.originalUI && input->colorAttachmentCount==1 &&
-       input->pColorAttachments && input->pColorAttachments[0].imageView==s.originalUI) {
+    const bool continuation=currentUi.output&&currentUi.frame==frame &&
+        ((color.image && color.image==currentUi.color) ||
+         (input->colorAttachmentCount==0&&z.image&&z.image==currentUi.depth));
+    if(continuation){
+        s.uiPhase=true;s.everRedirected=true;s.output=currentUi.output;
+        s.originalUI=currentUi.original;
+        currentUi.complete=false;
         auto depth=uiDepth.find(s.output);
         if(depth==uiDepth.end())return false;
         const VkImage source=bs4_fsr31_output_image(s.output);
@@ -352,6 +376,7 @@ extern "C" void bs4_port_ui_redirect_end(VkCommandBuffer cb) {
                 VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             bs4_fsr31_set_output_layout(s.output,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             completedHud.insert(cb); // Only completed HUDs can be presented.
+            if(currentUi.output==s.output&&currentUi.frame==s.frame)currentUi.complete=true;
         }
     }
     s.uiPass=false;
@@ -363,10 +388,13 @@ extern "C" void bs4_port_ui_redirect_end(VkCommandBuffer cb) {
 // Called before the first positively identified guest UI draw, while inside
 // original dynamic rendering. Replaces the pass with a 720p guest HUD pass.
 extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer cb) {
+    const VkImageView candidate=bs4_port_scene_color(cb);
+    VkExtent2D sceneExtent{};
+    uint64_t frame=0;bs4_port_current_scene(cb,&sceneExtent);
     std::unique_lock lock{uiMutex};
     const auto it=cmds.find(cb);
     if(it==cmds.end() || !shaderBoundUI[cb])return false;
-    State& s=it->second;
+    State& s=it->second;s.candidateScene=candidate;s.sceneExtent=sceneExtent;
     if(!safeOriginal(s))return false;
     if(s.hasDepth || s.hasStencil) {
         Bs4FsrCaptureImage originalDepth{};
@@ -392,8 +420,25 @@ extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer cb) {
     const bool ready=bs4_port_can_prepare_ui(cb)!=0;
     lock.lock();
     if(!ready || !s.inside || !safeOriginal(s))return false;
-    // Beyond this point the renderer still requires preflighted resources;
-    // a rejected FSR dispatch is not evidence of an image-quality fix.
+    // Preflight has already built the SDK context and all color/depth/motion
+    // surfaces WITHOUT recording any command. Allocate the UI proxy too
+    // before ending the guest pass; rejected preparation is a true no-op.
+    lock.unlock();
+    const VkImageView prepared=bs4_port_prepared_output(cb);
+    lock.lock();
+    if(!prepared)return false;
+    VkFormat originalFmt=VK_FORMAT_UNDEFINED;
+    if(s.hasDepth||s.hasStencil) {
+        Bs4FsrCaptureImage originalDepth{};
+        const VkImageView d=s.hasDepth?s.depth.imageView:s.stencil.imageView;
+        if(!bs4_fsr31_capture_image(d,&originalDepth))return false;
+        originalFmt=originalDepth.format;
+    }
+    Depth& proxy=uiDepth[prepared];
+    if(originalFmt!=VK_FORMAT_UNDEFINED && !proxy.image &&
+       !createDepth(prepared,originalFmt,proxy))return false;
+    VkRenderingInfo validated{};
+    if(!substitute(s,prepared,proxy,validated))return false;
     end_fn(cb);
     // FSR dispatch binds its own Vulkan compute pipeline, which is also
     // seen by our proc-address hooks. Do not hold uiMutex across dispatch.
@@ -419,21 +464,7 @@ extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer cb) {
         resume.pColorAttachments=s.color.data();begin_fn(cb,&resume);
         return false;
     }
-    VkFormat originalFmt=VK_FORMAT_UNDEFINED;
-    if(s.hasDepth||s.hasStencil) {
-        Bs4FsrCaptureImage originalDepth{};
-        const VkImageView d=s.hasDepth?s.depth.imageView:s.stencil.imageView;
-        if(bs4_fsr31_capture_image(d,&originalDepth))
-            originalFmt=originalDepth.format;
-    }
-    Depth& depth=uiDepth[out];
-    if(originalFmt!=VK_FORMAT_UNDEFINED && !depth.image)
-        if(!createDepth(out,originalFmt,depth)) {
-            VkRenderingInfo resume=s.guest;
-            for(auto& a:s.color)a.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;
-            resume.pColorAttachments=s.color.data();begin_fn(cb,&resume);
-            return false;
-        }
+    Depth& depth=uiDepth[prepared];
     transition(cb,image,VK_IMAGE_ASPECT_COLOR_BIT,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,VK_IMAGE_LAYOUT_GENERAL);
     bs4_fsr31_set_output_layout(out,VK_IMAGE_LAYOUT_GENERAL);
@@ -450,15 +481,21 @@ extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer cb) {
     const VkRect2D sc=scaled(s.scissor);
     realSetViewport(cb,0,1,&vp);
     realSetScissor(cb,0,1,&sc);
-    s.uiPhase=true;s.uiPass=true;s.originalUI=s.color[0].imageView;
+    s.uiPhase=true;s.uiPass=true;
+    s.originalUI=s.color.empty()?s.candidateScene:s.color[0].imageView;
     s.output=out;s.everRedirected=true;
+    Bs4FsrCaptureImage sourceColor{},sourceDepth{};
+    bs4_fsr31_capture_image(s.originalUI,&sourceColor);
+    if(s.hasDepth)bs4_fsr31_capture_image(s.depth.imageView,&sourceDepth);
+    currentUi={s.originalUI,out,sourceColor.image,sourceDepth.image,s.frame,false};
     lastOutput[cb]=out;
     completedHud.erase(cb); // Do not present while guest is still drawing.
     if(!firstReport) {
         firstReport=true;
         std::fprintf(stderr,
-            "[BS4_PORT] FIRST_REAL_RUNSCALED_UI scene=640x360 "
-            "output=1280x720 shader_verified=1 guest_UI_preserved=1\n");
+            "[BS4_PORT] FIRST_REAL_RUNSCALED_UI scene=%ux%u "
+            "output=1280x720 camera_target_verified=1 guest_UI_preserved=1\n",
+            s.sceneExtent.width,s.sceneExtent.height);
     }
     return true;
 }
@@ -488,13 +525,17 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_port_ui_create_pipelines(
         std::lock_guard lock{uiMutex};
         for(uint32_t i=0;i<count;++i){
             if(!output[i])continue;
-            bool eligible=false;
-            for(uint32_t j=0;j<cis[i].stageCount;j++){
-                const auto& st=cis[i].pStages[j];
-                if(st.stage!=VK_SHADER_STAGE_VERTEX_BIT)continue;
-                const auto h=guestHashes.find(st.module);
-                if(h!=guestHashes.end()&&uiShader(h->second))eligible=true;
-            }
+            // Port native-viewport path: no title-specific shader hashes.
+            // Only non-depth-tested blended/stencil UI pipelines may trigger;
+            // safeOriginal separately verifies the camera-matched LDR image.
+            const auto& ci=cis[i];
+            const bool noDepth=ci.pDepthStencilState &&
+                !ci.pDepthStencilState->depthTestEnable &&
+                !ci.pDepthStencilState->depthWriteEnable;
+            bool blended=false;
+            if(ci.pColorBlendState)for(uint32_t j=0;j<ci.pColorBlendState->attachmentCount;j++)
+                blended|=ci.pColorBlendState->pAttachments[j].blendEnable;
+            const bool eligible=noDepth && (blended || ci.pDepthStencilState->stencilTestEnable);
             uiPipelines[output[i]]=eligible;
         }
     }
@@ -569,5 +610,5 @@ extern "C" void bs4_port_ui_free_surfaces() {
         if(d.image)vkDestroyImage(dev,d.image,nullptr);
         if(d.memory)vkFreeMemory(dev,d.memory,nullptr);
     }
-    uiDepth.clear();lastOutput.clear();completedHud.clear();
+    uiDepth.clear();lastOutput.clear();completedHud.clear();currentUi={};
 }

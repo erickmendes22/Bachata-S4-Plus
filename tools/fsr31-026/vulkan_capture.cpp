@@ -37,7 +37,15 @@ struct ScenePass {
     VkExtent2D extent{};
     bool inside = false;
     bool ready = false;
+    uint64_t frame = 0;
 };
+ScenePass latest_scene{};
+std::unordered_map<VkCommandBuffer,VkImageView> prepared_outputs;
+extern "C" int bs4_port_camera_range(VkCommandBuffer,float*,float*);
+extern "C" int bs4_fsr31_supply_camera_range(VkCommandBuffer,float,float);
+extern "C" uint64_t bs4_port_frame_generation();
+extern "C" VkImageView bs4_port_current_scene(VkCommandBuffer,VkExtent2D*);
+extern "C" VkImageView bs4_fsr31_prepare_resources(VkCommandBuffer,VkImageView,VkImageView,VkExtent2D,VkExtent2D);
 std::unordered_map<VkCommandBuffer, ScenePass> command_scenes;
 bool pre_ui_dispatch_logged=false;
 bool pre_ui_eligible_logged=false;
@@ -133,9 +141,14 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     if(!cmd||!info||info->pNext||info->colorAttachmentCount!=1||
        !info->pColorAttachments||!info->pColorAttachments[0].imageView)
         return false;
-    const uint32_t w=info->renderArea.extent.width;
-    const uint32_t h=info->renderArea.extent.height;
-    if(w<600||w>=1280||h<320||h>=720)return false;
+    VkExtent2D real{};
+    const VkImageView scene_depth=bs4_port_current_scene(cmd,&real);
+    if(!scene_depth||real.width<64||real.height<64 ||
+       real.width>1280||real.height>720)return false;
+    Bs4FsrCaptureImage d{};
+    if(!bs4_fsr31_capture_image(scene_depth,&d))return false;
+    const uint32_t w=real.width,h=real.height;
+    const uint64_t frame=bs4_port_frame_generation();
     const VkImageView view=info->pColorAttachments[0].imageView;
     std::lock_guard lock{mutex};
     const auto v=views.find(view);
@@ -145,12 +158,13 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     if(img==images.end() ||
        !(img->second.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) ||
        !(img->second.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) ||
-       !(img->second.size.width==w && img->second.size.height==h) &&
-       !(img->second.size.width==1920 && img->second.size.height==1080))
+       img->second.size.width!=d.size.width || img->second.size.height!=d.size.height ||
+       img->second.size.width<w || img->second.size.height<h)
         return false;
     auto& stage=command_scenes[cmd];
     stage.color=view;
-    stage.depth=VK_NULL_HANDLE; // true G-buffer depth from port camera hook
+    stage.depth=scene_depth;
+    stage.frame=frame; // actual G-buffer identity and camera frame
     stage.extent={w,h};
     stage.inside=true;
     stage.ready=false;
@@ -163,6 +177,7 @@ void scene_rendering_ended(VkCommandBuffer command) {
     if(it!=command_scenes.end()&&it->second.inside) {
         it->second.ready=true;
         it->second.inside=false;
+        latest_scene=it->second;
     }
 }
 } // namespace
@@ -175,12 +190,10 @@ extern "C" int bs4_port_can_prepare_ui(VkCommandBuffer cb) {
     {
         std::lock_guard lock{mutex};
         const auto it=command_scenes.find(cb);
-        if(it==command_scenes.end() || !it->second.ready ||
-           !it->second.color || it->second.extent.width<600 ||
-           it->second.extent.width>=1280 ||
-           it->second.extent.height<320 ||
-           it->second.extent.height>=720)return 0;
-        scene=it->second;
+        scene=it==command_scenes.end()?latest_scene:it->second;
+        if((!scene.ready&&!scene.inside) || !scene.color || scene.extent.width<64 ||
+           scene.extent.width>1280 || scene.extent.height<64 ||
+           scene.extent.height>720)return 0;
         const auto color_view=views.find(scene.color);
         if(color_view==views.end() ||
            color_view->second.format!=VK_FORMAT_R8G8B8A8_UNORM)
@@ -190,6 +203,7 @@ extern "C" int bs4_port_can_prepare_ui(VkCommandBuffer cb) {
            !(color->second.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
             return 0;
     }
+    if(scene.frame!=bs4_port_frame_generation())return 0;
     const char* mode=std::getenv("BACHATA_FSR31_MODE");
     if(!mode || mode[0]<'0'||mode[0]>'4'||mode[1]!='\0')
         return 0;
@@ -200,13 +214,30 @@ extern "C" int bs4_port_can_prepare_ui(VkCommandBuffer cb) {
     Bs4FsrCaptureImage c{},d{};
     if(!bs4_fsr31_capture_image(scene.color,&c) ||
        !bs4_fsr31_capture_image(depth,&d))return 0;
-    return (c.format==VK_FORMAT_R8G8B8A8_UNORM &&
-            (c.size.width==scene.extent.width ||
-             c.size.width==1920) &&
-            c.size.width==d.size.width &&
-            c.size.height==d.size.height &&
-            (d.aspects & VK_IMAGE_ASPECT_DEPTH_BIT) &&
-            (d.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))?1:0;
+    if(c.format!=VK_FORMAT_R8G8B8A8_UNORM ||
+       c.size.width<scene.extent.width || c.size.height<scene.extent.height ||
+       c.size.width!=d.size.width || c.size.height!=d.size.height ||
+       depth!=scene.depth || !(d.aspects & VK_IMAGE_ASPECT_DEPTH_BIT) ||
+       !(d.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))return 0;
+    if(!bs4_fsr31_supply_port_camera(cb,depth,&push,sizeof(push)))return 0;
+    float near=0,far=0;
+    if(!bs4_port_camera_range(cb,&near,&far) ||
+       !bs4_fsr31_supply_camera_range(cb,near,far))return 0;
+    const VkImageView output=bs4_fsr31_prepare_resources(
+        cb,scene.color,depth,scene.extent,{1280,720});
+    if(!output)return 0;
+    std::lock_guard lock{mutex};prepared_outputs[cb]=output;
+    return 1;
+}
+extern "C" VkImageView bs4_port_prepared_output(VkCommandBuffer cb){
+    std::lock_guard lock{mutex};const auto it=prepared_outputs.find(cb);
+    return it==prepared_outputs.end()?VK_NULL_HANDLE:it->second;
+}
+extern "C" VkImageView bs4_port_scene_color(VkCommandBuffer cb){
+    const uint64_t frame=bs4_port_frame_generation();
+    std::lock_guard lock{mutex};const auto it=command_scenes.find(cb);
+    const auto& scene=it==command_scenes.end()?latest_scene:it->second;
+    return (scene.ready||scene.inside)&&scene.frame==frame?scene.color:VK_NULL_HANDLE;
 }
 /* Port-style temporal scene for the first positively identified HUD draw.
  * Called OUTSIDE Vulkan dynamic rendering; no speculative guest target blit.
@@ -218,19 +249,21 @@ bs4_port_prepare_ui(VkCommandBuffer cb) {
     {
         std::lock_guard lock{mutex};
         const auto it=command_scenes.find(cb);
-        if(it==command_scenes.end() || !it->second.ready ||
-           !it->second.color || it->second.extent.width<600 ||
-           it->second.extent.height<320)return VK_NULL_HANDLE;
-        scene=it->second;
+        scene=it==command_scenes.end()?latest_scene:it->second;
+        if((!scene.ready&&!scene.inside)||!scene.color)return VK_NULL_HANDLE;
         const auto v=views.find(scene.color);
         if(v==views.end() || v->second.format!=VK_FORMAT_R8G8B8A8_UNORM)
             return VK_NULL_HANDLE;
     }
+    if(scene.frame!=bs4_port_frame_generation())return VK_NULL_HANDLE;
     BachataCamera::Push p{};
     const VkImageView depth=bs4_port_camera_for_scene(
         cb,scene.extent,&p,sizeof(p));
     if(!depth || !bs4_fsr31_supply_port_camera(
         cb,depth,&p,sizeof(p)))return VK_NULL_HANDLE;
+    float near=0,far=0;
+    if(!bs4_port_camera_range(cb,&near,&far) ||
+       !bs4_fsr31_supply_camera_range(cb,near,far))return VK_NULL_HANDLE;
     VkImage rendered=VK_NULL_HANDLE;
     const VkExtent2D target{1280,720};
     if(!bs4_fsr31_pre_ui_dispatch(
@@ -241,6 +274,8 @@ bs4_port_prepare_ui(VkCommandBuffer cb) {
         std::lock_guard lock{mutex};
         auto& current=command_scenes[cb];
         if(current.color==scene.color)current.ready=false;
+        if(latest_scene.color==scene.color)latest_scene.ready=false;
+        prepared_outputs.erase(cb);
     }
     return result;
 }

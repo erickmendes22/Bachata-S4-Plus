@@ -24,6 +24,12 @@ int main(){
     assert(!Parse(f.data(),32,now)); // no OOB read
     f[0]=2000;assert(!Parse(f.data(),sizeof(f),now));
     f[0]=3000;f[63]=0.1f;assert(!Parse(f.data(),sizeof(f),now));
+    f[0]=1000;f[1]=1.f/1000;f[63]=-.05f;
+    assert(Parse(f.data(),sizeof(f),now)); // same camera contract, no fixed Bloodborne far plane
+    assert(now.farPlane==1000 && now.nearPlane>0);
+    f[180]=2.f;assert(!Parse(f.data(),sizeof(f),now)); // unrelated/noninverse matrices rejected
+    f[180]=1.f;
+
     using namespace BachataPortScaled;
     const VkExtent2D scene{640,360},out{1280,720};
     const VkExtent2D alloc{1920,1080},badDepth{1280,720};

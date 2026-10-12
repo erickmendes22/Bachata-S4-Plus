@@ -30,7 +30,7 @@ public final class Fsr3Resolution {
       final String name=new JSONObject(
           new String(bytes.toByteArray(),StandardCharsets.UTF_8))
           .getString("runtimeVersion");
-      if(!name.matches("bachata-s4-plus-0\\.2\\.6-[a-zA-Z0-9]+"))
+      if(!name.matches("bachata-s4-(?:plus|r[0-9]{3})-0\\.2\\.6-[a-zA-Z0-9]+"))
         throw new IllegalStateException("Unrecognized BACHATA runtime name");
       return name;
     }

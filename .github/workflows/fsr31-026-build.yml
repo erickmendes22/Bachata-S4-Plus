@@ -1,9 +1,10 @@
-name: Build Android GLIBC FSR3 SDK for existing core 024
+name: Build Android GLIBC FSR3 SDK for existing core 025
 on:
   push:
-    branches: [feature/fsr31-026-existing-core, feature/fsr31-026-r13-pre-ui, feature/fsr31-port-runscaled-024, feature/fsr31-port-runscaled-024-validated-scene]
+    branches: [feature/fsr31-026-existing-core, feature/fsr31-026-r13-pre-ui, feature/fsr31-port-runscaled-024, feature/fsr31-port-runscaled-024-validated-scene, feature/fsr31-core025-scene-transaction]
     paths:
       - 'tools/fsr31-026/**'
+      - 'tools/fsr31-025/**'
       - '.github/workflows/fsr31-026-build.yml'
 permissions:
   contents: read
@@ -44,7 +45,7 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
             git cmake ninja-build python3-mako python3-setuptools pkg-config \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            libvulkan-dev:arm64 libvulkan1:arm64 libx11-dev:arm64 glslang-tools \
+            libvulkan-dev:arm64 libvulkan-dev:amd64 mesa-vulkan-drivers libvulkan1:arm64 libx11-dev:arm64 glslang-tools \
             libstdc++6:arm64
       - name: Check out exact portable FSR implementation from Android Bloodborne port
         run: |
@@ -136,6 +137,23 @@ jobs:
           /tmp/port_camera_contract_test
           cmake -S . -B build -GNinja -DCMAKE_TOOLCHAIN_FILE=fsr-aarch64.ini -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target bachata_fsr31 -j 6
+      - name: Execute scene crop and UI transaction tests on software Vulkan
+        run: |
+          set -euxo pipefail
+          cmake -S tools/fsr31-025 -B build-host -GNinja -DCMAKE_BUILD_TYPE=Release \
+            -DBS4_FSR_SDK_DIR="$PWD/fsr-vulkan" \
+            -DBS4_GENERATED_DIR="$PWD/generated" \
+            -DVulkan_LIBRARY=/usr/lib/x86_64-linux-gnu/libvulkan.so
+          cmake --build build-host --target bachata_fsr31 -j 6
+          g++ -std=c++17 -O2 -I/usr/include tools/fsr31-025/ui_transaction_test.cpp \
+            -lvulkan -o /tmp/ui_transaction_test
+          /tmp/ui_transaction_test | tee ui-tests.txt
+          g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include \
+            tools/fsr31-025/scene_gpu_test.cpp -Lbuild-host -lbachata_fsr31 \
+            -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/shadps4-arm64-025
+          export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name '*lvp*.json' | head -n1)"
+          test -n "$VK_ICD_FILENAMES"
+          /tmp/shadps4-arm64-025 | tee scene-tests.txt
       - name: Validate ARM64 and exports
         run: |
           set -euxo pipefail
@@ -147,11 +165,13 @@ jobs:
           sha256sum build/libbachata_fsr31.so | tee sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: BS4-RUNSCALED-VALIDATED-SCENE-SDK
+          name: BS4-CORE025-RUNSCALED-SDK
           path: |
             build/libbachata_fsr31.so
             sha256.txt
             needed.txt
             symbols.txt
+            ui-tests.txt
+            scene-tests.txt
           if-no-files-found: error
           retention-days: 7

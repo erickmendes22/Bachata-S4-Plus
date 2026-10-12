@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Generic temporal FSR 3.1 path using real Vulkan color and depth resources.
-// The motion shader estimates optical flow from consecutive color frames.
-// Unlike game-specific forks, this path does not rely on guest shader hashes.
+// Motion comes from the port camera/depth shader. Presenter optical flow is retired.
 #include "vulkan_capture.h"
 #include "port_runscaled_contract.h"
 #include "ffx_vk_portable.h"
-#include "flow_spv.h"
 #include "port_camera_motion_spv.h"
 #include <vulkan/vulkan.h>
 #include <algorithm>
@@ -34,7 +32,6 @@ struct Frame {
     Surface depth;
     Surface motion;
     Surface output;
-    VkDescriptorSet descriptor{};
 };
 std::mutex mutex;
 // Exact GLSL push layout from ducvd89/Bloodborne-Android camera_motion.comp.
@@ -50,6 +47,7 @@ struct PortCameraFrame {
     VkCommandBuffer command=VK_NULL_HANDLE;
     VkImageView depth=VK_NULL_HANDLE;
     bool valid=false;
+    float nearPlane=.1f,farPlane=3000.f;
 };
 PortCameraFrame port_camera{};
 VkDescriptorSetLayout port_desc_layout{};
@@ -60,12 +58,7 @@ VkPhysicalDevice physical{};
 FfxVkPortableUpscaleContext* fsr{};
 FfxVkPortableUpscaleCreateInfo config{};
 VkDescriptorPool descriptors{};
-VkDescriptorSetLayout desc_layout{};
-VkPipelineLayout pipeline_layout{};
-VkPipeline flow_pipeline{};
-VkSampler sampler{};
 std::vector<Frame> frames;
-Surface previous;
 size_t cursor=0;
 bool has_previous=false;
 uint64_t frame_id=0;
@@ -155,46 +148,14 @@ void free_all() {
     if(port_pipeline_layout)vkDestroyPipelineLayout(device,port_pipeline_layout,nullptr);
     if(port_desc_layout)vkDestroyDescriptorSetLayout(device,port_desc_layout,nullptr);
     port_pipeline={};port_pipeline_layout={};port_desc_layout={};
-    if(flow_pipeline)vkDestroyPipeline(device,flow_pipeline,nullptr);
-    if(pipeline_layout)vkDestroyPipelineLayout(device,pipeline_layout,nullptr);
-    if(desc_layout)vkDestroyDescriptorSetLayout(device,desc_layout,nullptr);
     if(descriptors)vkDestroyDescriptorPool(device,descriptors,nullptr);
-    if(sampler)vkDestroySampler(device,sampler,nullptr);
-    flow_pipeline={};pipeline_layout={};desc_layout={};
-    descriptors={};sampler={};
+    descriptors={};
     for(auto& f:frames){free_surface(f.scene);free_surface(f.depth);
         free_surface(f.motion);free_surface(f.output);}
-    frames.clear();free_surface(previous);
+    frames.clear();
     has_previous=false;frame_id=0;cursor=0;
 }
 bool build_compute(){
-    VkDescriptorSetLayoutBinding bindings[3]{};
-    for(uint32_t i=0;i<3;++i) {
-        bindings[i].binding=i;bindings[i].descriptorCount=1;
-        bindings[i].stageFlags=VK_SHADER_STAGE_COMPUTE_BIT;
-        bindings[i].descriptorType=i==2?VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-                                        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    }
-    VkDescriptorSetLayoutCreateInfo dci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    dci.bindingCount=3;dci.pBindings=bindings;
-    if(!result(vkCreateDescriptorSetLayout(device,&dci,nullptr,&desc_layout),"layout"))return false;
-    VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT,0,16};
-    VkPipelineLayoutCreateInfo pci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    pci.setLayoutCount=1;pci.pSetLayouts=&desc_layout;
-    pci.pushConstantRangeCount=1;pci.pPushConstantRanges=&range;
-    if(!result(vkCreatePipelineLayout(device,&pci,nullptr,&pipeline_layout),"pipe layout"))return false;
-    VkShaderModule module{};
-    VkShaderModuleCreateInfo sm{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    sm.codeSize=sizeof(BS4_FSR31_FLOW_SPV);
-    sm.pCode=BS4_FSR31_FLOW_SPV;
-    if(!result(vkCreateShaderModule(device,&sm,nullptr,&module),"flow shader"))return false;
-    VkPipelineShaderStageCreateInfo stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
-    stage.stage=VK_SHADER_STAGE_COMPUTE_BIT;stage.module=module;stage.pName="main";
-    VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
-    ci.stage=stage;ci.layout=pipeline_layout;
-    auto r=vkCreateComputePipelines(device,VK_NULL_HANDLE,1,&ci,nullptr,&flow_pipeline);
-    vkDestroyShaderModule(device,module,nullptr);
-    if(!result(r,"flow compute pipeline"))return false;
     // Actual depth-based motion shader from the Android port, with the
     // unchanged push layout and depth/object/storage bindings.
     VkDescriptorSetLayoutBinding port_bindings[3]{};
@@ -236,18 +197,11 @@ bool build_compute(){
                    &port_ci,nullptr,&port_pipeline);
     vkDestroyShaderModule(device,port_module,nullptr);
     if(!result(port_result,"port camera pipeline"))return false;
-    VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-    sci.magFilter=VK_FILTER_LINEAR;sci.minFilter=VK_FILTER_LINEAR;
-    sci.addressModeU=VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    sci.addressModeV=VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    sci.addressModeW=VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    if(!result(vkCreateSampler(device,&sci,nullptr,&sampler),"motion sampler"))return false;
     VkDescriptorPoolSize sizes[]={
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,16},
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,16},
-        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,12}};
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,4},
+        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,8}};
     VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    pi.maxSets=10;pi.poolSizeCount=3;pi.pPoolSizes=sizes;
+    pi.maxSets=4;pi.poolSizeCount=2;pi.pPoolSizes=sizes;
     return result(vkCreateDescriptorPool(device,&pi,nullptr,&descriptors),"flow descriptor pool");
 }
 FfxVkPortableImage describe(const Surface& s,FfxVkPortableResourceState state) {
@@ -280,13 +234,11 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
                    VK_IMAGE_ASPECT_COLOR_BIT))
             return false;
         VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-        ai.descriptorPool=descriptors;ai.descriptorSetCount=1;ai.pSetLayouts=&desc_layout;
-        if(!result(vkAllocateDescriptorSets(device,&ai,&f.descriptor),"descriptors"))return false;
+        ai.descriptorPool=descriptors;ai.descriptorSetCount=1;ai.pSetLayouts=&port_desc_layout;
         ai.pSetLayouts=&port_desc_layout;
         if(!result(vkAllocateDescriptorSets(device,&ai,&f.port_motion_descriptor),
                    "port camera descriptors"))return false;
     }
-    if(!alloc(previous,color_format,render,sampled,VK_IMAGE_ASPECT_COLOR_BIT))return false;
     const auto r=ffxVkPortableUpscaleContextCreate(&info,&config,&fsr);
     if(r!=FFX_VK_PORTABLE_OK) {
         std::fprintf(stderr,"[BS4_FSR31] FSR3.1 Vulkan context error=%d\n",int(r));
@@ -295,27 +247,6 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
     std::fprintf(stderr,"[BS4_FSR31] temporal context ready %ux%u->%ux%u\n",
          render.width,render.height,output.width,output.height);
     return true;
-}
-void flow(VkCommandBuffer cb,const Frame& f,VkExtent2D size) {
-    VkDescriptorImageInfo resources[3]{};
-    resources[0]={sampler,f.scene.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    resources[1]={sampler,previous.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    resources[2]={VK_NULL_HANDLE,f.motion.view,VK_IMAGE_LAYOUT_GENERAL};
-    VkWriteDescriptorSet writes[3]{};
-    for(uint32_t i=0;i<3;i++) {
-        writes[i]={VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        writes[i].dstSet=f.descriptor;writes[i].dstBinding=i;
-        writes[i].descriptorType=i==2?VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-                                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[i].descriptorCount=1;writes[i].pImageInfo=&resources[i];
-    }
-    vkUpdateDescriptorSets(device,3,writes,0,nullptr);
-    vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,flow_pipeline);
-    vkCmdBindDescriptorSets(cb,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline_layout,
-                            0,1,&f.descriptor,0,nullptr);
-    struct Push{int width,height,first,pad;} pc{int(size.width),int(size.height),!has_previous,0};
-    vkCmdPushConstants(cb,pipeline_layout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(pc),&pc);
-    vkCmdDispatch(cb,(size.width+7)/8,(size.height+7)/8,1);
 }
 // No optical-flow inference here: the exact shader shipped in the port
 // reconstructs motion from G-buffer depth + current/previous matrices.
@@ -347,6 +278,11 @@ void record_port_camera_motion(VkCommandBuffer cb,const Frame& f,
 }
 } // namespace
 
+extern "C" int bs4_fsr31_camera_resources_ready(VkExtent2D size){
+    std::lock_guard lock{mutex};
+    return fsr && !frames.empty() && config.maxRenderSize.width==size.width &&
+        config.maxRenderSize.height==size.height;
+}
 // Explicit port renderer/guest camera handoff. The R13 core024 does NOT yet
 // call this; no "port quality" is claimed unless it is connected and validated.
 extern "C" __attribute__((visibility("default"))) int bs4_fsr31_supply_port_camera(
@@ -366,11 +302,17 @@ extern "C" __attribute__((visibility("default"))) int bs4_fsr31_supply_port_came
     return 1;
 }
 
+extern "C" int bs4_fsr31_supply_camera_range(VkCommandBuffer cb,float near,float far){
+    if(!std::isfinite(near)||!std::isfinite(far)||near<=0.f||far<=near)return 0;
+    std::lock_guard lock{mutex};if(!port_camera.valid||port_camera.command!=cb)return 0;
+    port_camera.nearPlane=near;port_camera.farPlane=far;return 1;
+}
+
 extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_render(
     const FfxVkPortableDeviceInfo* owned,VkCommandBuffer cb,VkImageView input,
     VkExtent2D input_extent,VkExtent2D output_extent,int preset,int hdr,int pre_ui,
     VkImageView scene_depth_view) {
-    if(!owned||!cb||!input||hdr||preset<0||preset>4){report_once(1,"missing arguments or HDR/preset unsupported");return 0;}
+    if(!owned||!cb||!input||!pre_ui||hdr||preset<0||preset>4){report_once(1,"missing arguments or HDR/preset unsupported");return 0;}
     if(!owned->shaderStorageImageWriteWithoutFormatEnabled){report_once(2,"storage image write without format disabled");return 0;}
     if(output_extent.width==0||output_extent.height==0 ||
        input_extent.width==0||input_extent.height==0) {
@@ -381,8 +323,10 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     // performance and destroys visual detail. Host temporal upscaling must
     // consume the *actual* smaller scene image, never synthesize one.
     // Exactly matches the original shadPS4 FsrPass skip condition.
-    if (input_extent.width >= output_extent.width &&
-        input_extent.height >= output_extent.height) {
+    if (input_extent.width > output_extent.width ||
+        input_extent.height > output_extent.height ||
+        (!pre_ui && input_extent.width == output_extent.width &&
+         input_extent.height == output_extent.height)) {
         report_once(14, "source already >= presentation size; no forced downsample");
         return 0;
     }
@@ -435,7 +379,7 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     if(!reported_color) {
         reported_color=true;
         std::fprintf(stderr,
-           "[BS4_FSR31] color source fmt=%d size=%ux%u usage=0x%x -> RGBA16F\\n",
+           "[BS4_FSR31] color source fmt=%d size=%ux%u usage=0x%x -> scene crop\\n",
            int(color.format),color.size.width,color.size.height,unsigned(color.usage));
     }
     if(depth.format!=VK_FORMAT_D32_SFLOAT &&
@@ -490,13 +434,13 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     // VideoOut image. Its pixels are resampled to the same render extent as
     // the color intermediate (using nearest depth blit only if supported).
     if(!depth.size.width||!depth.size.height){report_once(11,"depth extent invalid");return 0;}
-    if ((internal.width!=depth.size.width || internal.height!=depth.size.height) &&
+    if (!pre_ui && (internal.width!=depth.size.width || internal.height!=depth.size.height) &&
         !depth_can_blit){report_once(12,"scaled depth blit unsupported by GPU");return 0;}
     const VkFormat target_format=pre_ui?BachataPortScaled::UiOutputFormat:
                                      VK_FORMAT_R16G16B16A16_SFLOAT;
     const VkFormat working_color=pre_ui?VK_FORMAT_R8G8B8A8_UNORM:
                                         VK_FORMAT_R16G16B16A16_SFLOAT;
-    if(!fsr || config.maxRenderSize.width!=internal.width ||
+    if(!fsr || frames.empty() || config.maxRenderSize.width!=internal.width ||
        config.maxRenderSize.height!=internal.height ||
        config.maxOutputSize.width!=output_extent.width ||
        config.maxOutputSize.height!=output_extent.height ||
@@ -504,13 +448,17 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
        frames[0].output.format!=target_format ||frames[0].depth.format!=depth.format) {
         if(!allocate_for(*owned,internal,output_extent,working_color,depth.format,target_format)){report_once(13,"FSR resource or context creation failed");return 0;}
     }
+    // Preflight allocates/validates EVERYTHING on the CPU, without recording
+    // a Vulkan command or consuming the frame. This runs before guest EndRendering.
+    if(pre_ui==2)return reinterpret_cast<uint64_t>(frames[cursor%frames.size()].output.view);
     Frame& f=frames[cursor++%frames.size()];
     transit(cb,f.scene,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     barrier(cb,color.image,VK_IMAGE_ASPECT_COLOR_BIT,color.layout,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     VkImageBlit blit{};
     blit.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
-    blit.srcOffsets[1]={int32_t(color.size.width),int32_t(color.size.height),1};
+    blit.srcOffsets[1]={int32_t(pre_ui?internal.width:color.size.width),
+                        int32_t(pre_ui?internal.height:color.size.height),1};
     blit.dstSubresource=blit.srcSubresource;
     blit.dstOffsets[1]={int32_t(internal.width),int32_t(internal.height),1};
     vkCmdBlitImage(cb,color.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
@@ -522,7 +470,7 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     transit(cb,f.depth,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     barrier(cb,depth.image,VK_IMAGE_ASPECT_DEPTH_BIT,depth.layout,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    if(internal.width==depth.size.width && internal.height==depth.size.height) {
+    if(pre_ui || (internal.width==depth.size.width && internal.height==depth.size.height)) {
         VkImageCopy region{};
         region.srcSubresource={VK_IMAGE_ASPECT_DEPTH_BIT,0,0,1};
         region.dstSubresource=region.srcSubresource;
@@ -542,19 +490,8 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     barrier(cb,depth.image,VK_IMAGE_ASPECT_DEPTH_BIT,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,depth.layout);
     transit(cb,f.depth,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    if(!has_previous) {
-        transit(cb,previous,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        VkClearColorValue clear{};
-        VkImageSubresourceRange sub{VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
-        vkCmdClearColorImage(cb,previous.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&clear,1,&sub);
-        transit(cb,previous,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    }
     transit(cb,f.motion,VK_IMAGE_LAYOUT_GENERAL);
-    if(pre_ui) {
-        record_port_camera_motion(cb,f,port_camera.push,internal);
-    } else {
-        flow(cb,f,internal); // legacy FsrPass spatial-hook path unchanged
-    }
+    record_port_camera_motion(cb,f,port_camera.push,internal);
     // Shader storage writes must be visible to the FSR 3.1 compute passes.
     barrier(cb,f.motion.image,VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -583,8 +520,8 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     last_frame=now;
     info.frameTimeMilliseconds=dt;info.preExposure=1.0f;
     info.cameraNear=pre_ui?
-        -port_camera.push.proj[3]/port_camera.push.proj[2]:0.1f;
-    info.cameraFar=pre_ui?3000.0f:1000.0f;
+        port_camera.nearPlane:0.1f;
+    info.cameraFar=pre_ui?port_camera.farPlane:1000.0f;
     info.cameraVerticalFovRadians=pre_ui?
         2.0f*std::atan(1.0f/std::abs(port_camera.push.proj[1])):1.0f;
     info.viewSpaceToMeters=1.0f;
@@ -599,16 +536,6 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
         return 0;
     }
     transit(cb,f.output,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    transit(cb,previous,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    transit(cb,f.scene,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    VkImageCopy color_region{};
-    color_region.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
-    color_region.dstSubresource=color_region.srcSubresource;
-    color_region.extent={internal.width,internal.height,1};
-    vkCmdCopyImage(cb,f.scene.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                   previous.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&color_region);
-    transit(cb,previous,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    transit(cb,f.scene,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     has_previous=true;
     if(pre_ui)port_camera.valid=false;
     if(frame_id==1)
