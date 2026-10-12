@@ -18,7 +18,7 @@ assert raster.is_file() and header.is_file() and presenter.is_file()
 src = raster.read_text()
 hdr = header.read_text()
 pres = presenter.read_text()
-for filename in ("port_camera_state.h", "port_rasterizer_scene.h"):
+for filename in ("port_camera_state.h", "port_rasterizer_scene.h", "port_ui_surface.h"):
     shutil.copyfile(package / filename, raster.parent / filename)
 
 def replace_once(value: str, before: str, after: str) -> str:
@@ -30,22 +30,27 @@ def replace_once(value: str, before: str, after: str) -> str:
 hdr = replace_once(hdr, '#include "common/recursive_lock.h"',
     '#include "common/recursive_lock.h"\n'
     '#include "video_core/renderer_vulkan/port_camera_state.h"\n'
-    '#include "video_core/renderer_vulkan/port_rasterizer_scene.h"')
+    '#include "video_core/renderer_vulkan/port_rasterizer_scene.h"\n'
+    '#include "video_core/renderer_vulkan/port_ui_surface.h"')
 hdr = replace_once(hdr,
     "    [[nodiscard]] Scheduler& GetScheduler() noexcept {",
     "    // Called only when a NEW guest VideoOut buffer is presented. This is\n"
     "    // the authoritative guest frame boundary; Beginning the HUD is NOT.\n"
-    "    void Fsr31PortOnPresentedFrame();\n\n"
+    "    void Fsr31PortOnPresentedFrame();\n"
+    "    Bachata::Fsr31::PortUiSurface::Display Fsr31PortTakeDisplay();\n\n"
     "    [[nodiscard]] Scheduler& GetScheduler() noexcept {")
 hdr = replace_once(hdr, "    bool attachment_feedback_loop{};",
     "    bool attachment_feedback_loop{};\n"
     "    Bachata::Fsr31::PortCameraState fsr31PortCamera{};\n"
-    "    Bachata::Fsr31::RasterizerSceneStage fsr31PortStage{};")
+    "    Bachata::Fsr31::RasterizerSceneStage fsr31PortStage{};\n"
+    "    std::unique_ptr<Bachata::Fsr31::PortUiSurface> fsr31PortUi;\n"
+    "    VideoCore::ImageId fsr31PortLdr{};\n"
+    "    std::array<float,2> fsr31PortUiRenderScale{1.f,1.f};")
 
 src = replace_once(src,
     '#include "video_core/renderer_vulkan/vk_rasterizer.h"',
     '#include "video_core/renderer_vulkan/vk_rasterizer.h"\n'
-    '#include <cstdlib>\n#include <cstdio>')
+    '#include <cstdlib>\n#include <cstdio>\n#include <cmath>')
 
 body = r'''
     // Bloodborne port: classify draws from guest GPU registers, guest shader
