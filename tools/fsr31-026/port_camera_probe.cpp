@@ -77,9 +77,13 @@ void inspect_buffer(VkCommandBuffer cb,const VkDescriptorBufferInfo& info) {
     if(!from_descriptor(info,c))return;
     const auto d=active_depth.find(cb);
     const auto e=active_extent.find(cb);
+    // The Port reads a 640x360 guest render size from an 864-byte
+    // scene constant buffer while the Vulkan G-buffer may still have a
+    // 1920x1080 render area and physically full-sized attachments.
+    // Equality with VkRenderingInfo.renderArea made R17 reject REAL cameras.
     if(d==active_depth.end() || e==active_extent.end() ||
-       !d->second || c.width!=e->second.width ||
-       c.height!=e->second.height)return;
+       !d->second || c.width>e->second.width ||
+       c.height>e->second.height || c.width<64 || c.height<64)return;
     float viewportX=0,viewportY=0;
     // The port's CameraMotion::OnGBufferPass applies these signs to
     // projection x/y before reconstructing motion from guest depth.
@@ -117,8 +121,13 @@ extern "C" void bs4_port_note_render(VkCommandBuffer cb,
                     uint32_t attachment_count) {
     if(!cb || !size.width || !size.height)return;
     std::lock_guard lock{guard};
-    if(depth && attachment_count>=2 && size.width<=1280 &&
-       size.height<=720) {
+    // Exact port criterion, vk_rasterizer.cpp PrepareRenderState:
+    // a G-buffer has >=5 MRT colors and a depth target. Width of guest
+    // camera may be 640x360 even while VkRenderingInfo is 1920x1080.
+    // Never bind shadow/light pass depth as the scene camera.
+    if(depth && attachment_count>=5 &&
+       size.width>=640 && size.height>=360 &&
+       size.width<=4096 && size.height<=4096) {
         active_depth[cb]=depth;active_extent[cb]=size;
     }
 }
