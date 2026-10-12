@@ -47,24 +47,6 @@ src = replace_once(src,
     '#include "video_core/renderer_vulkan/vk_rasterizer.h"\n'
     '#include <cstdlib>\n#include <cstdio>')
 
-frame_boundary = r'''
-void Rasterizer::Fsr31PortOnPresentedFrame() {
-    // The port advances the previous camera matrix at VideoOut, once per
-    // completed guest frame, not on the first Scaleform UI draw. Doing so
-    // earlier mixes motion history from different frames.
-    fsr31PortCamera.OnDisplayFrame();
-    fsr31PortStage.OnDisplayFrame();
-}
-'''
-src = replace_once(src,
-    "static std::pair<u32, u32> GetDrawOffsets(",
-    frame_boundary + "\nstatic std::pair<u32, u32> GetDrawOffsets(")
-
-pres = replace_once(pres,
-    "    texture_cache.UpdateImage(image_id);",
-    "    texture_cache.UpdateImage(image_id);\n"
-    "    rasterizer->Fsr31PortOnPresentedFrame();")
-
 body = r'''
     // Bloodborne port: classify draws from guest GPU registers, guest shader
     // hashes and the *real* camera-depth target. Never guess from the Vulkan
@@ -142,6 +124,24 @@ src = replace_once(src,
     "            const u64 size = memory->ClampRangeSize(vsharp.base_address, vsharp.GetSize());\n" +
     cam +
     "            const auto buffer_id = buffer_cache.FindBuffer(vsharp.base_address, size);")
+
+frame_boundary = r'''
+void Rasterizer::Fsr31PortOnPresentedFrame() {
+    // The port advances the previous camera matrix at VideoOut, once per
+    // completed guest frame, not on the first Scaleform UI draw. Doing so
+    // earlier mixes motion history from different frames.
+    fsr31PortCamera.OnDisplayFrame();
+    fsr31PortStage.OnDisplayFrame();
+}
+'''
+src = replace_once(src,
+    "static std::pair<u32, u32> GetDrawOffsets(",
+    frame_boundary + "\nstatic std::pair<u32, u32> GetDrawOffsets(")
+
+pres = replace_once(pres,
+    "    texture_cache.UpdateImage(image_id);",
+    "    texture_cache.UpdateImage(image_id);\n"
+    "    rasterizer->Fsr31PortOnPresentedFrame();")
 
 header.write_text(hdr)
 raster.write_text(src)
