@@ -38,6 +38,9 @@ public:
         if(!c.valid)return;
         current_=c;passHasCamera_=true;
     }
+    bool WaitingForConstants() const {
+        return currentDepth_ != 0 && !passHasCamera_;
+    }
     bool HasCameraForDepth(std::uint64_t depth) const {
         return passHasCamera_&&current_.valid&&depth&&depth==currentDepth_;
     }
