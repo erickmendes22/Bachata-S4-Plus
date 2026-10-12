@@ -1,7 +1,7 @@
 name: Build Android GLIBC FSR3 SDK for existing core 024
 on:
   push:
-    branches: [feature/fsr31-026-existing-core, feature/fsr31-026-r13-pre-ui, feature/fsr31-port-runscaled-024]
+    branches: [feature/fsr31-026-existing-core, feature/fsr31-026-r13-pre-ui, feature/fsr31-port-runscaled-024, feature/fsr31-port-runscaled-024-validated-scene]
     paths:
       - 'tools/fsr31-026/**'
       - '.github/workflows/fsr31-026-build.yml'
@@ -147,7 +147,7 @@ jobs:
           sha256sum build/libbachata_fsr31.so | tee sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: BS4-CORE024-PORT-RUNSCALED-SDK
+          name: BS4-RUNSCALED-VALIDATED-SCENE-SDK
           path: |
             build/libbachata_fsr31.so
             sha256.txt
