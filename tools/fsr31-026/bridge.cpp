@@ -38,7 +38,7 @@ std::atomic<uint32_t> presenter_input_next{0};
 
 bool valid = false;
 }
-#define BS4_PUBLIC extern "C" __attribute__((visibility("default"))
+#define BS4_PUBLIC extern "C" __attribute__((visibility("default")))
 BS4_PUBLIC int bs4_fsr31_is_presenter_input(VkImageView view) {
     if (!view) return 0;
     const uintptr_t expected = reinterpret_cast<uintptr_t>(view);
@@ -46,7 +46,6 @@ BS4_PUBLIC int bs4_fsr31_is_presenter_input(VkImageView view) {
         if (item.load(std::memory_order_acquire)==expected) return 1;
     return 0;
 }
-)
 BS4_PUBLIC int bs4_fsr31_abi() { return 0x00030104; }
 BS4_PUBLIC int bs4_fsr31_create(const FfxVkPortableDeviceInfo* dev,
                                const FfxVkPortableUpscaleCreateInfo* ci) {
