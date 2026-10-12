@@ -11,6 +11,7 @@ extern "C" uint64_t bs4_fsr31_generic_render(const FfxVkPortableDeviceInfo* info
 #include <cmath>
 #include <cstdio>
 #include <mutex>
+#include <vector>
 #include <fstream>
 #include <dlfcn.h>
 #include <atomic>
@@ -183,8 +184,26 @@ BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice 
     info.physicalDevice = physical;
     info.device = device;
     info.getDeviceProcAddr = vkGetDeviceProcAddr;
-    info.queue = VK_NULL_HANDLE;
-    info.queueFamilyIndex = 0;
+    // The portable SDK must receive the same live graphics queue family
+    // selected by the host Vulkan device. A VK_NULL_HANDLE queue was a
+    // definite bug in R5/R6 and makes FSR context creation invalid.
+    uint32_t queue_count = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(physical, &queue_count, nullptr);
+    if (!queue_count || queue_count > 128) return -5;
+    std::vector<VkQueueFamilyProperties> queue_properties(queue_count);
+    vkGetPhysicalDeviceQueueFamilyProperties(physical, &queue_count,
+                                               queue_properties.data());
+    uint32_t family = queue_count;
+    for (uint32_t i = 0; i < queue_count; ++i) {
+        if ((queue_properties[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) &&
+             queue_properties[i].queueCount) { family = i; break; }
+    }
+    if (family == queue_count) return -6;
+    VkQueue graphics_queue = VK_NULL_HANDLE;
+    vkGetDeviceQueue(device, family, 0, &graphics_queue);
+    if (!graphics_queue) return -7;
+    info.queue = graphics_queue;
+    info.queueFamilyIndex = family;
     info.synchronization2Enabled = VK_TRUE;
     VkPhysicalDeviceFeatures features{};
     vkGetPhysicalDeviceFeatures(physical, &features);
@@ -198,6 +217,10 @@ BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice 
     device_attached = true;
     VkPhysicalDeviceProperties props{};
     vkGetPhysicalDeviceProperties(physical, &props);
+    Dl_info shared_library{};
+    dladdr(reinterpret_cast<void*>(&bs4_fsr31_attach), &shared_library);
+    std::fprintf(stderr, "[BS4_FSR31] module_base=%p gfx_queue_family=%u\\n",
+                 shared_library.dli_fbase, family);
     std::fprintf(stderr,
         "[BS4_FSR31] attached core024 GPU=%s vendor=0x%x, driver=0x%x, "
         "shaderStorageImageWriteWithoutFormat-supported=%d\\n",
