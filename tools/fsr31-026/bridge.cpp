@@ -28,9 +28,25 @@ FfxVkPortableDeviceInfo acquired_device{};
 bool device_attached = false;
 std::atomic<VkInstance> fsr31_tracked_instance{VK_NULL_HANDLE};
 std::atomic<VkPhysicalDevice> fsr31_tracked_physical{VK_NULL_HANDLE};
+/* Only the existing core024 Presenter may designate a final compositing
+ * target. Vulkan render extent alone never proves the start of the guest HUD.
+ * Publish the views atomically: the capture hook cannot acquire guard while
+ * drawing; that would reverse the Vulkan capture/bridge lock ordering. */
+constexpr uint32_t kPresenterViewCount=32;
+std::atomic<uintptr_t> presenter_input_views[kPresenterViewCount]{};
+std::atomic<uint32_t> presenter_input_next{0};
+
 bool valid = false;
 }
-#define BS4_PUBLIC extern "C" __attribute__((visibility("default")))
+#define BS4_PUBLIC extern "C" __attribute__((visibility("default"))
+BS4_PUBLIC int bs4_fsr31_is_presenter_input(VkImageView view) {
+    if (!view) return 0;
+    const uintptr_t expected = reinterpret_cast<uintptr_t>(view);
+    for (auto& item : presenter_input_views)
+        if (item.load(std::memory_order_acquire)==expected) return 1;
+    return 0;
+}
+)
 BS4_PUBLIC int bs4_fsr31_abi() { return 0x00030104; }
 BS4_PUBLIC int bs4_fsr31_create(const FfxVkPortableDeviceInfo* dev,
                                const FfxVkPortableUpscaleCreateInfo* ci) {
@@ -85,7 +101,14 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(
     uint64_t fsrPassObject, uint64_t commandBuffer, uint64_t inputView,
     uint64_t renderExtent, uint64_t outputExtent, uint64_t settings, uint64_t hdr) {
     (void)fsrPassObject;
-    (void)inputView;
+    // core024 Presenter passes the actual final VideoOut input image view.
+    // This is the only trusted destination identity for the pre-HUD hook.
+    if (inputView) {
+        const uint32_t index=presenter_input_next.fetch_add(1,std::memory_order_relaxed)
+                             % kPresenterViewCount;
+        presenter_input_views[index].store(uintptr_t(inputView),
+                                          std::memory_order_release);
+    }
     (void)renderExtent;
     (void)outputExtent;
     (void)settings;
