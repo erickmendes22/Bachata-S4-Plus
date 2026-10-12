@@ -14,6 +14,7 @@
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 namespace {
 struct Depth {
@@ -44,6 +45,7 @@ std::unordered_map<VkShaderModule,uint64_t> guestHashes;
 std::unordered_map<VkPipeline,bool> uiPipelines;
 std::unordered_map<VkCommandBuffer,bool> shaderBoundUI;
 std::unordered_map<VkCommandBuffer,VkImageView> lastOutput;
+std::unordered_set<VkCommandBuffer> completedHud;
 PFN_vkSetDebugUtilsObjectNameEXT realObjectName{};
 PFN_vkCreateGraphicsPipelines realCreatePipelines{};
 PFN_vkDestroyPipeline realDestroyPipeline{};
@@ -100,15 +102,18 @@ extern "C" void bs4_port_ui_install_rendering(
 extern "C" void bs4_port_ui_reset(VkCommandBuffer cb){
     std::lock_guard lock{uiMutex};
     cmds.erase(cb);shaderBoundUI.erase(cb);lastOutput.erase(cb);
+    completedHud.erase(cb);
 }
 extern "C" VkImageView bs4_port_ui_present(VkCommandBuffer cb){
     std::lock_guard lock{uiMutex};
     auto it=lastOutput.find(cb);
-    return it==lastOutput.end()?VK_NULL_HANDLE:it->second;
+    return it==lastOutput.end() || !completedHud.count(cb)?
+           VK_NULL_HANDLE:it->second;
 }
 extern "C" void bs4_port_ui_finish_present(VkCommandBuffer cb){
     std::lock_guard lock{uiMutex};
     lastOutput.erase(cb);
+    completedHud.erase(cb);
 }
 namespace {
 bool createDepth(VkImageView output,VkFormat format,Depth& dest){
@@ -269,6 +274,7 @@ extern "C" void bs4_port_ui_redirect_end(VkCommandBuffer cb) {
             transition(cb,image,VK_IMAGE_ASPECT_COLOR_BIT,
                 VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             bs4_fsr31_set_output_layout(s.output,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            completedHud.insert(cb); // Only completed HUDs can be presented.
         }
     }
     s.uiPass=false;
@@ -357,6 +363,7 @@ extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer cb) {
     s.uiPhase=true;s.uiPass=true;s.originalUI=s.color[0].imageView;
     s.output=out;s.everRedirected=true;
     lastOutput[cb]=out;
+    completedHud.erase(cb); // Do not present while guest is still drawing.
     if(!firstReport) {
         firstReport=true;
         std::fprintf(stderr,
@@ -455,4 +462,18 @@ extern "C" PFN_vkVoidFunction bs4_port_ui_wrap_proc(
     UI_WRAP(realSetScissor,"vkCmdSetScissor",bs4_port_ui_scissor)
 #undef UI_WRAP
     return proc;
+}
+
+extern "C" void bs4_port_ui_free_surfaces() {
+    VkDevice dev=VK_NULL_HANDLE;
+    VkPhysicalDevice phys=VK_NULL_HANDLE;
+    if(!bs4_fsr31_ui_device(&dev,&phys) || !dev)return;
+    std::lock_guard lock{uiMutex};
+    // Called only after FSR backend's vkDeviceWaitIdle() on resize/rebuild.
+    for(auto& [_,d]:uiDepth) {
+        if(d.view)vkDestroyImageView(dev,d.view,nullptr);
+        if(d.image)vkDestroyImage(dev,d.image,nullptr);
+        if(d.memory)vkFreeMemory(dev,d.memory,nullptr);
+    }
+    uiDepth.clear();lastOutput.clear();completedHud.clear();
 }
