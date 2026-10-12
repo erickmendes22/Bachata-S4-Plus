@@ -26,6 +26,11 @@ struct View {
     VkFormat format = VK_FORMAT_UNDEFINED;
 };
 std::mutex mutex;
+// Stop all expensive Vulkan metadata tracking immediately when the presenter
+// has proved that no actual FSR3 dispatch can occur in this session.
+// Keep the original Vulkan calls unmodified.
+std::atomic<bool> capture_active{true};
+std::atomic<uint64_t> barrier_calls{0}, rendering_calls{0};
 std::unordered_map<VkImage, Image> images;
 std::unordered_map<VkImageView, View> views;
 uint64_t depth_counter{};
@@ -50,6 +55,8 @@ PFN_vkGetDeviceProcAddr next_device_proc_addr() {
     return original;
 }
 void update_layout(uint32_t count, const VkImageMemoryBarrier2* barriers) {
+    if (!capture_active.load(std::memory_order_relaxed)) return;
+    barrier_calls.fetch_add(1,std::memory_order_relaxed);
     if (!barriers || !count) return;
     std::lock_guard lock{mutex};
     for (uint32_t i = 0; i < count; ++i) {
@@ -58,6 +65,8 @@ void update_layout(uint32_t count, const VkImageMemoryBarrier2* barriers) {
     }
 }
 void record_rendering(const VkRenderingInfo* info) {
+    if (!capture_active.load(std::memory_order_relaxed))return;
+    rendering_calls.fetch_add(1,std::memory_order_relaxed);
     if (!info || !info->pDepthAttachment ||
         !info->pDepthAttachment->imageView) return;
     const auto view = info->pDepthAttachment->imageView;
@@ -75,6 +84,23 @@ void record_rendering(const VkRenderingInfo* info) {
     img->second.layout = info->pDepthAttachment->imageLayout;
 }
 } // namespace
+
+extern "C" __attribute__((visibility("default"))) void bs4_fsr31_suspend_capture() {
+    if (capture_active.exchange(false, std::memory_order_acq_rel)) {
+        const auto barriers=barrier_calls.load(std::memory_order_relaxed);
+        const auto draws=rendering_calls.load(std::memory_order_relaxed);
+        std::lock_guard lock{mutex};
+        const auto tracked_images=images.size(), tracked_views=views.size();
+        images.clear();
+        views.clear();
+        std::fprintf(stderr,
+          "[BS4_FSR31] inactive renderer capture disabled: "
+          "barriers=%llu renderpasses=%llu images=%zu views=%zu\\n",
+          static_cast<unsigned long long>(barriers),
+          static_cast<unsigned long long>(draws),
+          tracked_images,tracked_views);
+    }
+}
 extern "C" int bs4_fsr31_capture_image(VkImageView view, Bs4FsrCaptureImage* out) {
     if (!out || !view) return 0;
     std::lock_guard lock{mutex};
@@ -142,7 +168,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image(
     VkDevice dev,const VkImageCreateInfo* ci,const VkAllocationCallbacks* ac,VkImage* img) {
     if(!original_create_image) return VK_ERROR_INITIALIZATION_FAILED;
     auto r=original_create_image(dev,ci,ac,img);
-    if(r==VK_SUCCESS && ci && img) {
+    if(capture_active.load(std::memory_order_relaxed) && r==VK_SUCCESS && ci && img) {
         std::lock_guard lock{mutex};
         images[*img]={ci->format,{ci->extent.width,ci->extent.height},ci->usage,
                       ci->initialLayout,{},0};
@@ -151,7 +177,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image(
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_destroy_image(
     VkDevice dev,VkImage img,const VkAllocationCallbacks* ac) {
-    {std::lock_guard lock{mutex}; images.erase(img);}
+    if(capture_active.load(std::memory_order_relaxed)) {std::lock_guard lock{mutex}; images.erase(img);}
     if(original_destroy_image) original_destroy_image(dev,img,ac);
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image_view(
@@ -159,7 +185,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image_view(
     VkImageView* view) {
     if(!original_create_image_view) return VK_ERROR_INITIALIZATION_FAILED;
     auto r=original_create_image_view(dev,ci,ac,view);
-    if(r==VK_SUCCESS && ci && view) {
+    if(capture_active.load(std::memory_order_relaxed) && r==VK_SUCCESS && ci && view) {
         std::lock_guard lock{mutex};
         views[*view]={ci->image,ci->subresourceRange.aspectMask,ci->format};
     }
@@ -167,12 +193,12 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image_view(
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_destroy_image_view(
     VkDevice dev,VkImageView view,const VkAllocationCallbacks* ac) {
-    {std::lock_guard lock{mutex}; views.erase(view);}
+    if(capture_active.load(std::memory_order_relaxed)) {std::lock_guard lock{mutex}; views.erase(view);}
     if(original_destroy_image_view) original_destroy_image_view(dev,view,ac);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering(
     VkCommandBuffer cb,const VkRenderingInfo* info) {
-    record_rendering(info);
+    if(capture_active.load(std::memory_order_relaxed)) record_rendering(info);
     if(original_begin_rendering) original_begin_rendering(cb,info);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_end_rendering(VkCommandBuffer cb) {
@@ -180,12 +206,12 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_end_rendering(VkCommandBuffer cb) 
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_barrier2(
     VkCommandBuffer cb,const VkDependencyInfo* dep) {
-    if(dep) update_layout(dep->imageMemoryBarrierCount,dep->pImageMemoryBarriers);
+    if(capture_active.load(std::memory_order_relaxed) && dep) update_layout(dep->imageMemoryBarrierCount,dep->pImageMemoryBarriers);
     if(original_barrier2) original_barrier2(cb,dep);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering_khr(
     VkCommandBuffer cb,const VkRenderingInfo* info) {
-    record_rendering(info);
+    if(capture_active.load(std::memory_order_relaxed)) record_rendering(info);
     if(original_begin_rendering_khr) original_begin_rendering_khr(cb,info);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_end_rendering_khr(VkCommandBuffer cb) {
@@ -193,7 +219,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_end_rendering_khr(VkCommandBuffer 
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_barrier2_khr(
     VkCommandBuffer cb,const VkDependencyInfo* dep) {
-    if(dep)update_layout(dep->imageMemoryBarrierCount,dep->pImageMemoryBarriers);
+    if(capture_active.load(std::memory_order_relaxed) && dep)update_layout(dep->imageMemoryBarrierCount,dep->pImageMemoryBarriers);
     if(original_barrier2_khr)original_barrier2_khr(cb,dep);
 }
 // Vulkan-hpp may resolve device commands through vkGetInstanceProcAddr,
