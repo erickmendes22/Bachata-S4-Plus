@@ -192,6 +192,11 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     bars[0].oldLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     bars[0].newLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     bars[1].image=dst;
+    // An UNDEFINED attachment would discard the newly upscaled background.
+    // Switch it to a valid color attachment layout before the HUD begins.
+    const VkImageLayout ui_layout =
+        dst_layout==VK_IMAGE_LAYOUT_UNDEFINED ?
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : dst_layout;
     bars[1].oldLayout=dst_layout;
     bars[1].newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
@@ -214,6 +219,7 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
         b.dstAccessMask=VK_ACCESS_2_MEMORY_READ_BIT|
                         VK_ACCESS_2_MEMORY_WRITE_BIT;
     }
+    bars[1].newLayout=ui_layout;
     vkCmdPipelineBarrier2(cmd,&dep);
     // The background is now populated. Preserve it when the game's UI
     // starts drawing; otherwise a CLEAR loadOp would erase the FSR result.
@@ -221,6 +227,7 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     overrides.assign(info->pColorAttachments,
                      info->pColorAttachments+info->colorAttachmentCount);
     overrides[0].loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;
+    overrides[0].imageLayout=ui_layout;
     modified.pColorAttachments=overrides.data();
     if(!pre_ui_dispatch_logged){
         pre_ui_dispatch_logged=true;
