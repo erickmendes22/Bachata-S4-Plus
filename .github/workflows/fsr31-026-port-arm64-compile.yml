@@ -8,6 +8,7 @@ on:
       - 'tools/fsr31-026/port_camera_state.h'
       - 'tools/fsr31-026/port_camera_motion_math.h'
       - 'tools/fsr31-026/port_rasterizer_scene.h'
+      - 'tools/fsr31-026/port_ui_surface.h'
 permissions: {contents: read}
 jobs:
   arm64:
