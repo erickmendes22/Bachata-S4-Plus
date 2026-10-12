@@ -166,6 +166,48 @@ void scene_rendering_ended(VkCommandBuffer command) {
     }
 }
 } // namespace
+/* Read-only preflight: MUST succeed before guest vkCmdEndRendering is
+ * recorded. CABE26EE had no successful FSR dispatch; the old R23 path
+ * nevertheless risked ending/restarting the original HUD pass. */
+extern "C" int bs4_port_can_prepare_ui(VkCommandBuffer cb) {
+    if(!cb)return 0;
+    ScenePass scene{};
+    {
+        std::lock_guard lock{mutex};
+        const auto it=command_scenes.find(cb);
+        if(it==command_scenes.end() || !it->second.ready ||
+           !it->second.color || it->second.extent.width<600 ||
+           it->second.extent.width>=1280 ||
+           it->second.extent.height<320 ||
+           it->second.extent.height>=720)return 0;
+        scene=it->second;
+        const auto color_view=views.find(scene.color);
+        if(color_view==views.end() ||
+           color_view->second.format!=VK_FORMAT_R8G8B8A8_UNORM)
+            return 0;
+        const auto color=images.find(color_view->second.image);
+        if(color==images.end() ||
+           !(color->second.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
+            return 0;
+    }
+    const char* mode=std::getenv("BACHATA_FSR31_MODE");
+    if(!mode || mode[0]<'0'||mode[0]>'4'||mode[1]!='\\0')
+        return 0;
+    BachataCamera::Push push{};
+    const VkImageView depth=bs4_port_camera_for_scene(
+        cb,scene.extent,&push,sizeof(push));
+    if(!depth)return 0;
+    Bs4FsrCaptureImage c{},d{};
+    if(!bs4_fsr31_capture_image(scene.color,&c) ||
+       !bs4_fsr31_capture_image(depth,&d))return 0;
+    return (c.format==VK_FORMAT_R8G8B8A8_UNORM &&
+            (c.size.width==scene.extent.width ||
+             c.size.width==1920) &&
+            c.size.width==d.size.width &&
+            c.size.height==d.size.height &&
+            (d.aspects & VK_IMAGE_ASPECT_DEPTH_BIT) &&
+            (d.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))?1:0;
+}
 /* Port-style temporal scene for the first positively identified HUD draw.
  * Called OUTSIDE Vulkan dynamic rendering; no speculative guest target blit.
  */
