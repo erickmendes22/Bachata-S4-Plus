@@ -54,6 +54,10 @@ bool known_first_hud_shader(uint64_t hash) {
 }
 std::unordered_map<VkShaderModule,uint64_t> vertex_module_hash;
 std::unordered_map<VkPipeline,bool> known_ui_pipeline;
+// Bloodborne HDR scene copy is a guest pixel shader, not a resolution guess.
+// Unlike the UI, this draw is followed by the game's post-processing.
+constexpr uint64_t kGuestHdrSceneCopy = 0xccbf44a6ULL;
+std::unordered_map<VkPipeline,bool> known_hdr_copy_pipeline;
 std::unordered_map<VkCommandBuffer,VkPipeline> graphics_pipeline_bound;
 struct ActiveRendering {
     VkRenderingInfo info{};
@@ -76,6 +80,7 @@ ActiveRendering copy_rendering(const VkRenderingInfo* in,bool khr) {
 
 bool pre_ui_dispatch_logged=false;
 bool pre_ui_eligible_logged=false;
+bool hdr_copy_candidate_logged=false;
 using PreUiDispatch=int (*)(VkCommandBuffer,VkImageView,VkExtent2D,VkExtent2D,VkImage*);
 extern "C" int bs4_fsr31_pre_ui_dispatch(VkCommandBuffer,VkImageView,
                 VkImageView,VkExtent2D,VkExtent2D,VkImage*);
@@ -185,9 +190,9 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
             }
             return false;
         }
-        // The first 1080p pass was NOT necessarily the HUD in R14/R18:
-        // lighting, bloom and post-processing also render at this extent.
-        // Dispatch only at the first *recognized guest HUD shader draw*.
+        // R20's first HUD draw bypassed the game's HDR post-processing.
+        // This path now executes ONLY at Bloodborne's real HDR scene-copy
+        // shader (0xccbf44a6), before color grading and UI rendering.
         if(!verified_first_hud_draw) return false;
         // Cross-CB ordering is not proven: scene must be complete on this CB.
         if(w<1280||h<700||!stage.ready||!stage.color||
@@ -197,7 +202,12 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
         if(dst_v==views.end())return false;
         const auto dst_i=images.find(dst_v->second.image);
         if(dst_i==images.end() ||
-            !(dst_i->second.usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
+            !(dst_i->second.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) ||
+            !(dst_i->second.usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) ||
+            // Never insert linear HDR into the final LDR user-interface
+            // surface: the R20 result bypassed the game post-processing.
+            !(dst_i->second.format==VK_FORMAT_R16G16B16A16_SFLOAT ||
+              dst_i->second.format==VK_FORMAT_B10G11R11_UFLOAT_PACK32))
             return false;
         dst=dst_v->second.image;
         dst_previous_layout=dst_i->second.layout;
@@ -207,17 +217,17 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
         stage.ready=false;
         stage.color=VK_NULL_HANDLE;
     }
-    if (!pre_ui_eligible_logged) {
-        pre_ui_eligible_logged=true;
+    if (!hdr_copy_candidate_logged) {
+        hdr_copy_candidate_logged=true;
         std::fprintf(stderr,
-           "[BS4_FSR31] pre-UI candidate scene=%ux%u output=%ux%u "
-           "ui_target=%ux%u\\n",
+           "[BS4_FSR31] HDR_SCENE_COPY_CANDIDATE scene=%ux%u "
+           "hdr_target=%ux%u target_image=%ux%u\\n",
            completed.extent.width,completed.extent.height,w,h,dst_w,dst_h);
     }
     if(dst_w<w||dst_h<h)return false;
-    // Output is 720p just like the Android Bloodborne port. The UI target
-    // may still be 1080p until the guest's UI resolution is independently
-    // decoupled; resample the upscaled background without changing HUD draws.
+    // Preserve R13's 720p FSR dispatch while the Bloodborne HDR scene-copy
+    // target is still 1080p. Its own post-processing must remain in place.
+    // True 720p post-process/UI requires a separately verified guest patch.
     const VkExtent2D upscale_extent{1280,720};
     VkImage upscaled=VK_NULL_HANDLE;
     if(!bs4_fsr31_pre_ui_dispatch(cmd,completed.color,completed.depth,
@@ -290,8 +300,8 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     if(!pre_ui_dispatch_logged){
         pre_ui_dispatch_logged=true;
         std::fprintf(stderr,
-            "[BS4_FSR31] FIRST_PRE_UI_COMPOSITE FSR=1280x720 "
-            "HUD_target=%ux%u\\n",w,h);
+            "[BS4_FSR31] FIRST_HDR_SCENE_COPY_COMPOSITE FSR=1280x720 "
+            "HDR_target=%ux%u\\n",w,h);
     }
     return true;
 }
@@ -350,15 +360,26 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_graphics_pipelines(
         std::lock_guard lock{mutex};
         for(uint32_t i=0;i<count;i++) {
             if(!output[i])continue;
-            bool ui=false;
+            bool ui=false,hdr_copy=false;
             for(uint32_t j=0;j<cis[i].stageCount;j++) {
                 const auto& st=cis[i].pStages[j];
-                if(st.stage!=VK_SHADER_STAGE_VERTEX_BIT)continue;
                 const auto it=vertex_module_hash.find(st.module);
-                if(it!=vertex_module_hash.end() &&
-                   known_first_hud_shader(it->second))ui=true;
+                if(it==vertex_module_hash.end()) continue;
+                if(st.stage==VK_SHADER_STAGE_VERTEX_BIT &&
+                   known_first_hud_shader(it->second)) ui=true;
+                if(st.stage==VK_SHADER_STAGE_FRAGMENT_BIT &&
+                   it->second==kGuestHdrSceneCopy) hdr_copy=true;
             }
             known_ui_pipeline[output[i]]=ui;
+            known_hdr_copy_pipeline[output[i]]=hdr_copy;
+            if(hdr_copy) {
+                static bool once=false;
+                if(!once) {
+                    once=true;
+                    std::fprintf(stderr,
+                        "[BS4_FSR31] BLOODBORNE_HDR_SCENE_COPY_SHADER identified\\n");
+                }
+            }
             if(ui) {
                 static bool logged=false;
                 if(!logged) {
@@ -374,11 +395,15 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_graphics_pipelines(
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_destroy_pipeline(
     VkDevice d,VkPipeline pipeline,const VkAllocationCallbacks* allocator) {
-    {std::lock_guard lock{mutex};known_ui_pipeline.erase(pipeline);}
+    {std::lock_guard lock{mutex};
+        known_ui_pipeline.erase(pipeline);
+        known_hdr_copy_pipeline.erase(pipeline);
+    }
     if(original_destroy_pipeline)original_destroy_pipeline(d,pipeline,allocator);
 }
 thread_local VkCommandBuffer currently_bound_cb=VK_NULL_HANDLE;
 thread_local bool currently_bound_ui_shader=false;
+thread_local bool currently_bound_hdr_copy=false;
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_bind_pipeline(
     VkCommandBuffer cb,VkPipelineBindPoint point,VkPipeline pipeline) {
     if(point==VK_PIPELINE_BIND_POINT_GRAPHICS) {
@@ -387,21 +412,20 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_bind_pipeline(
             std::lock_guard lock{mutex};
             const auto it=known_ui_pipeline.find(pipeline);
             currently_bound_ui_shader=it!=known_ui_pipeline.end() && it->second;
+            const auto hdr=known_hdr_copy_pipeline.find(pipeline);
+            currently_bound_hdr_copy=hdr!=known_hdr_copy_pipeline.end() && hdr->second;
         }
     }
     if(original_bind_pipeline) original_bind_pipeline(cb,point,pipeline);
 }
 
-/* Called ONLY before a verified first guest HUD draw. Do not overwrite
- * arbitrary intermediate 1080p targets. Stop the active Vulkan dynamic
- * rendering pass, record real FSR3 640x360->1280x720 + composite, then
- * resume that exact pass with LOAD so all subsequent HUD draws are intact.
- *
- * This also avoids the R14/R18 error where the entire game scene appeared
- * corrupted while UI stayed legible. Unknown shaders pass through untouched.
+/* Called ONLY before the verified Bloodborne HDR scene-copy pixel shader.
+ * That copy occurs before post-processing; do not substitute the scene at
+ * the first HUD draw (R20 bug). Replace exactly this draw with FSR3 output,
+ * preserving the following game's HDR->LDR and HUD passes.
  */
-bool bs4_dispatch_at_first_ui_draw(VkCommandBuffer cb) {
-    if(cb!=currently_bound_cb || !currently_bound_ui_shader)return false;
+bool bs4_dispatch_at_hdr_scene_copy(VkCommandBuffer cb) {
+    if(cb!=currently_bound_cb || !currently_bound_hdr_copy)return false;
     ActiveRendering record{};
     {
         std::lock_guard lock{mutex};
@@ -449,8 +473,8 @@ bool bs4_dispatch_at_first_ui_draw(VkCommandBuffer cb) {
         if(!once){
             once=true;
             std::fprintf(stderr,
-                "[BS4_FSR31] FIRST_GUEST_HUD_DRAW temporal applied "
-                "without modifying an intermediate rendering pass\\n");
+                "[BS4_FSR31] FIRST_HDR_SCENE_COPY temporal applied "
+                "before guest post-processing and HUD\\n");
         }
     }
     return upscaled;
@@ -458,24 +482,24 @@ bool bs4_dispatch_at_first_ui_draw(VkCommandBuffer cb) {
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_draw(
     VkCommandBuffer cb,uint32_t vertexCount,uint32_t instanceCount,
     uint32_t firstVertex,uint32_t firstInstance) {
-    bs4_dispatch_at_first_ui_draw(cb);
+    if(bs4_dispatch_at_hdr_scene_copy(cb))return;
     if(original_draw)original_draw(cb,vertexCount,instanceCount,firstVertex,firstInstance);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_draw_indexed(
     VkCommandBuffer cb,uint32_t indexCount,uint32_t instanceCount,
     uint32_t firstIndex,int32_t vertexOffset,uint32_t firstInstance) {
-    bs4_dispatch_at_first_ui_draw(cb);
+    if(bs4_dispatch_at_hdr_scene_copy(cb))return;
     if(original_draw_indexed)original_draw_indexed(
         cb,indexCount,instanceCount,firstIndex,vertexOffset,firstInstance);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_draw_indirect(
     VkCommandBuffer cb,VkBuffer buffer,VkDeviceSize offset,uint32_t drawCount,uint32_t stride) {
-    bs4_dispatch_at_first_ui_draw(cb);
+    if(bs4_dispatch_at_hdr_scene_copy(cb))return;
     if(original_draw_indirect) original_draw_indirect(cb,buffer,offset,drawCount,stride);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_draw_indexed_indirect(
     VkCommandBuffer cb,VkBuffer buffer,VkDeviceSize offset,uint32_t drawCount,uint32_t stride) {
-    bs4_dispatch_at_first_ui_draw(cb);
+    if(bs4_dispatch_at_hdr_scene_copy(cb))return;
     if(original_draw_indexed_indirect)original_draw_indexed_indirect(
         cb,buffer,offset,drawCount,stride);
 }
