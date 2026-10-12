@@ -4,6 +4,8 @@
 // selected as the FSR output or overwritten by this class.
 #pragma once
 #include <array>
+#include <dlfcn.h>
+#include "port_native_dispatch.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/image.h"
@@ -22,7 +24,9 @@ public:
     PortUiSurface& operator=(const PortUiSurface&) = delete;
 
     bool Begin(VideoCore::Image& scene, VideoCore::ImageId scene_id,
-               VideoCore::ImageId ui_id, const VideoCore::Image* depth,
+               VideoCore::ImageId ui_id, const VideoCore::Image* ui_depth,
+               VideoCore::Image* scene_depth,
+               const PortCameraState& camera,
                VideoCore::ImageId ui_depth_id, vk::Extent2D output) {
         if (!scene_id || !ui_id || !output.width || !output.height ||
             output.width > 3840 || output.height > 2160) return false;
@@ -37,13 +41,48 @@ public:
         if (!(props.optimalTilingFeatures & vk::FormatFeatureFlagBits::eBlitSrc) ||
             !(props.optimalTilingFeatures & vk::FormatFeatureFlagBits::eBlitDst))
             return false;
-        const vk::Format df = depth ? depth->info.pixel_format :
+        const vk::Format df = ui_depth ? ui_depth->info.pixel_format :
                                              vk::Format::eD32SfloatS8Uint;
         if (!Ensure(output, format, df)) return false;
         scheduler.EndRendering();
         const auto cb = scheduler.CommandBuffer();
         scene.Transit(vk::ImageLayout::eTransferSrcOptimal,
                      vk::AccessFlagBits2::eTransferRead, {}, cb);
+        bool temporal = false;
+        if (format == vk::Format::eR8G8B8A8Unorm && scene_depth) {
+            // FEX/glibc FSR-Vulkan module is optional; never make a null
+            // symbol or an FSR failure crash the guest renderer.
+            const auto fn = reinterpret_cast<PreUiDispatchFn>(
+                dlsym(RTLD_DEFAULT, "bs4_fsr31_native_dispatch"));
+            if (fn) {
+                scene_depth->Transit(vk::ImageLayout::eTransferSrcOptimal,
+                    vk::AccessFlagBits2::eTransferRead, {}, cb);
+                NativePreUiDispatch request{};
+                request.color=static_cast<VkImage>(scene.GetImage());
+                request.colorFormat=static_cast<VkFormat>(format);
+                request.colorUsage=static_cast<VkImageUsageFlags>(scene.usage_flags);
+                request.colorSize={src.width,src.height};
+                request.colorLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                request.depth=static_cast<VkImage>(scene_depth->GetImage());
+                request.depthFormat=static_cast<VkFormat>(scene_depth->info.pixel_format);
+                request.depthUsage=static_cast<VkImageUsageFlags>(scene_depth->usage_flags);
+                request.depthSize={scene_depth->info.size.width,
+                                   scene_depth->info.size.height};
+                request.depthLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                request.output=static_cast<VkImage>(vk::Image(color));
+                request.outputFormat=static_cast<VkFormat>(format);
+                request.outputSize={output.width,output.height};
+                request.cameraValid=BuildMotionPush(request.motion,camera.Current(),
+                    camera.Previous(),src.width,src.height) ? 1u : 0u;
+                temporal=fn(static_cast<VkInstance>(instance.GetInstance()),
+                    static_cast<VkPhysicalDevice>(instance.GetPhysicalDevice()),
+                    static_cast<VkDevice>(instance.GetDevice()),
+                    static_cast<VkQueue>(instance.GetGraphicsQueue()),
+                    instance.GetGraphicsQueueFamilyIndex(),
+                    static_cast<VkCommandBuffer>(cb),&request)!=0;
+            }
+        }
+        if (!temporal) {
         auto b = Barrier(vk::Image(color), vk::ImageAspectFlagBits::eColor,
                          vk::ImageLayout::eUndefined,
                          vk::ImageLayout::eTransferDstOptimal);
@@ -61,6 +100,7 @@ public:
         b = Barrier(vk::Image(color), vk::ImageAspectFlagBits::eColor,
                     vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eGeneral);
         cb.pipelineBarrier2({.imageMemoryBarrierCount=1, .pImageMemoryBarriers=&b});
+        }
 
         auto db = Barrier(vk::Image(uiDepth), DepthAspect(),
                           vk::ImageLayout::eUndefined,
@@ -136,8 +176,7 @@ private:
             .usage=vk::ImageUsageFlagBits::eTransferDst |
                    vk::ImageUsageFlagBits::eTransferSrc |
                    vk::ImageUsageFlagBits::eSampled |
-                   vk::ImageUsageFlagBits::eColorAttachment |
-                   vk::ImageUsageFlagBits::eStorage,
+                   vk::ImageUsageFlagBits::eColorAttachment,
             .initialLayout=vk::ImageLayout::eUndefined
         });
         uiDepth.Create({
