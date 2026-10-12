@@ -18,7 +18,7 @@ assert raster.is_file() and header.is_file() and presenter.is_file()
 src = raster.read_text()
 hdr = header.read_text()
 pres = presenter.read_text()
-for filename in ("port_camera_state.h", "port_rasterizer_scene.h", "port_ui_surface.h"):
+for filename in ("port_camera_state.h", "port_camera_motion_math.h", "port_native_dispatch.h", "port_rasterizer_scene.h", "port_ui_surface.h"):
     shutil.copyfile(package / filename, raster.parent / filename)
 
 def replace_once(value: str, before: str, after: str) -> str:
@@ -45,6 +45,7 @@ hdr = replace_once(hdr, "    bool attachment_feedback_loop{};",
     "    Bachata::Fsr31::RasterizerSceneStage fsr31PortStage{};\n"
     "    std::unique_ptr<Bachata::Fsr31::PortUiSurface> fsr31PortUi;\n"
     "    VideoCore::ImageId fsr31PortLdr{};\n"
+    "    VideoCore::ImageId fsr31PortMainDepth{};\n"
     "    std::array<float,2> fsr31PortUiRenderScale{1.f,1.f};")
 
 src = replace_once(src,
@@ -103,6 +104,7 @@ body = r'''
         // Never use the final VideoOut image as temporal scene input.
         if (event == Bachata::Fsr31::Event::GBuffer) {
             fsr31PortLdr = {};
+            fsr31PortMainDepth = db_desc.first;
             fsr31PortUi->CancelFrame();
         } else if (event == Bachata::Fsr31::Event::LDRScene) {
             fsr31PortLdr = cb_descs[0].first;
@@ -115,8 +117,11 @@ body = r'''
             const vk::Extent2D out{1280,720};
             if (scene.info.size.width < out.width &&
                 scene.info.size.height < out.height) {
+                auto* main_depth = fsr31PortMainDepth ?
+                    &texture_cache.GetImage(fsr31PortMainDepth) : nullptr;
                 fsr31PortUi->Begin(scene, fsr31PortLdr, cb_descs[0].first,
-                                   depth, db_desc.first, out);
+                                   depth, main_depth, fsr31PortCamera,
+                                   db_desc.first, out);
             }
         }
     }
@@ -158,6 +163,7 @@ void Rasterizer::Fsr31PortOnPresentedFrame() {
     fsr31PortCamera.OnDisplayFrame();
     fsr31PortStage.OnDisplayFrame();
     fsr31PortLdr = {};
+    fsr31PortMainDepth = {};
 }
 Bachata::Fsr31::PortUiSurface::Display Rasterizer::Fsr31PortTakeDisplay() {
     return fsr31PortUi ? fsr31PortUi->TakeDisplay()
