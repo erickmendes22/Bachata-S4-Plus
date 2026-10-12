@@ -217,6 +217,7 @@ src = replace_once(src,
 pres = replace_once(pres,
     "    texture_cache.UpdateImage(image_id);",
     "    texture_cache.UpdateImage(image_id);\n"
+    "    const auto port_display = rasterizer->Fsr31PortTakeDisplay();\n"
     "    rasterizer->Fsr31PortOnPresentedFrame();")
 
 # The upstream font helper uses reinterpret_cast inside constexpr data() accessors.
@@ -229,6 +230,19 @@ for old_signature, new_signature in (
     ("    constexpr const u8* data() const {", "    const u8* data() const {"),
 ):
     font_src = replace_once(font_src, old_signature, new_signature)
+
+
+pres = replace_once(pres,
+    "    const vk::Extent2D image_size = {image.info.size.width, image.info.size.height};",
+    "    vk::Extent2D image_size = {image.info.size.width, image.info.size.height};")
+pres = replace_once(pres,
+    "    image_view = fsr_pass.Render(cmdbuf, image_view, image_size, {frame->width, frame->height},",
+    "    // Preserve original guest screenshots; display the isolated HUD target.\n"
+    "    if (port_display.view) {\n"
+    "        image_view = port_display.view;\n"
+    "        image_size = port_display.size;\n"
+    "    }\n"
+    "    image_view = fsr_pass.Render(cmdbuf, image_view, image_size, {frame->width, frame->height},")
 
 header.write_text(hdr)
 raster.write_text(src)
