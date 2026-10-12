@@ -17,6 +17,8 @@
 #include <dlfcn.h>
 
 extern "C" VkImageView bs4_port_ui_redirect_sampled(VkCommandBuffer,VkImageView);
+extern "C" int bs4_port_ui_projection_signs(
+    VkCommandBuffer,float*,float*);
 namespace {
 struct Binding {VkDeviceMemory memory=VK_NULL_HANDLE;VkDeviceSize base=0;};
 struct Mapping {const uint8_t* addr=nullptr;VkDeviceSize offset=0,length=0;};
@@ -77,6 +79,13 @@ void inspect_buffer(VkCommandBuffer cb,const VkDescriptorBufferInfo& info) {
     if(d==active_depth.end() || e==active_extent.end() ||
        !d->second || c.width!=e->second.width ||
        c.height!=e->second.height)return;
+    float viewportX=0,viewportY=0;
+    // The port's CameraMotion::OnGBufferPass applies these signs to
+    // projection x/y before reconstructing motion from guest depth.
+    if(!bs4_port_ui_projection_signs(cb,&viewportX,&viewportY))
+        return;
+    c.projection[0]*=viewportX;
+    c.projection[1]*=viewportY;
     CameraRecord rec{};
     rec.camera=c;rec.depth=d->second;rec.frame=frame_sequence;rec.valid=true;
     recorded[cb]=rec;
