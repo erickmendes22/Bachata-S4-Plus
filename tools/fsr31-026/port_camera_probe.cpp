@@ -242,6 +242,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_bind_sets(
 }
 // Descriptor recording and scene beginning can have different order.
 // Inspect again at the actual G-buffer draw, after both are known.
+extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer);
 void bs4_port_scan_at_draw(VkCommandBuffer cb) {
     std::lock_guard lock{guard};
     auto existing=recorded.find(cb);
@@ -262,22 +263,26 @@ void bs4_port_scan_at_draw(VkCommandBuffer cb) {
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_draw(
     VkCommandBuffer cb,uint32_t v,uint32_t n,uint32_t first,uint32_t instance) {
     bs4_port_scan_at_draw(cb);
+    bs4_port_ui_try_activate(cb);
     if(real_draw)real_draw(cb,v,n,first,instance);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_draw_indexed(
     VkCommandBuffer cb,uint32_t v,uint32_t n,uint32_t first,
     int32_t base,uint32_t instance) {
     bs4_port_scan_at_draw(cb);
+    bs4_port_ui_try_activate(cb);
     if(real_draw_indexed)real_draw_indexed(cb,v,n,first,base,instance);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_draw_indirect(
     VkCommandBuffer cb,VkBuffer buf,VkDeviceSize offset,uint32_t n,uint32_t stride) {
     bs4_port_scan_at_draw(cb);
+    bs4_port_ui_try_activate(cb);
     if(real_draw_indirect)real_draw_indirect(cb,buf,offset,n,stride);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_draw_indexed_indirect(
     VkCommandBuffer cb,VkBuffer buf,VkDeviceSize offset,uint32_t n,uint32_t stride) {
     bs4_port_scan_at_draw(cb);
+    bs4_port_ui_try_activate(cb);
     if(real_draw_indexed_indirect)real_draw_indexed_indirect(cb,buf,offset,n,stride);
 }
 extern "C" PFN_vkVoidFunction bs4_port_wrap_proc(
