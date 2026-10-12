@@ -149,6 +149,7 @@ extern "C" void bs4_port_reset_cb(VkCommandBuffer cb) {
     recorded.erase(cb);active_depth.erase(cb);active_extent.erase(cb);
     pending_push.erase(cb);bound_sets.erase(cb);
 }
+static float Halton(unsigned n,unsigned base);
 extern "C" int bs4_port_jitter_for_pass(VkExtent2D size,float* x,float* y) {
     if(!x || !y || !size.width || !size.height)return 0;
     const char* mode=std::getenv("BACHATA_FSR31_MODE");
