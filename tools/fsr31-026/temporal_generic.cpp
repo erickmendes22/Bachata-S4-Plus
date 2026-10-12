@@ -209,13 +209,16 @@ FfxVkPortableImage describe(const Surface& s,FfxVkPortableResourceState state) {
     im.mipCount=1;im.arrayLayers=1;im.usage=s.usage;
     im.aspect=s.aspect;im.state=state;return im;
 }
+bool build_camera_compute();
+void camera_flow(VkCommandBuffer cb, const Frame& frame, VkExtent2D size,
+                 const Bachata::Fsr31::MotionPush& push);
 bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D output,
                   VkFormat color_format,VkFormat depth_format) {
     free_all();
     config={};config.structSize=sizeof(config);
     config.maxRenderSize={render.width,render.height};
     config.maxOutputSize={output.width,output.height};
-    if(!build_compute())return false;
+    if(!build_compute() || !build_camera_compute())return false;
     const VkImageUsageFlags sampled=VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT|
                                     VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     const VkImageUsageFlags storage=VK_IMAGE_USAGE_STORAGE_BIT|VK_IMAGE_USAGE_SAMPLED_BIT|
@@ -230,6 +233,8 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
         VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         ai.descriptorPool=descriptors;ai.descriptorSetCount=1;ai.pSetLayouts=&desc_layout;
         if(!result(vkAllocateDescriptorSets(device,&ai,&f.descriptor),"descriptors"))return false;
+        ai.descriptorPool=camera_pool;ai.pSetLayouts=&camera_desc_layout;
+        if(!result(vkAllocateDescriptorSets(device,&ai,&f.cameraDescriptor),"camera descriptors"))return false;
     }
     if(!alloc(previous,color_format,render,sampled,VK_IMAGE_ASPECT_COLOR_BIT))return false;
     const auto r=ffxVkPortableUpscaleContextCreate(&info,&config,&fsr);
@@ -262,6 +267,7 @@ void flow(VkCommandBuffer cb,const Frame& f,VkExtent2D size) {
     vkCmdPushConstants(cb,pipeline_layout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(pc),&pc);
     vkCmdDispatch(cb,(size.width+7)/8,(size.height+7)/8,1);
 }
+#include "port_sdk_camera.inc"
 } // namespace
 
 extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_render(
