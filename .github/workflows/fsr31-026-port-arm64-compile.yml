@@ -9,6 +9,8 @@ on:
       - 'tools/fsr31-026/port_camera_motion_math.h'
       - 'tools/fsr31-026/port_rasterizer_scene.h'
       - 'tools/fsr31-026/port_ui_surface.h'
+      - 'tools/fsr31-026/core024_router.c'
+      - 'tools/fsr31-026/port_native_dispatch.h'
 permissions: {contents: read}
 jobs:
   arm64:
@@ -50,6 +52,14 @@ jobs:
             | grep -F 'Machine:' | grep -F 'AArch64'
           sha256sum arm64-source/runtime/build/shadps4-arm64/shadps4 \
             | tee arm64-patched-sha256.txt
+      - name: Compile reversible core024 FSR3 ELF selector
+        run: |
+          set -euxo pipefail
+          cc -std=c11 -O2 -Wall -Wextra -Werror -fPIE -pie \
+            tools/fsr31-026/core024_router.c -o shadps4-arm64-024-router
+          file shadps4-arm64-024-router | grep -Ei 'aarch64|ARM aarch64'
+          readelf -h shadps4-arm64-024-router | grep -F 'AArch64'
+          sha256sum shadps4-arm64-024-router
       - uses: actions/upload-artifact@v4
         with:
           name: PORT-ARM64-SOURCE-COMPILATION-VALIDATION
@@ -57,4 +67,5 @@ jobs:
             arm64-source-revision.txt
             arm64-patched-sha256.txt
             arm64-source/runtime/build/shadps4-arm64/shadps4
+            shadps4-arm64-024-router
           retention-days: 7
