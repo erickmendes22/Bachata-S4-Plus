@@ -243,6 +243,7 @@ void flow(VkCommandBuffer cb,const Frame& f,VkExtent2D size) {
 }
 } // namespace
 
+extern "C" void bs4_fsr31_suspend_capture();
 extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_render(
     const FfxVkPortableDeviceInfo* owned,VkCommandBuffer cb,VkImageView input,
     VkExtent2D input_extent,VkExtent2D output_extent,int preset,int hdr) {
@@ -260,6 +261,11 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     if (input_extent.width >= output_extent.width &&
         input_extent.height >= output_extent.height) {
         report_once(14, "source already >= presentation size; no forced downsample");
+        // This renderer callsite only ever sees the post-UI VideoOut frame.
+        // It has no access to the game's reduced 640x360 scene. Continuing
+        // to intercept every vkCmdBeginRendering/vkCmdPipelineBarrier2 while
+        // falling back to FSR1 was pure overhead on the Adreno 830.
+        bs4_fsr31_suspend_capture();
         return 0;
     }
     Bs4FsrCaptureImage color{},depth{};
