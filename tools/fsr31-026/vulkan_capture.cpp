@@ -346,7 +346,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_graphics_pipelines(
     if(!original_create_graphics_pipelines)return VK_ERROR_INITIALIZATION_FAILED;
     const VkResult status=original_create_graphics_pipelines(
         device,cache,count,cis,allocator,output);
-    if(output && cis && (status==VK_SUCCESS || status==VK_PIPELINE_COMPILE_REQUIRED)) {
+    if(output && cis && status==VK_SUCCESS) {
         std::lock_guard lock{mutex};
         for(uint32_t i=0;i<count;i++) {
             if(!output[i])continue;
@@ -417,7 +417,10 @@ bool bs4_dispatch_at_first_ui_draw(VkCommandBuffer cb) {
     auto begin_fn=record.khr?original_begin_rendering_khr:original_begin_rendering;
     if(!end_fn || !begin_fn)return false;
     // pNext chains and suspend/resume attachments cannot be safely replayed.
-    if(record.info.pNext ||
+    if(record.info.pNext || record.color.size()!=1 ||
+       record.color[0].storeOp!=VK_ATTACHMENT_STORE_OP_STORE ||
+       !record.color[0].imageView ||
+       record.color[0].resolveImageView!=VK_NULL_HANDLE ||
        (record.info.flags & (VK_RENDERING_SUSPENDING_BIT |
                              VK_RENDERING_RESUMING_BIT)))return false;
 
