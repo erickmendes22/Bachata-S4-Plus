@@ -3,6 +3,7 @@
 // The motion shader estimates optical flow from consecutive color frames.
 // Unlike game-specific forks, this path does not rely on guest shader hashes.
 #include "vulkan_capture.h"
+#include "port_runscaled_contract.h"
 #include "ffx_vk_portable.h"
 #include "flow_spv.h"
 #include <vulkan/vulkan.h>
@@ -189,9 +190,10 @@ FfxVkPortableImage describe(const Surface& s,FfxVkPortableResourceState state) {
     im.aspect=s.aspect;im.state=state;return im;
 }
 bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D output,
-                  VkFormat color_format,VkFormat depth_format) {
+                  VkFormat color_format,VkFormat depth_format,VkFormat output_format) {
     free_all();
     config={};config.structSize=sizeof(config);
+    config.flags=BachataPortScaled::ContextFlags; // Scaled RunScaled: LDR, never HDR.
     config.maxRenderSize={render.width,render.height};
     config.maxOutputSize={output.width,output.height};
     if(!build_compute())return false;
@@ -204,7 +206,7 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
         if(!alloc(f.scene,color_format,render,sampled,VK_IMAGE_ASPECT_COLOR_BIT) ||
            !alloc(f.depth,depth_format,render,sampled,VK_IMAGE_ASPECT_DEPTH_BIT) ||
            !alloc(f.motion,VK_FORMAT_R16G16_SFLOAT,render,storage,VK_IMAGE_ASPECT_COLOR_BIT) ||
-           !alloc(f.output,VK_FORMAT_R16G16B16A16_SFLOAT,output,storage,VK_IMAGE_ASPECT_COLOR_BIT))
+           !alloc(f.output,output_format,output,storage,VK_IMAGE_ASPECT_COLOR_BIT))
             return false;
         VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         ai.descriptorPool=descriptors;ai.descriptorSetCount=1;ai.pSetLayouts=&desc_layout;
@@ -266,12 +268,20 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     Bs4FsrCaptureImage color{},depth{};
     if(!bs4_fsr31_capture_image(input,&color)){report_once(4,"Vulkan color image view not captured");return 0;}
     if (pre_ui) {
+        // RunScaled must consume an LDR color target, NEVER G-buffer HDR fmt=122.
+        // This is a strict port-equivalent producer contract, not a size guess.
+        if (!BachataPortScaled::SceneAndOutput(color.format,input_extent,output_extent)) {
+            report_once(16,"port RunScaled requires genuine RGBA8 LDR scene");return 0;
+        }
         // Depth must originate in the same completed Vulkan render pass as
         // the selected reduced scene, not merely the globally newest image.
         if (!scene_depth_view || !bs4_fsr31_capture_image(scene_depth_view,&depth) ||
             !(depth.aspects & VK_IMAGE_ASPECT_DEPTH_BIT)) {
             report_once(5,"pre-UI matching scene depth image not available");
             return 0;
+        }
+        if (!BachataPortScaled::MatchingDepth(input_extent,depth.size)) {
+            report_once(17,"RunScaled LDR/depth raster extents mismatch");return 0;
         }
     } else if (!bs4_fsr31_capture_depth(input_extent,&depth)) {
         report_once(5,"depth image matching render extent not captured");
@@ -287,7 +297,8 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     VkFormatProperties color_props{},rgba_props{};
     vkGetPhysicalDeviceFormatProperties(owned->physicalDevice,color.format,&color_props);
     vkGetPhysicalDeviceFormatProperties(owned->physicalDevice,
-                                         VK_FORMAT_R16G16B16A16_SFLOAT,&rgba_props);
+                                         pre_ui?VK_FORMAT_R8G8B8A8_UNORM:
+                                                VK_FORMAT_R16G16B16A16_SFLOAT,&rgba_props);
     if (!(color_props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) ||
         !(rgba_props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT)) {
         std::fprintf(stderr,
@@ -351,12 +362,17 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     if(!depth.size.width||!depth.size.height){report_once(11,"depth extent invalid");return 0;}
     if ((internal.width!=depth.size.width || internal.height!=depth.size.height) &&
         !depth_can_blit){report_once(12,"scaled depth blit unsupported by GPU");return 0;}
+    const VkFormat target_format=pre_ui?BachataPortScaled::UiOutputFormat:
+                                     VK_FORMAT_R16G16B16A16_SFLOAT;
+    const VkFormat working_color=pre_ui?VK_FORMAT_R8G8B8A8_UNORM:
+                                        VK_FORMAT_R16G16B16A16_SFLOAT;
     if(!fsr || config.maxRenderSize.width!=internal.width ||
        config.maxRenderSize.height!=internal.height ||
        config.maxOutputSize.width!=output_extent.width ||
        config.maxOutputSize.height!=output_extent.height ||
-       frames[0].scene.format!=VK_FORMAT_R16G16B16A16_SFLOAT ||frames[0].depth.format!=depth.format) {
-        if(!allocate_for(*owned,internal,output_extent,VK_FORMAT_R16G16B16A16_SFLOAT,depth.format)){report_once(13,"FSR resource or context creation failed");return 0;}
+       frames[0].scene.format!=working_color ||
+       frames[0].output.format!=target_format ||frames[0].depth.format!=depth.format) {
+        if(!allocate_for(*owned,internal,output_extent,working_color,depth.format,target_format)){report_once(13,"FSR resource or context creation failed");return 0;}
     }
     Frame& f=frames[cursor++%frames.size()];
     transit(cb,f.scene,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
