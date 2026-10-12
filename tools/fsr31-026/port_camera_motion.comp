@@ -1,0 +1,39 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Bloodborne-Android android-0.5.2 camera_motion.comp logic, simplified for
+// the original BACHATA core: camera-space motion from REAL GBuffer depth.
+// The old optical-flow shader remains the fallback for games without a
+// verified camera. Never synthesize motion from the final UI buffer.
+#version 450
+#extension GL_EXT_samplerless_texture_functions : require
+layout(local_size_x=8,local_size_y=8) in;
+layout(binding=0) uniform texture2D depth_tex;
+layout(binding=1, rg16f) uniform writeonly image2D motion_img;
+layout(push_constant) uniform MotionCamera {
+    vec4 reproject[3]; // previous view * inverse current view
+    vec4 proj;
+    vec4 prev_proj;
+    vec2 size;
+    vec2 jitter;
+    vec2 previous_jitter;
+    uint mode;
+} c;
+void main() {
+    ivec2 pixel=ivec2(gl_GlobalInvocationID.xy);
+    if(pixel.x>=int(c.size.x)||pixel.y>=int(c.size.y))return;
+    float depth=texelFetch(depth_tex,pixel,0).r;
+    vec2 uv=(vec2(pixel)+0.5)/c.size;
+    vec2 scene_uv=uv-c.jitter/c.size;
+    vec2 ndc=scene_uv*2.0-1.0;
+    bool sky=depth>=1.0;
+    float denom=min(depth-c.proj.z,-1e-8);
+    float z=sky?1.0:c.proj.w/denom;
+    vec4 view=vec4(ndc.x*z/c.proj.x,ndc.y*z/c.proj.y,z,sky?0.0:1.0);
+    vec3 prev_view=vec3(dot(c.reproject[0],view),
+                        dot(c.reproject[1],view),
+                        dot(c.reproject[2],view));
+    vec2 prev_ndc=vec2(prev_view.x*c.prev_proj.x,
+                       prev_view.y*c.prev_proj.y)/max(prev_view.z,1e-4);
+    vec2 prev_uv=prev_ndc*0.5+0.5;
+    vec2 motion=(prev_uv-scene_uv)*c.size;
+    imageStore(motion_img,pixel,vec4(motion,0.0,0.0));
+}
