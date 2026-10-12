@@ -82,8 +82,8 @@ void inspect_buffer(VkCommandBuffer cb,const VkDescriptorBufferInfo& info) {
     // 1920x1080 render area and physically full-sized attachments.
     // Equality with VkRenderingInfo.renderArea made R17 reject REAL cameras.
     if(d==active_depth.end() || e==active_extent.end() ||
-       !d->second || c.width>e->second.width ||
-       c.height>e->second.height || c.width<64 || c.height<64)return;
+       !d->second || !BachataCamera::GBufferCanContainScene(
+           5,true,e->second.width,e->second.height,c))return;
     float viewportX=0,viewportY=0;
     // The port's CameraMotion::OnGBufferPass applies these signs to
     // projection x/y before reconstructing motion from guest depth.
