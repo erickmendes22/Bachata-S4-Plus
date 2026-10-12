@@ -1,7 +1,7 @@
 name: Build Android GLIBC FSR3 SDK for existing core 024
 on:
   push:
-    branches: [feature/fsr31-026-existing-core, feature/fsr31-026-r13-pre-ui]
+    branches: [feature/fsr31-026-existing-core, feature/fsr31-026-r13-pre-ui, feature/fsr31-r19-safe-presenter-core024]
     paths:
       - 'tools/fsr31-026/**'
       - '.github/workflows/fsr31-026-build.yml'
@@ -118,7 +118,7 @@ jobs:
           sha256sum build/libbachata_fsr31.so | tee sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: BS4-026-FSR31-GLIBC-BACKEND
+          name: BS4-R19-SAFE-FSR31-GLIBC-BACKEND
           path: |
             build/libbachata_fsr31.so
             sha256.txt
