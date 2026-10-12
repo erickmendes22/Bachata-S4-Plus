@@ -146,8 +146,10 @@ void barrier(VkCommandBuffer cb, VkImage image, VkImageAspectFlags aspect,
 void transit(VkCommandBuffer cb,Surface& s,VkImageLayout next) {
     barrier(cb,s.image,s.aspect,s.layout,next);s.layout=next;
 }
+extern "C" void bs4_port_ui_free_surfaces();
 void free_all() {
     if(device)vkDeviceWaitIdle(device);
+    if(device)bs4_port_ui_free_surfaces();
     if(fsr) {ffxVkPortableUpscaleContextDestroy(fsr);fsr=nullptr;}
     if(port_pipeline)vkDestroyPipeline(device,port_pipeline,nullptr);
     if(port_pipeline_layout)vkDestroyPipelineLayout(device,port_pipeline_layout,nullptr);
