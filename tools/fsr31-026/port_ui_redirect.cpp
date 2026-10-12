@@ -34,6 +34,8 @@ struct State {
     VkViewport viewport{};
     VkRect2D scissor{};
     bool haveViewport=false,haveScissor=false;
+    bool jitterActive=false;
+    float jitterX=0,jitterY=0;
     VkRenderingInfo resumed{};
     std::array<VkRenderingAttachmentInfo,1> hudColor{};
     VkRenderingAttachmentInfo hudDepth{},hudStencil{};
@@ -85,6 +87,29 @@ VkImageAspectFlags aspects(VkFormat f) {
 }
 } // namespace
 
+
+// This is the port's subpixel viewport technique. It is called only AFTER
+// genuine guest camera constants are found on a live G-buffer draw.
+extern "C" int bs4_port_ui_apply_camera_jitter(
+    VkCommandBuffer cb,float x,float y) {
+    if(!cb || !std::isfinite(x) || !std::isfinite(y) ||
+       std::abs(x)>0.501f || std::abs(y)>0.501f || !realSetViewport)
+        return 0;
+    std::lock_guard lock{uiMutex};
+    const auto it=cmds.find(cb);
+    if(it==cmds.end())return 0;
+    auto& s=it->second;
+    if(!s.inside || s.uiPhase || !s.haveViewport ||
+       s.guest.colorAttachmentCount<2 || !s.hasDepth ||
+       s.guest.renderArea.extent.width>1280 ||
+       s.guest.renderArea.extent.height>720)return 0;
+    if(s.jitterActive)return 1;
+    VkViewport p=s.viewport;
+    p.x+=x;p.y+=y;
+    realSetViewport(cb,0,1,&p);
+    s.jitterActive=true;s.jitterX=x;s.jitterY=y;
+    return 1;
+}
 extern "C" VkImageView bs4_port_prepare_ui(VkCommandBuffer);
 extern "C" VkImage bs4_fsr31_output_image(VkImageView);
 extern "C" int bs4_fsr31_set_output_layout(VkImageView,VkImageLayout);
@@ -278,6 +303,10 @@ extern "C" void bs4_port_ui_redirect_end(VkCommandBuffer cb) {
         }
     }
     s.uiPass=false;
+    if(s.jitterActive && realSetViewport) {
+        realSetViewport(cb,0,1,&s.viewport);
+        s.jitterActive=false;s.jitterX=s.jitterY=0;
+    }
 }
 // Called before the first positively identified guest UI draw, while inside
 // original dynamic rendering. Replaces the pass with a 720p guest HUD pass.
@@ -431,7 +460,11 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_viewport(
     if(first==0&&count==1&&v) {
         std::lock_guard lock{uiMutex};
         auto& s=cmds[cb];s.viewport=*v;s.haveViewport=true;
-        redirect=s.uiPass; if(redirect)out=scaled(*v);
+        redirect=s.uiPass || s.jitterActive;
+        if(s.uiPass)out=scaled(*v);
+        else if(s.jitterActive) {
+            out=*v;out.x+=s.jitterX;out.y+=s.jitterY;
+        }
     }
     if(realSetViewport)
         realSetViewport(cb,first,count,redirect?&out:v);
