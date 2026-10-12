@@ -94,7 +94,8 @@ extern "C" int bs4_fsr31_capture_depth(VkExtent2D expected, Bs4FsrCaptureImage* 
         if(img.size.width!=expected.width || img.size.height!=expected.height)
             continue;
         if(!(img.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))continue;
-        if(!(img.usage & VK_IMAGE_USAGE_SAMPLED_BIT))continue;
+        // Original depth is copied into a sampled image owned by the FSR backend;
+        // the guest attachment itself need not support sampling.
         best=img.last_depth_use;
         *out={handle,img.format,img.size,img.usage,img.layout,
             VK_IMAGE_ASPECT_DEPTH_BIT};
