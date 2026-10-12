@@ -138,6 +138,24 @@ extern "C" VkImageView bs4_port_ui_present(VkCommandBuffer cb){
            VK_NULL_HANDLE:it->second;
 }
 
+// The Port derives the projection-axis signs from the ACTUAL G-buffer
+// viewport, not from camera constants alone. Inspect at draw time after
+// vkCmdSetViewport; geometry and camera must belong to the same pass.
+extern "C" int bs4_port_ui_projection_signs(
+    VkCommandBuffer cb,float* x,float* y) {
+    if(!cb || !x || !y)return 0;
+    std::lock_guard lock{uiMutex};
+    const auto it=cmds.find(cb);
+    if(it==cmds.end())return 0;
+    const auto& s=it->second;
+    if(!s.inside || s.uiPhase || !s.hasDepth ||
+       s.guest.colorAttachmentCount<2 || !s.haveViewport ||
+       std::abs(s.viewport.width)<0.001f ||
+       std::abs(s.viewport.height)<0.001f)return 0;
+    *x=s.viewport.width<0.f?-1.f:1.f;
+    *y=s.viewport.height<0.f?-1.f:1.f;
+    return 1;
+}
 extern "C" void bs4_port_ui_note_draw(VkCommandBuffer cb) {
     std::lock_guard lock{uiMutex};
     auto it=cmds.find(cb);
@@ -301,19 +319,10 @@ extern "C" bool bs4_port_ui_redirect_begin(
     s.hasStencil=input->pStencilAttachment!=nullptr;
     if(s.hasDepth)s.depth=*input->pDepthAttachment;
     if(s.hasStencil)s.stencil=*input->pStencilAttachment;
-    // The Port jitters G-buffer geometry BEFORE the first draw. Once a real
-    // previous Bloodborne camera identifies this pass, apply the port's
-    // Halton offset at the pass boundary, and restore it at pass end.
-    if(!s.uiPhase && s.hasDepth && input->colorAttachmentCount>=2) {
-        float jx=0,jy=0;
-        if(bs4_port_jitter_for_pass(input->renderArea.extent,&jx,&jy)) {
-            s.jitterActive=true;s.jitterX=jx;s.jitterY=jy;
-            if(s.haveViewport && realSetViewport) {
-                VkViewport p=s.viewport;p.x+=jx;p.y+=jy;
-                realSetViewport(cb,0,1,&p);
-            }
-        }
-    }
+    // Never jitter a render pass merely because its dimensions resemble a
+    // G-buffer. The genuine Port requires CURRENT scene-camera constants
+    // before applying jitter. bs4_port_scan_at_draw verifies those constants
+    // and applies the Halton viewport shift before the guest draw command.
     if(s.uiPhase && s.originalUI && input->colorAttachmentCount==1 &&
        input->pColorAttachments && input->pColorAttachments[0].imageView==s.originalUI) {
         auto depth=uiDepth.find(s.output);
