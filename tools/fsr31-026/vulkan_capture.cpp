@@ -2,6 +2,7 @@
 // Capture real Vulkan image descriptions from the renderer. No guest shader
 // hashes, no Mesa/Turnip private memory-layout reads.
 #include "vulkan_capture.h"
+extern "C" int bs4_fsr31_selected_preset();
 #include "port_camera_constants.h"
 #include <atomic>
 #include <cstdio>
@@ -204,9 +205,7 @@ extern "C" int bs4_port_can_prepare_ui(VkCommandBuffer cb) {
             return 0;
     }
     if(scene.frame!=bs4_port_frame_generation())return 0;
-    const char* mode=std::getenv("BACHATA_FSR31_MODE");
-    if(!mode || mode[0]<'0'||mode[0]>'4'||mode[1]!='\0')
-        return 0;
+    if(bs4_fsr31_selected_preset()<0)return 0;
     BachataCamera::Push push{};
     const VkImageView depth=bs4_port_camera_for_scene(
         cb,scene.extent,&push,sizeof(push));
