@@ -6,7 +6,8 @@
 #include <ffx_vk_portable.h>
 extern "C" uint64_t bs4_fsr31_generic_render(const FfxVkPortableDeviceInfo* info,
     VkCommandBuffer cmd,VkImageView input,VkExtent2D inputSize,
-    VkExtent2D outputSize,int preset,int hdr);
+    VkExtent2D outputSize,int preset,int hdr,int pre_ui);
+extern "C" VkImage bs4_fsr31_output_image(VkImageView);
 #include <cstdint>
 #include <cmath>
 #include <cstdio>
@@ -142,7 +143,7 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(
         return bs4_fsr31_generic_render(&acquired_device,
             reinterpret_cast<VkCommandBuffer>(commandBuffer),
             reinterpret_cast<VkImageView>(inputView),input_size,output_size,
-            preset,int(hdr != 0));
+            preset,int(hdr != 0),0);
     }
     auto info = pending.info;
     // Preset scales are constraints on the *actual scene render extent*, never
@@ -166,6 +167,48 @@ BS4_PUBLIC uint64_t bs4_fsr31_try_render(
         ? reinterpret_cast<uint64_t>(view) : 0;
 }
 
+
+
+/* Called strictly at the transition from the game's reduced 3D render
+ * target to the first full-size UI render target. This uses the existing
+ * FSR 3.1 backend and keeps the stock presenter as a fallback. */
+BS4_PUBLIC int bs4_fsr31_pre_ui_dispatch(
+        VkCommandBuffer command, VkImageView scene_color,
+        VkExtent2D scene_extent, VkExtent2D output_extent,
+        VkImage* output_image) {
+    if (!output_image) return 0;
+    *output_image = VK_NULL_HANDLE;
+    if (!command || !scene_color || !scene_extent.width ||
+        !scene_extent.height) return 0;
+    FfxVkPortableDeviceInfo info{};
+    int preset = -1;
+    {
+        std::lock_guard<std::mutex> lock(guard);
+        if (!device_attached) return 0;
+        info = acquired_device;
+        if (const char* mode=std::getenv("BACHATA_FSR31_MODE")) {
+            if (mode[0]>='0'&&mode[0]<='4'&&mode[1]==0)
+                preset=mode[0]-'0';
+        }
+    }
+    if (preset < 0) return 0;
+    const auto upscaled = bs4_fsr31_generic_render(
+        &info,command,scene_color,scene_extent,output_extent,preset,0,1);
+    if (!upscaled) return 0;
+    const auto image = bs4_fsr31_output_image(
+        reinterpret_cast<VkImageView>(upscaled));
+    if (!image) return 0;
+    *output_image=image;
+    static bool first=true;
+    if(first) {
+        first=false;
+        std::fprintf(stderr,
+          "[BS4_FSR31] FIRST_PRE_UI_DISPATCH scene=%ux%u output=%ux%u preset=%d\\n",
+          scene_extent.width,scene_extent.height,
+          output_extent.width,output_extent.height,preset);
+    }
+    return 1;
+}
 
 BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice device,
                                  void* allocator, uint32_t swap_images) {
