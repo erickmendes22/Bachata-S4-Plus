@@ -8,6 +8,8 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdlib>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -142,7 +144,7 @@ bool createDepth(VkImageView output,VkFormat format,Depth& dest){
         vkDestroyImage(dev,image,nullptr);return false;
     }
     if(vkBindImageMemory(dev,image,memory,0)!=VK_SUCCESS){
-        vkFreeMemory(dev,memory,nullptr);vkDestroyImage(dev,image,nullptr);
+        vkDestroyImage(dev,image,nullptr);vkFreeMemory(dev,memory,nullptr);
         return false;
     }
     VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -150,7 +152,7 @@ bool createDepth(VkImageView output,VkFormat format,Depth& dest){
     vi.format=format;vi.subresourceRange={aspect,0,1,0,1};
     VkImageView view=VK_NULL_HANDLE;
     if(vkCreateImageView(dev,&vi,nullptr,&view)!=VK_SUCCESS){
-        vkFreeMemory(dev,memory,nullptr);vkDestroyImage(dev,image,nullptr);
+        vkDestroyImage(dev,image,nullptr);vkFreeMemory(dev,memory,nullptr);
         return false;
     }
     dest={image,memory,view,format,VK_IMAGE_LAYOUT_UNDEFINED};
@@ -232,16 +234,24 @@ extern "C" bool bs4_port_ui_redirect_begin(
     std::lock_guard lock{uiMutex};
     State& s=cmds[cb];
     s.inside=true;s.khr=khr;s.guest=*input;
-    s.color.assign(input->pColorAttachments,
-                    input->pColorAttachments+input->colorAttachmentCount);
+    s.color.clear();
+    if(input->pColorAttachments && input->colorAttachmentCount)
+        s.color.assign(input->pColorAttachments,
+                       input->pColorAttachments+input->colorAttachmentCount);
     s.hasDepth=input->pDepthAttachment!=nullptr;
     s.hasStencil=input->pStencilAttachment!=nullptr;
     if(s.hasDepth)s.depth=*input->pDepthAttachment;
     if(s.hasStencil)s.stencil=*input->pStencilAttachment;
     if(s.uiPhase && s.originalUI && input->colorAttachmentCount==1 &&
-       input->pColorAttachments[0].imageView==s.originalUI) {
+       input->pColorAttachments && input->pColorAttachments[0].imageView==s.originalUI) {
         auto depth=uiDepth.find(s.output);
         if(depth==uiDepth.end())return false;
+        const VkImage source=bs4_fsr31_output_image(s.output);
+        if(!source)return false;
+        transition(cb,source,VK_IMAGE_ASPECT_COLOR_BIT,
+                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                   VK_IMAGE_LAYOUT_GENERAL);
+        bs4_fsr31_set_output_layout(s.output,VK_IMAGE_LAYOUT_GENERAL);
         s.uiPass=substitute(s,s.output,depth->second,*output);
         return s.uiPass;
     }
@@ -266,7 +276,7 @@ extern "C" void bs4_port_ui_redirect_end(VkCommandBuffer cb) {
 // Called before the first positively identified guest UI draw, while inside
 // original dynamic rendering. Replaces the pass with a 720p guest HUD pass.
 extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer cb) {
-    std::lock_guard lock{uiMutex};
+    std::unique_lock lock{uiMutex};
     const auto it=cmds.find(cb);
     if(it==cmds.end() || !shaderBoundUI[cb])return false;
     State& s=it->second;
@@ -289,7 +299,11 @@ extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer cb) {
     // Only now is it safe to end the original game UI pass. The actual LDR
     // scene, matching G-buffer depth, and camera must all be present.
     end_fn(cb);
+    // FSR dispatch binds its own Vulkan compute pipeline, which is also
+    // seen by our proc-address hooks. Do not hold uiMutex across dispatch.
+    lock.unlock();
     const VkImageView out=bs4_port_prepare_ui(cb);
+    lock.lock();
     if(!out) {
         // FSR rejected inputs: resume original target and let game draw.
         VkRenderingInfo resume=s.guest;
