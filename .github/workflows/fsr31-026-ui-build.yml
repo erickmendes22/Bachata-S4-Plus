@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      - uses: actions/checkout@v4
       - name: Get exact 0.2.6 APK and apktool
         run: |
           set -euxo pipefail
@@ -68,6 +69,10 @@ jobs:
               if(preset<0||preset>4)preset=1;
               final boolean on=p.getBoolean("enabled",false);
               env.put("BACHATA_FSR31_MODE",on?Integer.toString(preset):"-1");
+              // Apply a real game-native resolution patch BEFORE the PS4
+              // process starts, only for Bloodborne 1.09. The generic
+              // FSR3 Vulkan renderer still handles other game titles.
+              Fsr3Resolution.apply(ctx,on,preset);
               // Device creation precedes FsrPass::Create. Load the FSR module
               // before the emulator initializes Vulkan when temporal upscale
               // is explicitly selected; preserve existing LD_PRELOAD entries.
@@ -132,8 +137,12 @@ jobs:
           D8="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -type f -name d8 | sort -Vr | head -n1)"
           echo "$ANDROID_JAR $D8"
           mkdir -p /tmp/classes /tmp/dexout
-          javac -encoding UTF-8 -source 8 -target 8 -cp "$ANDROID_JAR" -d /tmp/classes /tmp/java/com/bachatas4/android/bridge/Fsr3Ui.java
-          "$D8" --min-api 26 --lib "$ANDROID_JAR" --output /tmp/dexout /tmp/classes/com/bachatas4/android/bridge/Fsr3Ui.class
+          javac -encoding UTF-8 -source 8 -target 8 -cp "$ANDROID_JAR" -d /tmp/classes \
+            /tmp/java/com/bachatas4/android/bridge/Fsr3Ui.java \
+            tools/fsr31-026/Fsr3Resolution.java
+          "$D8" --min-api 26 --lib "$ANDROID_JAR" --output /tmp/dexout \
+            /tmp/classes/com/bachatas4/android/bridge/Fsr3Ui.class \
+            /tmp/classes/com/bachatas4/android/bridge/Fsr3Resolution.class
           java -Xmx4g -jar /tmp/apktool.jar b /tmp/decoded -o /tmp/unsigned-rebuilt.apk
       - name: Export small dex payload and ensure APK structure
         run: |
