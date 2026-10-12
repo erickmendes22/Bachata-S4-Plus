@@ -15,6 +15,7 @@ extern "C" uint64_t bs4_fsr31_generic_render(const FfxVkPortableDeviceInfo* info
 #include <fstream>
 #include <dlfcn.h>
 #include <atomic>
+#include <algorithm>
 #include <cstring>
 #include <cstdlib>
 #include <string>
@@ -24,6 +25,8 @@ FfxVkPortableUpscaleContext* ctx = nullptr;
 FfxVkPortableUpscaleCreateInfo current{};
 FfxVkPortableDeviceInfo acquired_device{};
 bool device_attached = false;
+std::atomic<VkInstance> fsr31_tracked_instance{VK_NULL_HANDLE};
+std::atomic<VkPhysicalDevice> fsr31_tracked_physical{VK_NULL_HANDLE};
 bool valid = false;
 }
 #define BS4_PUBLIC extern "C" __attribute__((visibility("default")))
@@ -172,22 +175,30 @@ BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice 
     const auto fail = [](int code) { std::fprintf(stderr, "[BS4_FSR31] attach failed code=%d\\n", code); return code; };
     if (!fsr_pass || !instance_object || !device) return fail(-1);
     std::lock_guard<std::mutex> lock(guard);
-    // The original BACHATA core is unchanged in memory layout. vk::UniqueInstance
-    // stores the raw VkInstance in its first pointer-sized field. Query real
-    // physical devices through Vulkan instead of assuming a C++ member offset.
-    const VkInstance instance = *static_cast<VkInstance*>(instance_object);
-    if (!instance) return fail(-2);
-    uint32_t count = 0;
-    VkResult err = vkEnumeratePhysicalDevices(instance, &count, nullptr);
-    if (err != VK_SUCCESS || count != 1) {
+    // The Instance& argument is a C++ object, not a raw VkInstance.
+    // R9 incorrectly dereferenced its first field, returning attach -2.
+    // Use the real opaque handles intercepted through Vulkan instead.
+    const VkInstance instance =
+        fsr31_tracked_instance.load(std::memory_order_acquire);
+    const VkPhysicalDevice physical =
+        fsr31_tracked_physical.load(std::memory_order_acquire);
+    if (!instance || !physical) {
         std::fprintf(stderr,
-            "[BS4_FSR31] attach: expected one Vulkan physical device, result=%d count=%u\\n",
-            int(err), count);
-        return fail(-3);
+            "[BS4_FSR31] attach: intercepted Vulkan handles absent "
+            "instance=%p physical=%p\\n",
+            reinterpret_cast<void*>(instance), reinterpret_cast<void*>(physical));
+        return fail(-2);
     }
-    VkPhysicalDevice physical{};
-    err = vkEnumeratePhysicalDevices(instance, &count, &physical);
-    if (err != VK_SUCCESS || !physical) return fail(-4);
+    // Validate the physical-device handle against this Vulkan instance.
+    uint32_t count = 0;
+    const VkResult enumerate = vkEnumeratePhysicalDevices(instance, &count, nullptr);
+    if (enumerate != VK_SUCCESS || !count || count > 128) return fail(-3);
+    std::vector<VkPhysicalDevice> devices(count);
+    const VkResult listed =
+        vkEnumeratePhysicalDevices(instance, &count, devices.data());
+    if (listed != VK_SUCCESS ||
+        std::find(devices.begin(), devices.begin() + count, physical) ==
+            devices.begin() + count) return fail(-4);
     FfxVkPortableDeviceInfo info{};
     info.structSize = sizeof(info);
     info.instance = instance;
@@ -247,6 +258,7 @@ std::atomic<bool> fsr31_storage_feature_enabled{false};
 
 namespace {
 PFN_vkCreateDevice real_create_device = nullptr;
+PFN_vkCreateInstance real_create_instance = nullptr;
 using RealDlsym = void* (*)(void*, const char*);
 RealDlsym real_dlsym() {
     // glibc's versioned lookup avoids recursion through our dlsym interposer.
@@ -267,6 +279,18 @@ PFN_vkGetInstanceProcAddr real_gipa() {
 bool fsr31_requested() {
     const char* mode = std::getenv("BACHATA_FSR31_MODE");
     return mode && mode[0] >= '0' && mode[0] <= '4' && mode[1] == 0;
+}
+VKAPI_ATTR VkResult VKAPI_CALL fsr31_create_instance(
+        const VkInstanceCreateInfo* requested,
+        const VkAllocationCallbacks* allocator, VkInstance* output) {
+    if (!real_create_instance) return VK_ERROR_INITIALIZATION_FAILED;
+    const VkResult result = real_create_instance(requested, allocator, output);
+    if (result == VK_SUCCESS && output && *output) {
+        fsr31_tracked_instance.store(*output, std::memory_order_release);
+        std::fprintf(stderr,"[BS4_FSR31] intercepted vkCreateInstance success instance=%p\\n",
+                     reinterpret_cast<void*>(*output));
+    }
+    return result;
 }
 VKAPI_ATTR VkResult VKAPI_CALL fsr31_create_device(
         VkPhysicalDevice physical, const VkDeviceCreateInfo* requested,
@@ -305,6 +329,12 @@ VKAPI_ATTR VkResult VKAPI_CALL fsr31_create_device(
         return real_create_device(physical, requested, allocator, output);
     }
     VkResult result = real_create_device(physical, &ci, allocator, output);
+    if (result == VK_SUCCESS && output && *output) {
+        fsr31_tracked_physical.store(physical, std::memory_order_release);
+        std::fprintf(stderr,"[BS4_FSR31] intercepted vkCreateDevice physical=%p device=%p\\n",
+                     reinterpret_cast<void*>(physical),
+                     reinterpret_cast<void*>(*output));
+    }
     fsr31_storage_feature_enabled.store(result == VK_SUCCESS);
     std::fprintf(stderr, "[BS4_FSR31] vkCreateDevice feature enable result=%d\\n",
                  int(result));
@@ -318,6 +348,12 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(
     const auto original = real_gipa();
     if (!original || !name) return nullptr;
     const auto out = original(instance, name);
+    if (instance && fsr31_requested())
+        fsr31_tracked_instance.store(instance, std::memory_order_release);
+    if (std::strcmp(name, "vkCreateInstance") == 0 && out && fsr31_requested()) {
+        real_create_instance = reinterpret_cast<PFN_vkCreateInstance>(out);
+        return reinterpret_cast<PFN_vkVoidFunction>(&fsr31_create_instance);
+    }
     if (std::strcmp(name, "vkGetDeviceProcAddr") == 0 && out && fsr31_requested())
         return reinterpret_cast<PFN_vkVoidFunction>(&vkGetDeviceProcAddr);
     if (std::strcmp(name, "vkCreateDevice") == 0 && out && fsr31_requested()) {
