@@ -146,9 +146,16 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
                     // The port's RunScaled uses the *tonemapped* LDR scene.
                     // fmt=122 is the earlier HDR G-buffer: never use it here.
                     i->second.format==VK_FORMAT_R8G8B8A8_UNORM &&
+                    (i->second.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) &&
                     (i->second.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) &&
-                    i->second.size.width>=w && i->second.size.width<=w+32 &&
-                    i->second.size.height>=h && i->second.size.height<=h+32) {
+                    i->second.size.width>=w && i->second.size.width<=1920 &&
+                    i->second.size.height>=h && i->second.size.height<=1080 &&
+                    // Only exact reduced images or 1920x1080 guest allocations
+                    // with a reduced upper-left viewport (real port case).
+                    ((i->second.size.width==w &&
+                      i->second.size.height==h) ||
+                     (i->second.size.width==1920 &&
+                      i->second.size.height==1080))) {
                     stage.color=view;
                     stage.depth=info->pDepthAttachment?
                         info->pDepthAttachment->imageView:VK_NULL_HANDLE;
