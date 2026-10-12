@@ -126,6 +126,9 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
             if (v!=views.end()) {
                 const auto i=images.find(v->second.image);
                 if (i!=images.end() &&
+                    // The port's RunScaled uses the *tonemapped* LDR scene.
+                    // fmt=122 is the earlier HDR G-buffer: never use it here.
+                    i->second.format==VK_FORMAT_R8G8B8A8_UNORM &&
                     (i->second.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) &&
                     i->second.size.width>=w && i->second.size.width<=w+32 &&
                     i->second.size.height>=h && i->second.size.height<=h+32) {
@@ -167,9 +170,11 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
            completed.extent.width,completed.extent.height,w,h,dst_w,dst_h);
     }
     if(dst_w<w||dst_h<h)return false;
-    // Output is 720p just like the Android Bloodborne port. The UI target
-    // may still be 1080p until the guest's UI resolution is independently
-    // decoupled; resample the upscaled background without changing HUD draws.
+    // Port RunScaled composes a separate host RGBA8 UI surface at 720p.
+    // The current 024 hook receives a 1920x1080 guest HUD surface, and
+    // the old blit was the R14/R18/R20 corruption path. Do not substitute
+    // the output into that surface; core024 requires native UI redirection.
+    if(w!=1280 || h!=720 || dst_w!=1280 || dst_h!=720)return false;
     const VkExtent2D upscale_extent{1280,720};
     VkImage upscaled=VK_NULL_HANDLE;
     if(!bs4_fsr31_pre_ui_dispatch(cmd,completed.color,completed.depth,
