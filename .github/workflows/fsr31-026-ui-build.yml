@@ -42,32 +42,6 @@ jobs:
           target='    .line 233\n    invoke-static {p1}, Lkotlin/collections/MapsKt;->asSequence(Ljava/util/Map;)Lkotlin/sequences/Sequence;'
           assert t.count(target)==1
           t=t.replace(target,'    iget-object v0, p0, Lcom/bachatas4/android/runtime/process/NativeRuntimeProcessLauncher;->context:Landroid/content/Context;\n    invoke-static {v0, p1}, Lcom/bachatas4/android/bridge/Fsr3Ui;->enrichEnvironment(Landroid/content/Context;Ljava/util/Map;)V\n\n'+target)
-
-          native.write_text(t)
-          # The stock native-process filter explicitly excludes LD_PRELOAD.
-          # Allow only our exact backend while the user has selected FSR3.
-          # Never unblock arbitrary LD_PRELOAD values.
-          t=native.read_text()
-          marker='.method static final filteredEnvironment$lambda$0(Ljava/util/Map$Entry;)Z\n    .locals 5'
-          assert t.count(marker)==1
-          injected='''\n    invoke-interface {p0}, Ljava/util/Map$Entry;->getKey()Ljava/lang/Object;
-    move-result-object v0
-    const-string v1, "LD_PRELOAD"
-    invoke-virtual {v1, v0}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
-    move-result v0
-    if-eqz v0, :bs4_fsr31_filter_default
-    invoke-interface {p0}, Ljava/util/Map$Entry;->getValue()Ljava/lang/Object;
-    move-result-object v0
-    check-cast v0, Ljava/lang/String;
-    const-string v1, "libbachata_fsr31.so"
-    invoke-virtual {v0, v1}, Ljava/lang/String;->contains(Ljava/lang/CharSequence;)Z
-    move-result v0
-    if-eqz v0, :bs4_fsr31_filter_default
-    const/4 v0, 0x1
-    return v0
-    :bs4_fsr31_filter_default
-'''
-          t=t.replace(marker,marker+injected)
           native.write_text(t)
           PY
           mkdir -p /tmp/java/com/bachatas4/android/bridge
@@ -99,7 +73,7 @@ jobs:
               // is explicitly selected; preserve existing LD_PRELOAD entries.
               if(on) {
                 String old=env.get("LD_PRELOAD");
-                String module="$ORIGIN/libbachata_fsr31.so";
+                String module="libbachata_fsr31.so";
                 if(old==null||old.isEmpty())env.put("LD_PRELOAD",module);
                 else if(!old.contains(module))env.put("LD_PRELOAD",old+" "+module);
               }
