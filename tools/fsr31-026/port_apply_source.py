@@ -100,16 +100,13 @@ src = replace_once(src,
     "}\n\nstatic std::pair<u32, u32> GetDrawOffsets(")
 
 cam = r'''
-            if (fsr31PortStage.CurrentScene().ready ||
-                !fsr31PortCamera.HasTemporalHistory()) {
-                // Same camera constant signature used by the port:
-                // 864-byte uniform buffer, far plane 3000 and render size.
-                // MemoryManager already bounded this guest range.
-                if (!desc.is_written && size >= 216 * sizeof(float) &&
-                    (vsharp.base_address & 3) == 0) {
-                    fsr31PortCamera.OnConstants(
-                        reinterpret_cast<const float*>(vsharp.base_address),216);
-                }
+            // Bloodborne port: inspect actual 864-byte guest camera buffer
+            // on each GBuffer pass. Do not reuse stale matrices across frames.
+            // MemoryManager already bounded the mapped guest range.
+            if (!desc.is_written && size >= 216 * sizeof(float) &&
+                (vsharp.base_address & 3) == 0) {
+                fsr31PortCamera.OnConstants(
+                    reinterpret_cast<const float*>(vsharp.base_address),216);
             }
 '''
 src = replace_once(src,
