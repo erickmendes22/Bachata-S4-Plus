@@ -113,6 +113,20 @@ jobs:
           Path('generated/flow_spv.h').write_text(content)
           print('Optical flow shader bytes:',len(raw))
           PY
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+          raw=Path('/tmp/port_camera_motion.spv').read_bytes()
+          assert len(raw)%4==0 and raw[:4]==bytes.fromhex('03022307')
+          words=struct.unpack('<%dI'%(len(raw)//4),raw)
+          h='#pragma once\n#include <cstdint>\n'
+          h+='constexpr uint32_t BS4_PORT_CAMERA_MOTION_SPV[] = {\n'
+          for i in range(0,len(words),8):
+              h+='    '+', '.join('0x%08x'%v for v in words[i:i+8])+',\n'
+          h+='};\n'
+          Path('generated/port_camera_motion_spv.h').write_text(h)
+          print('Port depth reprojection shader bytes:',len(raw))
+          PY
           cmake -S . -B build -GNinja -DCMAKE_TOOLCHAIN_FILE=fsr-aarch64.ini -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target bachata_fsr31 -j 6
       - name: Validate ARM64 and exports
