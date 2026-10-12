@@ -253,6 +253,11 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
        depth.format!=VK_FORMAT_D32_SFLOAT_S8_UINT &&
        depth.format!=VK_FORMAT_D24_UNORM_S8_UINT)return 0;
     if(!color.image||!depth.image)return 0;
+    VkFormatProperties depth_features{};
+    vkGetPhysicalDeviceFormatProperties(owned->physicalDevice,depth.format,&depth_features);
+    const bool depth_can_blit =
+        (depth_features.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) &&
+        (depth_features.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT);
     std::lock_guard lock{mutex};
     device=owned->device;physical=owned->physicalDevice;
     constexpr float ratio[]={1.f,1.5f,1.7f,2.f,3.f};
@@ -262,6 +267,8 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     // A depth copy cannot be made from a mismatched guest depth target.
     if(depth.size.width!=input_extent.width || depth.size.height!=input_extent.height)
         return 0;
+    if ((internal.width!=depth.size.width || internal.height!=depth.size.height) &&
+        !depth_can_blit) return 0;
     if(!fsr || config.maxRenderSize.width!=internal.width ||
        config.maxRenderSize.height!=internal.height ||
        config.maxOutputSize.width!=output_extent.width ||
@@ -287,19 +294,23 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     transit(cb,f.depth,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     barrier(cb,depth.image,VK_IMAGE_ASPECT_DEPTH_BIT,depth.layout,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    VkImageCopy region{};
-    region.srcSubresource={VK_IMAGE_ASPECT_DEPTH_BIT,0,0,1};
-    region.dstSubresource=region.srcSubresource;
-    region.extent={internal.width,internal.height,1};
-    // Depth transfer has identical src/dst extents only. When host render
-    // size is reduced, fall back instead of issuing invalid Vulkan copies.
-    if(internal.width!=depth.size.width || internal.height!=depth.size.height) {
-        barrier(cb,depth.image,VK_IMAGE_ASPECT_DEPTH_BIT,
-                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,depth.layout);
-        return 0;
+    if(internal.width==depth.size.width && internal.height==depth.size.height) {
+        VkImageCopy region{};
+        region.srcSubresource={VK_IMAGE_ASPECT_DEPTH_BIT,0,0,1};
+        region.dstSubresource=region.srcSubresource;
+        region.extent={internal.width,internal.height,1};
+        vkCmdCopyImage(cb,depth.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       f.depth.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&region);
+    } else {
+        VkImageBlit resample{};
+        resample.srcSubresource={VK_IMAGE_ASPECT_DEPTH_BIT,0,0,1};
+        resample.srcOffsets[1]={int32_t(depth.size.width),int32_t(depth.size.height),1};
+        resample.dstSubresource=resample.srcSubresource;
+        resample.dstOffsets[1]={int32_t(internal.width),int32_t(internal.height),1};
+        vkCmdBlitImage(cb,depth.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       f.depth.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       1,&resample,VK_FILTER_NEAREST);
     }
-    vkCmdCopyImage(cb,depth.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                   f.depth.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&region);
     barrier(cb,depth.image,VK_IMAGE_ASPECT_DEPTH_BIT,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,depth.layout);
     transit(cb,f.depth,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
