@@ -38,10 +38,36 @@ comparison with the pinned port's `scripts/patches.py::resolution_writes`
 produced byte-identical write lists for all four presets. Its writes do not
 conflict with the other active patches recorded in 6E3C385D.
 
-The cause of the heap overwrite remains unproved. The diagnostics do not
-contain the game's executable bytes, the damaged heap contents, or the
-preceding writes. No previously uploaded eboot has been identified as this
-Bloodborne installation. Static investigation of the two failing allocator
-sites and the custom target-creation edits needs its original eboot.bin.
-Do not publish another APK as a crash fix on the strength of these static
-patch checks or synthetic Vulkan tests.
+## Executable investigation: a proven width/height hook defect
+
+The subsequently supplied SELF executable has SHA256
+`d65f0b4f01d59166aed16f8604196d8b7dd805abbf0758b356e8f1354c9429f9`.
+Its uncompressed executable PT_LOAD is SELF entry 1, file offset `0x28eb0`,
+virtual offset zero; the game's load base is `0x400000`.
+
+Both crash sites are inside the free/coalescing function starting at
+`0x24858a0`. At `0x2485962` it reads a free-list link from `[rax+0x10]`;
+at `0x24859c7` it writes the merged-block link to `[rdx-2]`. The invalid
+values are heap block metadata, rather than an FSR API return value.
+The preceding writer is still not identified by these crash snapshots.
+
+The integration replaces two original instructions at `0x01258F2C`:
+`mov eax,[r12+0x50]; mov ecx,[r12+0x54]`, width and height. Its injected
+helper at `0x04D3BAF0` reads the global descriptor into RAX and height into
+ECX, then returns. It never loads width into EAX. The immediate continuation
+at `0x01258F36` converts RAX to float and at `0x01258F48` divides by that
+value to calculate inverse width. Other half/quarter pixel constants also
+use it. This is a proven integration error feeding a pointer as a dimension.
+
+`fix_decoupled_resolution_hook.py` adds `mov eax,[rax+0x80]` AFTER the
+height read and before RET. No other patch bytes or selections change.
+The helper grows from 21 to 27 bytes and fits before the next patched range.
+Its caller's relative CALL remains unchanged. CPU emulation of the actual
+x86-64 caller/helper reproduces the wrong pointer return, and verifies exact
+native width/height return registers, R12 and stack preservation after the
+fix for all four presets. This targeted repair takes precedence over the
+broader reference-profile candidate described above; that candidate is not
+applied alongside it.
+
+This proves the faulty hook and its repair. It does not yet establish that
+the hook caused the heap overwrite, or that either device crash is fixed.

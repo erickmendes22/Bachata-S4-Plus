@@ -45,10 +45,12 @@ jobs:
           EOF
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            git cmake ninja-build python3-mako python3-setuptools pkg-config \
+            git cmake ninja-build python3-mako python3-setuptools python3-unicorn pkg-config \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
             libvulkan-dev:arm64 libvulkan-dev:amd64 mesa-vulkan-drivers libvulkan1:arm64 libx11-dev:arm64 glslang-tools \
             libstdc++6:arm64
+      - name: Execute the guest width and height hook contract
+        run: python3 tools/fsr31-025/test_decoupled_resolution_hook.py
       - name: Check out exact portable FSR implementation from Android Bloodborne port
         run: |
           set -euxo pipefail
