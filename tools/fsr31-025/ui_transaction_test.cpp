@@ -12,10 +12,11 @@ int ended=0,began=0,dispatches=0;
 VkAttachmentLoadOp seenStencil=VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 VkAttachmentLoadOp seenDepth=VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 VkViewport seenViewport{};
+VkRect2D seenScissor{};
 void VKAPI_PTR begin(VkCommandBuffer,const VkRenderingInfo* info){++began;if(info->pStencilAttachment)seenStencil=info->pStencilAttachment->loadOp;if(info->pDepthAttachment)seenDepth=info->pDepthAttachment->loadOp;}
 void VKAPI_PTR end(VkCommandBuffer){++ended;}
 void VKAPI_PTR viewport(VkCommandBuffer,uint32_t,uint32_t,const VkViewport* v){seenViewport=*v;}
-void VKAPI_PTR scissor(VkCommandBuffer,uint32_t,uint32_t,const VkRect2D*){}
+void VKAPI_PTR scissor(VkCommandBuffer,uint32_t,uint32_t,const VkRect2D* r){seenScissor=*r;}
 VkResult VKAPI_PTR pipelines(VkDevice,VkPipelineCache,uint32_t n,const VkGraphicsPipelineCreateInfo*,const VkAllocationCallbacks*,VkPipeline* p){for(uint32_t i=0;i<n;i++)p[i]=(VkPipeline)0x500;return VK_SUCCESS;}
 void start(bool dynamicPipeline=false){
  cmds.clear();pipelineVertexHashes.clear();guestHashes.clear();uiDepth.clear();currentUi={};lastOutput.clear();completedHud.clear();ended=began=dispatches=0;
@@ -52,8 +53,11 @@ int main(){
  vertexHash=0x34e8a281;
  ready=false;start();assert(!bs4_port_ui_try_activate(cb));assert(!ended&&!began&&!dispatches);
  ready=true;failDepth=true;start();assert(!bs4_port_ui_try_activate(cb));assert(!ended&&!began&&!dispatches);
- failDepth=false;start(true);assert(bs4_port_ui_try_activate(cb));assert(ended==1&&began==1&&dispatches==1);assert(seenStencil==VK_ATTACHMENT_LOAD_OP_CLEAR&&seenDepth==VK_ATTACHMENT_LOAD_OP_CLEAR);assert(seenViewport.width==1280&&seenViewport.height==720);assert(!bs4_port_ui_present(cb));bs4_port_ui_redirect_end(cb);assert(bs4_port_ui_present((VkCommandBuffer)0x101)==out);assert(bs4_port_ui_redirect_sampled((VkCommandBuffer)0x101,scene)==out);
+ failDepth=false;start(true);assert(bs4_port_ui_try_activate(cb));assert(ended==1&&began==1&&dispatches==1);assert(seenStencil==VK_ATTACHMENT_LOAD_OP_CLEAR&&seenDepth==VK_ATTACHMENT_LOAD_OP_CLEAR);assert(seenViewport.width==1280&&seenViewport.height==720);assert(!bs4_port_ui_present(cb));bs4_port_ui_redirect_end(cb);assert(seenViewport.width==1920&&seenViewport.height==1080);assert(seenScissor.extent.width==1920&&seenScissor.extent.height==1080);assert(bs4_port_ui_present((VkCommandBuffer)0x101)==out);assert(bs4_port_ui_redirect_sampled((VkCommandBuffer)0x101,scene)==out);
+ // Same-CB continuation with no Vulkan dynamic setters (core cache hit)
+ // must switch to proxy state; ending it must restore native state again.
+ VkRenderingAttachmentInfo c{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};c.imageView=scene;c.storeOp=VK_ATTACHMENT_STORE_OP_STORE;VkRenderingInfo next{VK_STRUCTURE_TYPE_RENDERING_INFO};next.renderArea.extent={1920,1080};next.layerCount=1;next.colorAttachmentCount=1;next.pColorAttachments=&c;VkRenderingInfo forwarded{};assert(bs4_port_ui_redirect_begin(cb,&next,false,&forwarded));assert(seenViewport.width==1280&&seenScissor.extent.width==1280);bs4_port_ui_redirect_end(cb);assert(seenViewport.width==1920&&seenScissor.extent.width==1920);
  // A later stencil-only mask and a later color pass keep prior UI stencil.
  VkRenderingAttachmentInfo z{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};z.imageView=depthView;z.storeOp=VK_ATTACHMENT_STORE_OP_STORE;VkRenderingInfo mask{VK_STRUCTURE_TYPE_RENDERING_INFO};mask.renderArea.extent={1920,1080};mask.layerCount=1;mask.pDepthAttachment=mask.pStencilAttachment=&z;VkRenderingInfo redirected{};assert(bs4_port_ui_redirect_begin((VkCommandBuffer)0x101,&mask,false,&redirected));assert(redirected.colorAttachmentCount==0);assert(redirected.pStencilAttachment->loadOp==VK_ATTACHMENT_LOAD_OP_LOAD);assert(redirected.pDepthAttachment->loadOp==VK_ATTACHMENT_LOAD_OP_LOAD);
- puts("PASS: fullscreen non-UI and unknown shaders leave guest pass untouched; shader-identified opaque native UI with null static depth state triggers RunScaled; no guest pass interruption on missing FSR or failed proxy allocation; one real handoff; completed-only presentation; subsequent stencil masks preserved with LOAD");
+ puts("PASS: fullscreen non-UI and unknown shaders leave guest pass untouched; shader-identified opaque native UI with null static depth state triggers RunScaled; no guest pass interruption on missing FSR or failed proxy allocation; one real handoff; completed-only presentation; cached dynamic state restored and reapplied on continuation; subsequent stencil masks preserved with LOAD");
 }

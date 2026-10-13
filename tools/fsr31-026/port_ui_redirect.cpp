@@ -374,6 +374,15 @@ extern "C" bool bs4_port_ui_redirect_begin(
                    VK_IMAGE_LAYOUT_GENERAL);
         bs4_fsr31_set_output_layout(s.output,VK_IMAGE_LAYOUT_GENERAL);
         s.uiPass=substitute(s,s.output,depth->second,*output);
+        if(s.uiPass) {
+            // The core caches dynamic state. End restored its native state;
+            // a continuing HUD must reapply the proxy viewport even when
+            // the core omits redundant vkCmdSetViewport/Scissor calls.
+            const VkViewport vp=scaled(s.viewport);
+            const VkRect2D sc=scaled(s.scissor);
+            if(s.haveViewport)native_viewport(cb,s,&vp);
+            if(s.haveScissor)native_scissor(cb,s,&sc);
+        }
         return s.uiPass;
     }
     s.uiPass=false;return false;
@@ -393,6 +402,11 @@ extern "C" void bs4_port_ui_redirect_end(VkCommandBuffer cb) {
             completedHud.insert(cb); // Only completed HUDs can be presented.
             if(currentUi.output==s.output&&currentUi.frame==s.frame)currentUi.complete=true;
         }
+        // External interception must not leave altered dynamic state behind
+        // the core's cache. A later non-UI pass can reuse its native viewport
+        // without emitting a Vulkan setter; keep that reuse correct.
+        if(s.haveViewport)native_viewport(cb,s,&s.viewport);
+        if(s.haveScissor)native_scissor(cb,s,&s.scissor);
     }
     s.uiPass=false;
     if(s.jitterActive && (realSetViewport || realSetViewportWithCount)) {
