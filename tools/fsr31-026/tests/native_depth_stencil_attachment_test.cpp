@@ -5,8 +5,8 @@
 int main() {
     const auto nativeView = reinterpret_cast<VkImageView>(uintptr_t(0x1234));
     const auto scaledView = reinterpret_cast<VkImageView>(uintptr_t(0x5678));
-    VkRenderingAttachmentInfo d{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    VkRenderingAttachmentInfo s{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    VkRenderingAttachmentInfo d{}; d.sType=VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    VkRenderingAttachmentInfo s{}; s.sType=VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
     d.imageView = nativeView;
     d.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
     d.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
@@ -17,7 +17,7 @@ int main() {
     s.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     s.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     s.clearValue.depthStencil = {0.75f, 27};
-    VkRenderingInfo src{VK_STRUCTURE_TYPE_RENDERING_INFO};
+    VkRenderingInfo src{}; src.sType=VK_STRUCTURE_TYPE_RENDERING_INFO;
     src.pDepthAttachment = &d;
     src.pStencilAttachment = &s;
     VkRenderingInfo dst = src;
@@ -38,7 +38,7 @@ int main() {
     assert(d.imageView == nativeView && s.imageView == nativeView);
     // Native depth-only and stencil-only rendering preserve their independent slots.
     for (int select=0;select<2;select++) {
-        VkRenderingInfo only{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        VkRenderingInfo only{}; only.sType=VK_STRUCTURE_TYPE_RENDERING_INFO;
         if (select==0) only.pDepthAttachment=&d;
         else only.pStencilAttachment=&s;
         VkRenderingInfo redirected=only;
