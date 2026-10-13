@@ -13,6 +13,7 @@
 #include <vector>
 extern "C" int bs4_fsr31_attach(void*,void*,VkDevice,void*,uint32_t);
 extern "C" int bs4_fsr31_supply_port_camera(VkCommandBuffer,VkImageView,const void*,uint32_t);
+extern "C" int bs4_fsr31_supply_port_object(VkCommandBuffer,VkImageView,VkExtent2D);
 extern "C" VkImageView bs4_fsr31_prepare_resources(VkCommandBuffer,VkImageView,VkImageView,VkExtent2D,VkExtent2D);
 extern "C" int bs4_fsr31_pre_ui_dispatch(VkCommandBuffer,VkImageView,VkImageView,VkExtent2D,VkExtent2D,VkImage*);
 extern "C" int bs4_fsr31_set_output_layout(VkImageView,VkImageLayout);
@@ -44,18 +45,33 @@ int main(){
  auto createDevice=(PFN_vkCreateDevice)vkGetInstanceProcAddr(instance,"vkCreateDevice");check(createDevice(choice.device,&dci,nullptr,&device));assert(bs4_fsr31_attach((void*)1,(void*)1,device,nullptr,3)==0);
  VkQueue queue{};vkGetDeviceQueue(device,choice.queueFamily,0,&queue);trackedBarrier=(PFN_vkCmdPipelineBarrier2)vkGetDeviceProcAddr(device,"vkCmdPipelineBarrier2");
  auto makeImage=(PFN_vkCreateImage)vkGetDeviceProcAddr(device,"vkCreateImage");auto makeView=(PFN_vkCreateImageView)vkGetDeviceProcAddr(device,"vkCreateImageView");
- TestImage color{},depth{};VkImageView cv{},dv{};
+ TestImage color{},depth{},object{};VkImageView cv{},dv{},ov{};
  auto allocate=[&](TestImage& t,VkFormat format,VkImageAspectFlags aspect,VkImageView& view){
   auto& ci=t.createInfo;ci={VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};ci.imageType=VK_IMAGE_TYPE_2D;ci.format=format;ci.extent={1920,1080,1};ci.mipLevels=ci.arrayLayers=1;ci.samples=VK_SAMPLE_COUNT_1_BIT;ci.tiling=VK_IMAGE_TILING_OPTIMAL;ci.usage=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT|(aspect==VK_IMAGE_ASPECT_COLOR_BIT?VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT:VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);check(makeImage(device,&ci,nullptr,&t.image));VkMemoryRequirements req{};vkGetImageMemoryRequirements(device,t.image,&req);VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};ai.allocationSize=req.size;ai.memoryTypeIndex=findMemoryType(choice.device,req.memoryTypeBits,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);check(vkAllocateMemory(device,&ai,nullptr,&t.memory));check(vkBindImageMemory(device,t.image,t.memory,0));VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};vi.image=t.image;vi.viewType=VK_IMAGE_VIEW_TYPE_2D;vi.format=format;vi.subresourceRange={aspect,0,1,0,1};check(makeView(device,&vi,nullptr,&view));
  };
- allocate(color,VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_ASPECT_COLOR_BIT,cv);allocate(depth,VK_FORMAT_D32_SFLOAT,VK_IMAGE_ASPECT_DEPTH_BIT,dv);
+ allocate(color,VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_ASPECT_COLOR_BIT,cv);
+ allocate(depth,VK_FORMAT_D32_SFLOAT,VK_IMAGE_ASPECT_DEPTH_BIT,dv);
+ allocate(object,VK_FORMAT_R32G32B32A32_SFLOAT,VK_IMAGE_ASPECT_COLOR_BIT,ov);
  VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};pci.queueFamilyIndex=choice.queueFamily;pci.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;VkCommandPool pool{};check(vkCreateCommandPool(device,&pci,nullptr,&pool));VkCommandBufferAllocateInfo cai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};cai.commandPool=pool;cai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;cai.commandBufferCount=1;VkCommandBuffer cb{};check(vkAllocateCommandBuffers(device,&cai,&cb));ReadbackBuffer read{};assert(createReadbackBuffer(choice.device,device,1280*720*4,&read));
- VkImageLayout sourceLayout=VK_IMAGE_LAYOUT_UNDEFINED;
+ VkImageLayout sourceLayout=VK_IMAGE_LAYOUT_UNDEFINED,objectLayout=VK_IMAGE_LAYOUT_UNDEFINED;
  for(unsigned frame=0;frame<2;frame++){
   check(vkResetCommandBuffer(cb,0));VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};check(vkBeginCommandBuffer(cb,&bi));
   layout(cb,color.image,VK_IMAGE_ASPECT_COLOR_BIT,sourceLayout,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);VkClearColorValue orange{{1.f,.25f,0.f,1.f}};VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};vkCmdClearColorImage(cb,color.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&orange,1,&range);
   layout(cb,color.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);VkRenderingAttachmentInfo att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};att.imageView=cv;att.imageLayout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;att.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;att.storeOp=VK_ATTACHMENT_STORE_OP_STORE;VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};ri.renderArea.extent={640,360};ri.layerCount=1;ri.colorAttachmentCount=1;ri.pColorAttachments=&att;vkCmdBeginRendering(cb,&ri);VkClearAttachment clear{};clear.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;clear.clearValue.color={{.1f,.2f,.9f,1.f}};VkClearRect rect{{{0,0},{640,360}},0,1};vkCmdClearAttachments(cb,1,&clear,1,&rect);vkCmdEndRendering(cb);layout(cb,color.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
   layout(cb,depth.image,VK_IMAGE_ASPECT_DEPTH_BIT,sourceLayout,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);VkClearDepthStencilValue z{.5f,0};range.aspectMask=VK_IMAGE_ASPECT_DEPTH_BIT;vkCmdClearDepthStencilImage(cb,depth.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&z,1,&range);layout(cb,depth.image,VK_IMAGE_ASPECT_DEPTH_BIT,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  // Simulate a real Port RT7 object vector (x velocity, validity and stored
+  // depth) alongside unchanged guest G-buffer depth. The shader must consume
+  // it rather than silently falling back to its camera-only mode.
+  layout(cb,object.image,VK_IMAGE_ASPECT_COLOR_BIT,objectLayout,
+         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  VkClearColorValue motionVector{{4.f,0.f,1.f,.5f}};
+  VkImageSubresourceRange objRange{VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+  vkCmdClearColorImage(cb,object.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       &motionVector,1,&objRange);
+  layout(cb,object.image,VK_IMAGE_ASPECT_COLOR_BIT,
+         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_GENERAL);
+  objectLayout=VK_IMAGE_LAYOUT_GENERAL;
+  assert(bs4_fsr31_supply_port_object(cb,ov,{640,360}));
   BachataCamera::Push p{};p.reproject[0]=p.reproject[5]=p.reproject[10]=1;p.proj[0]=p.proj[1]=p.proj[2]=1;p.proj[3]=-.1f;std::memcpy(p.prev_proj,p.proj,sizeof(p.proj));p.size[0]=640;p.size[1]=360;assert(bs4_fsr31_supply_port_camera(cb,dv,&p,sizeof(p)));
   const auto prepared=bs4_fsr31_prepare_resources(cb,cv,dv,{640,360},{1280,720});assert(prepared);
   VkImage out{};assert(bs4_fsr31_pre_ui_dispatch(cb,cv,dv,{640,360},{1280,720},&out));assert(out&&prepared==bs4_fsr31_output_view(out));
