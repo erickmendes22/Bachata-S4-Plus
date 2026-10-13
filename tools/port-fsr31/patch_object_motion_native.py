@@ -41,8 +41,22 @@ one('''    scheduler.Record([barrier](vk::CommandBuffer cmdbuf) {''',
     '''    { const auto cmdbuf=scheduler.CommandBuffer();''')
 # All three lambda wrappers end with the same "});" after pipelineBarrier2;
 # only replace these explicit sites, leaving other lambdas untouched.
-s,n=re.subn(r'(        (?:cmd|cmdbuf)\.pipelineBarrier2\([^;\n]*\);\n)    \}\);',r'\1    }',s)
-if n!=3:raise RuntimeError(f"Expected three scheduler command barriers, found {n}")
+s,n=re.subn(r'(?m)^    \}\);
+if "BbSettings" in s or "BbStats" in s or "BbToggle" in s or "scheduler.Record" in s:
+    raise RuntimeError("Port dependency remains unadapted")
+p.write_text(s)
+cm=root/"CMakeLists.txt"
+c=cm.read_text()
+anchor="                src/video_core/renderer_vulkan/vk_rasterizer.h"
+assert c.count(anchor)==1
+c=c.replace(anchor,anchor+'''
+                src/video_core/renderer_vulkan/motion_history.h
+                src/video_core/renderer_vulkan/vk_object_motion.h
+                src/video_core/renderer_vulkan/vk_object_motion.cpp''')
+cm.write_text(c)
+print("PASS: Port ObjectMotion GPU position-history buffers and RT7 compiled into native core025 sources")
+, '    }', s)
+if n!=3:raise RuntimeError(f"Expected exactly three scheduler closure ends, found {n}")
 if "BbSettings" in s or "BbStats" in s or "BbToggle" in s or "scheduler.Record" in s:
     raise RuntimeError("Port dependency remains unadapted")
 p.write_text(s)
