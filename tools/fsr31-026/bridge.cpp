@@ -83,6 +83,12 @@ BS4_PUBLIC void bs4_fsr31_native_pipeline(const void* pipeline) {
     if(!info||!layout)return;
     std::memcpy(&hash,reinterpret_cast<const void*>(info+0x1d38),sizeof(hash));
     bs4_native_scene_register_pipeline(layout,hash);
+    static std::atomic<uint64_t> observed{0};
+    const auto count=observed.fetch_add(1,std::memory_order_relaxed)+1;
+    if(count==1||count==4096)std::fprintf(stderr,
+        "[BS4_FSR31] NATIVE_PIPELINE_REGISTERED calls=%llu vertex_hash=0x%llx layout=%p\\n",
+        static_cast<unsigned long long>(count),
+        static_cast<unsigned long long>(hash),reinterpret_cast<void*>(layout));
 }
 BS4_PUBLIC int bs4_fsr31_abi() { return 0x00030104; }
 BS4_PUBLIC int bs4_fsr31_create(const FfxVkPortableDeviceInfo* dev,
