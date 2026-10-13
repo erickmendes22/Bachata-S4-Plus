@@ -379,6 +379,16 @@ extern "C" void bs4_port_ui_redirect_end(VkCommandBuffer cb) {
             if(currentUi.output==s.output&&currentUi.frame==s.frame)currentUi.complete=true;
         }
     }
+    // Dynamic state survives vkCmdEndRendering. Redirected HUD draws
+    // work at output resolution, but subsequent guest passes must inherit
+    // the guest's original (unscaled) viewport/scissor. Restore both even
+    // if the game does not reissue vkCmdSetViewport/vkCmdSetScissor.
+    if (s.uiPass) {
+        if (s.haveViewport && realSetViewport)
+            realSetViewport(cb,0,1,&s.viewport);
+        if (s.haveScissor && realSetScissor)
+            realSetScissor(cb,0,1,&s.scissor);
+    }
     s.uiPass=false;
     if(s.jitterActive && realSetViewport) {
         realSetViewport(cb,0,1,&s.viewport);
