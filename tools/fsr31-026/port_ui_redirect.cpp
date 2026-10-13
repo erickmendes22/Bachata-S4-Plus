@@ -34,6 +34,8 @@ struct State {
     VkViewport viewport{};
     VkRect2D scissor{};
     bool haveViewport=false,haveScissor=false;
+    // Core025 uses Vulkan 1.3 dynamic state *WithCount, not vkCmdSetViewport.
+    bool viewportWithCount=false,scissorWithCount=false;
     bool jitterActive=false;
     float jitterX=0,jitterY=0;
     VkImageView candidateScene=VK_NULL_HANDLE;
@@ -66,6 +68,8 @@ PFN_vkDestroyPipeline realDestroyPipeline{};
 PFN_vkCmdBindPipeline realBindPipeline{};
 PFN_vkCmdSetViewport realSetViewport{};
 PFN_vkCmdSetScissor realSetScissor{};
+PFN_vkCmdSetViewportWithCount realSetViewportCount{};
+PFN_vkCmdSetScissorWithCount realSetScissorCount{};
 PFN_vkCmdBeginRendering realBegin{};
 PFN_vkCmdEndRendering realEnd{};
 PFN_vkCmdBeginRenderingKHR realBeginKHR{};
@@ -84,6 +88,29 @@ VkRect2D scaled(VkRect2D r) {
     r.extent.height=uint32_t(std::round(r.extent.height*2.0/3.0));
     return r;
 }
+// Restoring dynamic state must use the same Vulkan command family as the
+// guest. vkCmdSetViewport changes neither the count nor the command that
+// was last recorded through vkCmdSetViewportWithCount.
+bool emitViewport(VkCommandBuffer cb,const State& state,const VkViewport& v) {
+    if(state.viewportWithCount) {
+        if(!realSetViewportCount)return false;
+        realSetViewportCount(cb,1,&v);
+    } else {
+        if(!realSetViewport)return false;
+        realSetViewport(cb,0,1,&v);
+    }
+    return true;
+}
+bool emitScissor(VkCommandBuffer cb,const State& state,const VkRect2D& s) {
+    if(state.scissorWithCount) {
+        if(!realSetScissorCount)return false;
+        realSetScissorCount(cb,1,&s);
+    } else {
+        if(!realSetScissor)return false;
+        realSetScissor(cb,0,1,&s);
+    }
+    return true;
+}
 VkImageAspectFlags aspects(VkFormat f) {
     if(f==VK_FORMAT_D32_SFLOAT_S8_UINT ||
        f==VK_FORMAT_D24_UNORM_S8_UINT)return VK_IMAGE_ASPECT_DEPTH_BIT|
@@ -98,20 +125,20 @@ VkImageAspectFlags aspects(VkFormat f) {
 extern "C" int bs4_port_ui_apply_camera_jitter(
     VkCommandBuffer cb,float x,float y) {
     if(!cb || !std::isfinite(x) || !std::isfinite(y) ||
-       std::abs(x)>0.501f || std::abs(y)>0.501f || !realSetViewport)
+       std::abs(x)>0.501f || std::abs(y)>0.501f)
         return 0;
     std::lock_guard lock{uiMutex};
     const auto it=cmds.find(cb);
     if(it==cmds.end())return 0;
     auto& s=it->second;
     if(!s.inside || s.uiPhase || !s.haveViewport ||
-       s.guest.colorAttachmentCount<2 || !s.hasDepth ||
-       s.guest.renderArea.extent.width>1280 ||
-       s.guest.renderArea.extent.height>720)return 0;
+       s.guest.colorAttachmentCount<5 || !s.hasDepth ||
+       std::abs(s.viewport.width)>1280 ||
+       std::abs(s.viewport.height)>720)return 0;
     if(s.jitterActive)return 1;
     VkViewport p=s.viewport;
     p.x+=x;p.y+=y;
-    realSetViewport(cb,0,1,&p);
+    if(!emitViewport(cb,s,p))return 0;
     s.jitterActive=true;s.jitterX=x;s.jitterY=y;
     return 1;
 }
@@ -384,14 +411,12 @@ extern "C" void bs4_port_ui_redirect_end(VkCommandBuffer cb) {
     // the guest's original (unscaled) viewport/scissor. Restore both even
     // if the game does not reissue vkCmdSetViewport/vkCmdSetScissor.
     if (s.uiPass) {
-        if (s.haveViewport && realSetViewport)
-            realSetViewport(cb,0,1,&s.viewport);
-        if (s.haveScissor && realSetScissor)
-            realSetScissor(cb,0,1,&s.scissor);
+        if(s.haveViewport)emitViewport(cb,s,s.viewport);
+        if(s.haveScissor)emitScissor(cb,s,s.scissor);
     }
     s.uiPass=false;
-    if(s.jitterActive && realSetViewport) {
-        realSetViewport(cb,0,1,&s.viewport);
+    if(s.jitterActive) {
+        if(s.haveViewport)emitViewport(cb,s,s.viewport);
         s.jitterActive=false;s.jitterX=s.jitterY=0;
     }
 }
@@ -419,7 +444,10 @@ extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer cb) {
     }
     const auto end_fn=s.khr?reinterpret_cast<PFN_vkCmdEndRendering>(realEndKHR):realEnd;
     const auto begin_fn=s.khr?reinterpret_cast<PFN_vkCmdBeginRendering>(realBeginKHR):realBegin;
-    if(!end_fn || !begin_fn || !realSetViewport || !realSetScissor)return false;
+    if(!end_fn || !begin_fn ||
+       !(s.viewportWithCount?bool(realSetViewportCount):bool(realSetViewport)) ||
+       !(s.scissorWithCount?bool(realSetScissorCount):bool(realSetScissor)))
+        return false;
 
     // R23 recorded vkCmdEndRendering before even checking whether the
     // temporal source/camera existed; a failed dispatch then re-opened the
@@ -489,8 +517,7 @@ extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer cb) {
     // The game bound a 1920x1080 viewport, now the host HUD is 1280x720.
     const VkViewport vp=scaled(s.viewport);
     const VkRect2D sc=scaled(s.scissor);
-    realSetViewport(cb,0,1,&vp);
-    realSetScissor(cb,0,1,&sc);
+    if(!emitViewport(cb,s,vp) || !emitScissor(cb,s,sc))return false;
     s.uiPhase=true;s.uiPass=true;
     s.originalUI=s.color.empty()?s.candidateScene:s.color[0].imageView;
     s.output=out;s.everRedirected=true;
@@ -567,31 +594,65 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_bind_pipeline(
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_viewport(
     VkCommandBuffer cb,uint32_t first,uint32_t count,const VkViewport* v) {
-    bool redirect=false;
-    VkViewport out{};
-    if(first==0&&count==1&&v) {
+    bool redirect=false;VkViewport out{};
+    if(first==0){
         std::lock_guard lock{uiMutex};
-        auto& s=cmds[cb];s.viewport=*v;s.haveViewport=true;
-        redirect=s.uiPass || s.jitterActive;
-        if(s.uiPass)out=scaled(*v);
-        else if(s.jitterActive) {
-            out=*v;out.x+=s.jitterX;out.y+=s.jitterY;
+        auto& s=cmds[cb];s.viewportWithCount=false;
+        s.haveViewport=count==1 && v;
+        if(s.haveViewport){
+            s.viewport=*v;
+            redirect=s.uiPass || s.jitterActive;
+            if(s.uiPass)out=scaled(*v);
+            else if(s.jitterActive){out=*v;out.x+=s.jitterX;out.y+=s.jitterY;}
         }
     }
-    if(realSetViewport)
-        realSetViewport(cb,first,count,redirect?&out:v);
+    if(realSetViewport)realSetViewport(cb,first,count,redirect?&out:v);
+}
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_viewport_count(
+    VkCommandBuffer cb,uint32_t count,const VkViewport* v) {
+    bool redirect=false;VkViewport out{};
+    {
+        std::lock_guard lock{uiMutex};
+        auto& s=cmds[cb];s.viewportWithCount=true;
+        s.haveViewport=count==1 && v;
+        if(s.haveViewport){
+            s.viewport=*v;
+            redirect=s.uiPass || s.jitterActive;
+            if(s.uiPass)out=scaled(*v);
+            else if(s.jitterActive){out=*v;out.x+=s.jitterX;out.y+=s.jitterY;}
+        }
+    }
+    if(realSetViewportCount)realSetViewportCount(cb,count,redirect?&out:v);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_scissor(
     VkCommandBuffer cb,uint32_t first,uint32_t count,const VkRect2D* rect) {
-    bool redirect=false;
-    VkRect2D out{};
-    if(first==0&&count==1&&rect) {
+    bool redirect=false;VkRect2D out{};
+    if(first==0){
         std::lock_guard lock{uiMutex};
-        auto& s=cmds[cb];s.scissor=*rect;s.haveScissor=true;
-        redirect=s.uiPass; if(redirect)out=scaled(*rect);
+        auto& s=cmds[cb];s.scissorWithCount=false;
+        s.haveScissor=count==1 && rect;
+        if(s.haveScissor){
+            s.scissor=*rect;
+            redirect=s.uiPass;
+            if(redirect)out=scaled(*rect);
+        }
     }
-    if(realSetScissor)
-        realSetScissor(cb,first,count,redirect?&out:rect);
+    if(realSetScissor)realSetScissor(cb,first,count,redirect?&out:rect);
+}
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_scissor_count(
+    VkCommandBuffer cb,uint32_t count,const VkRect2D* rect) {
+    bool redirect=false;VkRect2D out{};
+    {
+        std::lock_guard lock{uiMutex};
+        auto& s=cmds[cb];s.scissorWithCount=true;
+        s.haveScissor=count==1 && rect;
+        if(s.haveScissor){
+            s.scissor=*rect;
+            redirect=s.uiPass;
+            if(redirect)out=scaled(*rect);
+        }
+    }
+    if(realSetScissorCount)realSetScissorCount(cb,count,redirect?&out:rect);
 }
 extern "C" PFN_vkVoidFunction bs4_port_ui_wrap_proc(
     const char* name,PFN_vkVoidFunction proc){
@@ -605,6 +666,10 @@ extern "C" PFN_vkVoidFunction bs4_port_ui_wrap_proc(
     UI_WRAP(realBindPipeline,"vkCmdBindPipeline",bs4_port_ui_bind_pipeline)
     UI_WRAP(realSetViewport,"vkCmdSetViewport",bs4_port_ui_viewport)
     UI_WRAP(realSetScissor,"vkCmdSetScissor",bs4_port_ui_scissor)
+    UI_WRAP(realSetViewportCount,"vkCmdSetViewportWithCount",bs4_port_ui_viewport_count)
+    UI_WRAP(realSetViewportCount,"vkCmdSetViewportWithCountEXT",bs4_port_ui_viewport_count)
+    UI_WRAP(realSetScissorCount,"vkCmdSetScissorWithCount",bs4_port_ui_scissor_count)
+    UI_WRAP(realSetScissorCount,"vkCmdSetScissorWithCountEXT",bs4_port_ui_scissor_count)
 #undef UI_WRAP
     return proc;
 }
