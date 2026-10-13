@@ -142,7 +142,8 @@ bool bs4_native_ui_barrier(VkCommandBuffer cb,const VkImageMemoryBarrier2& origi
     mirrored=original;mirrored.image=output.image;mirrored.oldLayout=output.layout;return true;
 }
 bool bs4_native_ui_rendering(VkCommandBuffer cb,const VkRenderingInfo* original,VkRenderingInfo& info,
-                             VkRenderingAttachmentInfo& color,VkRenderingAttachmentInfo& depth) {
+                             VkRenderingAttachmentInfo& color,VkRenderingAttachmentInfo& depth,
+                             VkRenderingAttachmentInfo& stencil) {
     Scope scope{};{std::lock_guard lock{mutex};const auto it=scopes.find(cb);if(it==scopes.end())return false;scope=it->second;}
     Bs4FsrCaptureImage source{};
     if(!original||original->pNext||original->viewMask||original->layerCount!=1||
@@ -152,9 +153,9 @@ bool bs4_native_ui_rendering(VkCommandBuffer cb,const VkRenderingInfo* original,
     if((original->pDepthAttachment||original->pStencilAttachment)&&!scope.depth)return false;
     info=*original;info.renderArea.extent={1280,720};color=original->pColorAttachments[0];
     color.imageView=scope.color;info.pColorAttachments=&color;
-    if(original->pDepthAttachment){depth=*original->pDepthAttachment;depth.imageView=scope.depth;info.pDepthAttachment=&depth;}
-    if(original->pStencilAttachment){if(!original->pDepthAttachment)depth=*original->pStencilAttachment;
-        depth.imageView=scope.depth;info.pStencilAttachment=&depth;}
+    // Do not collapse depth/stencil into one VkRenderingAttachmentInfo.
+    // LOAD/CLEAR/DONT_CARE, layouts, clear values and store ops are separate.
+    bs4_native_ui_rebind_depth_stencil(*original,info,depth,stencil,scope.depth);
     return true;
 }
 
