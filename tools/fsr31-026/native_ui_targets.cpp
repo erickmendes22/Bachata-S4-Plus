@@ -70,14 +70,12 @@ int bs4_native_ui_draw(VkCommandBuffer cb,const Bs4NativeRenderState& state) {
     }
     VkImageView color{},depth{};VkExtent2D extent{};Bs4NativeUiBoundary boundary{};
     Bs4FsrCaptureImage source{},nativeDepth{};
-    // The scene and the native HUD are separate attachments. The UI boundary
-    // must match the current draw target, NOT the reduced-resolution scene.
-    // Requiring boundary.color == color rejected every decoupled HUD draw.
+    // The HUD may render into the same attachment or a decoupled one.
+    // Match the boundary against the *current draw*, not the scene target.
     if(!bs4_fsr31_capture_scene(cb,&color,&depth,&extent)||
        !bs4_native_scene_ui_state(cb,boundary)||
        state.colorCount!=1||!boundary.color||
        boundary.color!=reinterpret_cast<VkImageView>(state.colors[0].view)||
-       boundary.color==color||
        !bs4_fsr31_capture_image(color,&source)||source.format!=VK_FORMAT_R8G8B8A8_UNORM||
        !bs4_native_scene_can_ui_scale(cb,extent,{1280,720},hardware))return 0;
     VkFormat depthFormat=VK_FORMAT_UNDEFINED;
