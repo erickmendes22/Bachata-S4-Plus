@@ -35,9 +35,14 @@ image, and resource lifetimes follow native source image/view destruction. The G
 test additionally reopens the original attachment with LOAD and checks alias identity.
 The first automatic-target CI stopped on an invalid field in the test, after both
 SDK builds and the three motion/depth GPU cases passed. The field is corrected in
-c65ec621172e02a955d4f14030d59a1599833118; automatic-target execution is still pending.
+c65ec621172e02a955d4f14030d59a1599833118; automatic-target execution subsequently passed in run 38469969200 at commit
+9021de6d1651366b7b4bb148ca6bee9f5fa12094 after correcting the synthetic
+source-layout variable following readback. The automatic path recorded seven
+real temporal frames, preserved 916600 scene pixels and 5000 HUD pixels per
+frame, reopened the original attachment through the scoped UI redirection, and
+completed with zero Vulkan validation errors. Both ARM64 and host SDK builds passed.
 
-Remaining release requirements: successful automatic-target GPU test; complete
+Remaining release requirements: complete
 native stencil-only/depth-state parity; verify presentation samples the composed
 image in real gameplay; integrate the Android controls/resolution patches and
 Bionic loader into the exact R27 APK; validate final packaging and signing.
