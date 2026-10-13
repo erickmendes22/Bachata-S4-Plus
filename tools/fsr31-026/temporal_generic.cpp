@@ -5,6 +5,9 @@
 #include "vulkan_capture.h"
 #include "ffx_vk_portable.h"
 #include "flow_spv.h"
+#include "camera_motion_spv.h"
+#include "port_scene_frame.h"
+#include <cstdlib>
 #include <vulkan/vulkan.h>
 #include <algorithm>
 #include <atomic>
@@ -47,6 +50,7 @@ std::vector<Frame> frames;
 Surface previous;
 size_t cursor=0;
 bool has_previous=false;
+bool port_inputs=false;
 uint64_t frame_id=0;
 std::chrono::steady_clock::time_point last_frame{};
 bool once_logged=false;
@@ -145,21 +149,23 @@ bool build_compute(){
     for(uint32_t i=0;i<3;++i) {
         bindings[i].binding=i;bindings[i].descriptorCount=1;
         bindings[i].stageFlags=VK_SHADER_STAGE_COMPUTE_BIT;
-        bindings[i].descriptorType=i==2?VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-                                        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[i].descriptorType=port_inputs?
+            (i==1?VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE):
+            (i==2?VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
     }
     VkDescriptorSetLayoutCreateInfo dci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     dci.bindingCount=3;dci.pBindings=bindings;
     if(!result(vkCreateDescriptorSetLayout(device,&dci,nullptr,&desc_layout),"layout"))return false;
-    VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT,0,16};
+    VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT,0,
+        uint32_t(port_inputs?sizeof(BachataCamera::Push):16)};
     VkPipelineLayoutCreateInfo pci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     pci.setLayoutCount=1;pci.pSetLayouts=&desc_layout;
     pci.pushConstantRangeCount=1;pci.pPushConstantRanges=&range;
     if(!result(vkCreatePipelineLayout(device,&pci,nullptr,&pipeline_layout),"pipe layout"))return false;
     VkShaderModule module{};
     VkShaderModuleCreateInfo sm{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    sm.codeSize=sizeof(BS4_FSR31_FLOW_SPV);
-    sm.pCode=BS4_FSR31_FLOW_SPV;
+    sm.codeSize=port_inputs?sizeof(BS4_FSR31_CAMERA_SPV):sizeof(BS4_FSR31_FLOW_SPV);
+    sm.pCode=port_inputs?BS4_FSR31_CAMERA_SPV:BS4_FSR31_FLOW_SPV;
     if(!result(vkCreateShaderModule(device,&sm,nullptr,&module),"flow shader"))return false;
     VkPipelineShaderStageCreateInfo stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
     stage.stage=VK_SHADER_STAGE_COMPUTE_BIT;stage.module=module;stage.pName="main";
@@ -176,9 +182,10 @@ bool build_compute(){
     if(!result(vkCreateSampler(device,&sci,nullptr,&sampler),"motion sampler"))return false;
     VkDescriptorPoolSize sizes[]={
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,16},
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,8}};
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,8},
+        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,16}};
     VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    pi.maxSets=6;pi.poolSizeCount=2;pi.pPoolSizes=sizes;
+    pi.maxSets=6;pi.poolSizeCount=3;pi.pPoolSizes=sizes;
     return result(vkCreateDescriptorPool(device,&pi,nullptr,&descriptors),"flow descriptor pool");
 }
 FfxVkPortableImage describe(const Surface& s,FfxVkPortableResourceState state) {
@@ -210,7 +217,7 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
         ai.descriptorPool=descriptors;ai.descriptorSetCount=1;ai.pSetLayouts=&desc_layout;
         if(!result(vkAllocateDescriptorSets(device,&ai,&f.descriptor),"descriptors"))return false;
     }
-    if(!alloc(previous,color_format,render,sampled,VK_IMAGE_ASPECT_COLOR_BIT))return false;
+    if(!port_inputs && !alloc(previous,color_format,render,sampled,VK_IMAGE_ASPECT_COLOR_BIT))return false;
     const auto r=ffxVkPortableUpscaleContextCreate(&info,&config,&fsr);
     if(r!=FFX_VK_PORTABLE_OK) {
         std::fprintf(stderr,"[BS4_FSR31] FSR3.1 Vulkan context error=%d\n",int(r));
@@ -220,17 +227,24 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
          render.width,render.height,output.width,output.height);
     return true;
 }
-void flow(VkCommandBuffer cb,const Frame& f,VkExtent2D size) {
+void flow(VkCommandBuffer cb,const Frame& f,VkExtent2D size,
+          const Bs4PortCameraDispatch* camera) {
     VkDescriptorImageInfo resources[3]{};
     resources[0]={sampler,f.scene.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     resources[1]={sampler,previous.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     resources[2]={VK_NULL_HANDLE,f.motion.view,VK_IMAGE_LAYOUT_GENERAL};
+    if(camera) {
+        resources[0]={VK_NULL_HANDLE,f.depth.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        resources[1]={VK_NULL_HANDLE,f.motion.view,VK_IMAGE_LAYOUT_GENERAL};
+        resources[2]=resources[0]; // Port mode=0: object vectors unavailable
+    }
     VkWriteDescriptorSet writes[3]{};
     for(uint32_t i=0;i<3;i++) {
         writes[i]={VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
         writes[i].dstSet=f.descriptor;writes[i].dstBinding=i;
-        writes[i].descriptorType=i==2?VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-                                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[i].descriptorType=camera?
+            (i==1?VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE):
+            (i==2?VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
         writes[i].descriptorCount=1;writes[i].pImageInfo=&resources[i];
     }
     vkUpdateDescriptorSets(device,3,writes,0,nullptr);
@@ -238,7 +252,9 @@ void flow(VkCommandBuffer cb,const Frame& f,VkExtent2D size) {
     vkCmdBindDescriptorSets(cb,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline_layout,
                             0,1,&f.descriptor,0,nullptr);
     struct Push{int width,height,first,pad;} pc{int(size.width),int(size.height),!has_previous,0};
-    vkCmdPushConstants(cb,pipeline_layout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(pc),&pc);
+    if(camera) vkCmdPushConstants(cb,pipeline_layout,VK_SHADER_STAGE_COMPUTE_BIT,
+        0,sizeof(camera->motion),&camera->motion);
+    else vkCmdPushConstants(cb,pipeline_layout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(pc),&pc);
     vkCmdDispatch(cb,(size.width+7)/8,(size.height+7)/8,1);
 }
 } // namespace
@@ -263,6 +279,15 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
         report_once(14, "source already >= presentation size; no forced downsample");
         return 0;
     }
+    // Explicit opt-in while the native producer is integrated. This is not
+    // enabled in a release APK until the R13 renderer supplies the contract.
+    const char* mode=std::getenv("BACHATA_FSR31_INPUT");
+    const bool want_port=mode&&std::strcmp(mode,"port")==0;
+    Bs4PortCameraDispatch camera{};
+    if(want_port&&(!pre_ui||!bs4_fsr31_port_camera(cb,scene_depth_view,input_extent,camera))) {
+        report_once(16,"native Port camera/depth handoff missing; no guessed temporal input");
+        return 0;
+    }
     Bs4FsrCaptureImage color{},depth{};
     if(!bs4_fsr31_capture_image(input,&color)){report_once(4,"Vulkan color image view not captured");return 0;}
     if (pre_ui) {
@@ -276,6 +301,10 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     } else if (!bs4_fsr31_capture_depth(input_extent,&depth)) {
         report_once(5,"depth image matching render extent not captured");
         return 0;
+    }
+    if(want_port && (color.size.width<input_extent.width ||
+                     color.size.height<input_extent.height)) {
+        report_once(17,"Port scene rectangle exceeds color allocation");return 0;
     }
     if(!(color.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)){report_once(6,"color image lacks transfer-source usage");return 0;}
     if(!(depth.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)){report_once(7,"depth image lacks transfer-source usage");return 0;}
@@ -349,13 +378,14 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     // VideoOut image. Its pixels are resampled to the same render extent as
     // the color intermediate (using nearest depth blit only if supported).
     if(!depth.size.width||!depth.size.height){report_once(11,"depth extent invalid");return 0;}
-    if ((internal.width!=depth.size.width || internal.height!=depth.size.height) &&
+    if (!want_port && (internal.width!=depth.size.width || internal.height!=depth.size.height) &&
         !depth_can_blit){report_once(12,"scaled depth blit unsupported by GPU");return 0;}
-    if(!fsr || config.maxRenderSize.width!=internal.width ||
+    if(!fsr || port_inputs!=want_port || config.maxRenderSize.width!=internal.width ||
        config.maxRenderSize.height!=internal.height ||
        config.maxOutputSize.width!=output_extent.width ||
        config.maxOutputSize.height!=output_extent.height ||
        frames[0].scene.format!=VK_FORMAT_R16G16B16A16_SFLOAT ||frames[0].depth.format!=depth.format) {
+        port_inputs=want_port;
         if(!allocate_for(*owned,internal,output_extent,VK_FORMAT_R16G16B16A16_SFLOAT,depth.format)){report_once(13,"FSR resource or context creation failed");return 0;}
     }
     Frame& f=frames[cursor++%frames.size()];
@@ -364,7 +394,8 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     VkImageBlit blit{};
     blit.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
-    blit.srcOffsets[1]={int32_t(color.size.width),int32_t(color.size.height),1};
+    blit.srcOffsets[1]=want_port?VkOffset3D{int32_t(internal.width),int32_t(internal.height),1}:
+        VkOffset3D{int32_t(color.size.width),int32_t(color.size.height),1};
     blit.dstSubresource=blit.srcSubresource;
     blit.dstOffsets[1]={int32_t(internal.width),int32_t(internal.height),1};
     vkCmdBlitImage(cb,color.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
@@ -376,7 +407,7 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     transit(cb,f.depth,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     barrier(cb,depth.image,VK_IMAGE_ASPECT_DEPTH_BIT,depth.layout,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    if(internal.width==depth.size.width && internal.height==depth.size.height) {
+    if(want_port || (internal.width==depth.size.width && internal.height==depth.size.height)) {
         VkImageCopy region{};
         region.srcSubresource={VK_IMAGE_ASPECT_DEPTH_BIT,0,0,1};
         region.dstSubresource=region.srcSubresource;
@@ -396,7 +427,7 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     barrier(cb,depth.image,VK_IMAGE_ASPECT_DEPTH_BIT,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,depth.layout);
     transit(cb,f.depth,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    if(!has_previous) {
+    if(!has_previous && !want_port) {
         transit(cb,previous,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         VkClearColorValue clear{};
         VkImageSubresourceRange sub{VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
@@ -404,7 +435,7 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
         transit(cb,previous,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
     transit(cb,f.motion,VK_IMAGE_LAYOUT_GENERAL);
-    flow(cb,f,internal);
+    flow(cb,f,internal,want_port?&camera:nullptr);
     // Shader storage writes must be visible to the FSR 3.1 compute passes.
     barrier(cb,f.motion.image,VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -421,7 +452,9 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     info.transparencyAndCompositionMask.structSize=sizeof(info.transparencyAndCompositionMask);
     info.renderSize={internal.width,internal.height};
     info.outputSize={output_extent.width,output_extent.height};
-    info.motionVectorScale={1,1};info.jitterOffset={0,0};
+    info.motionVectorScale={1,1};
+    info.jitterOffset=want_port?FfxVkPortableFloat2{camera.motion.jitter[0],camera.motion.jitter[1]}:
+                              FfxVkPortableFloat2{0,0};
     const auto now=std::chrono::steady_clock::now();
     float dt=16.6667f;
     if(frame_id)dt=std::clamp(
@@ -430,8 +463,13 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     info.frameTimeMilliseconds=dt;info.preExposure=1.0f;
     info.cameraNear=0.1f;info.cameraFar=1000.f;
     info.cameraVerticalFovRadians=1.0f;info.viewSpaceToMeters=1.0f;
+    if(want_port) {
+        info.cameraNear=camera.nearPlane;info.cameraFar=camera.farPlane;
+        info.cameraVerticalFovRadians=camera.verticalFov;
+    }
     info.sharpness=0.2f;info.enableSharpening=VK_TRUE;
-    info.reset=has_previous?VK_FALSE:VK_TRUE;info.frameId=frame_id++;
+    info.reset=(!has_previous||(want_port&&camera.reset))?VK_TRUE:VK_FALSE;
+    info.frameId=frame_id++;
     const auto result=ffxVkPortableUpscaleContextRecordDispatch(fsr,&info);
     if(result!=FFX_VK_PORTABLE_OK) {
         if(!once_logged) {
@@ -441,6 +479,7 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
         return 0;
     }
     transit(cb,f.output,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    if(!want_port) {
     transit(cb,previous,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     transit(cb,f.scene,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     VkImageCopy color_region{};
@@ -451,6 +490,7 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
                    previous.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&color_region);
     transit(cb,previous,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     transit(cb,f.scene,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
     has_previous=true;
     if(frame_id==1)
         std::fprintf(stderr,"[BS4_FSR31] real FSR3.1 dispatch recorded (%ux%u->%ux%u)\n",

@@ -1,4 +1,5 @@
 #include "vulkan_capture.h"
+#include "port_scene_frame.h"
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Native FSR 3.1 backend, using FireBurn/FSR-Vulkan c64f093.
 // This is the *effect library* only. The existing core must supply real
@@ -84,6 +85,7 @@ BS4_PUBLIC int bs4_fsr31_supply_temporal_frame(
 BS4_PUBLIC uint64_t bs4_fsr31_try_render(
     uint64_t fsrPassObject, uint64_t commandBuffer, uint64_t inputView,
     uint64_t renderExtent, uint64_t outputExtent, uint64_t settings, uint64_t hdr) {
+    struct EndPortFrame { ~EndPortFrame(){ bs4_fsr31_port_end_frame(); } } end_port_frame;
     (void)fsrPassObject;
     (void)inputView;
     (void)renderExtent;
@@ -286,7 +288,7 @@ BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice 
     std::fprintf(stderr, "[BS4_FSR31] module_base=%p gfx_queue_family=%u\\n",
                  shared_library.dli_fbase, family);
     std::fprintf(stderr,
-        "[BS4_FSR31] attached core024 GPU=%s vendor=0x%x, driver=0x%x, "
+        "[BS4_FSR31] attached core025 GPU=%s vendor=0x%x, driver=0x%x, "
         "shaderStorageImageWriteWithoutFormat-supported=%d\\n",
         props.deviceName, props.vendorID, props.driverVersion,
         int(features.shaderStorageImageWriteWithoutFormat));
@@ -320,9 +322,20 @@ PFN_vkGetInstanceProcAddr real_gipa() {
     return fn;
 }
 bool fsr31_requested() {
-    const char* mode = std::getenv("BACHATA_FSR31_MODE");
-    return mode && mode[0] >= '0' && mode[0] <= '4' && mode[1] == 0;
+    const char* mode=std::getenv("BACHATA_FSR31_MODE");
+    if(!mode||mode[0]<'0'||mode[0]>'4'||mode[1]!=0)return false;
+    // FSR implementation comes from OLD R13; the owner is current core025.
+    // Preserve 020/023/024 routing and do not interpose their Vulkan calls.
+    std::ifstream maps("/proc/self/maps");std::string line;
+    while(std::getline(maps,line)) {
+        const auto pos=line.find("/shadps4-arm64-025");
+        if(pos==std::string::npos)continue;
+        const auto end=pos+sizeof("/shadps4-arm64-025")-1;
+        if(end==line.size()||line[end]==' ')return true;
+    }
+    return false;
 }
+
 VKAPI_ATTR VkResult VKAPI_CALL fsr31_create_instance(
         const VkInstanceCreateInfo* requested,
         const VkAllocationCallbacks* allocator, VkInstance* output) {

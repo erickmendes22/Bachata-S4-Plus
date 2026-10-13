@@ -1,7 +1,7 @@
-name: Build Android GLIBC FSR3 SDK for existing core 024
+name: Build old R13 FSR SDK integration for current core 025
 on:
   push:
-    branches: [feature/fsr31-026-existing-core, feature/fsr31-026-r13-pre-ui]
+    branches: [feature/fsr31-026-existing-core, feature/fsr31-026-r13-pre-ui, feature/fsr31-old-r13-port-restart]
     paths:
       - 'tools/fsr31-026/**'
       - '.github/workflows/fsr31-026-build.yml'
@@ -44,7 +44,7 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
             git cmake ninja-build python3-mako python3-setuptools pkg-config \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            libvulkan-dev:arm64 libvulkan1:arm64 libx11-dev:arm64 glslang-tools \
+            libvulkan-dev:arm64 libvulkan-dev:amd64 libvulkan1:arm64 libx11-dev:arm64 glslang-tools \
             libstdc++6:arm64
       - name: Check out exact portable FSR implementation from Android Bloodborne port
         run: |
@@ -52,7 +52,7 @@ jobs:
           git clone --filter=blob:none https://github.com/FireBurn/FSR-Vulkan.git fsr-vulkan
           git -C fsr-vulkan checkout --detach c64f093404125e960813f95f1996c14780f0dd69
           for name in 0002-Vulkan-backend-device-local-memory-on-unified-memory-GPUs.patch 0003-Frame-generation-free-per-frame-descriptor-pools-and-constant-buffers.patch; do
-            curl -fLsS "https://raw.githubusercontent.com/ducvd89/Bloodborne-Android/android-0.5.2/gpu/patches/fsr-vulkan/$name" -o "/tmp/$name"
+            curl -fLsS "https://raw.githubusercontent.com/ducvd89/Bloodborne-Android/d58769c8ae2f36b4f22db864b68e9bffc21a04d2/gpu/patches/fsr-vulkan/$name" -o "/tmp/$name"
             git -C fsr-vulkan apply --check "/tmp/$name"
             git -C fsr-vulkan apply "/tmp/$name"
           done
@@ -83,7 +83,8 @@ jobs:
           add_library(bachata_fsr31 SHARED
             tools/fsr31-026/bridge.cpp
             tools/fsr31-026/vulkan_capture.cpp
-            tools/fsr31-026/temporal_generic.cpp)
+            tools/fsr31-026/temporal_generic.cpp
+            tools/fsr31-026/port_scene_frame.cpp)
           target_compile_features(bachata_fsr31 PRIVATE cxx_std_17)
           target_include_directories(bachata_fsr31 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/generated")
           target_compile_definitions(bachata_fsr31 PRIVATE _GNU_SOURCE=1)
@@ -105,6 +106,18 @@ jobs:
           Path('generated/flow_spv.h').write_text(content)
           print('Optical flow shader bytes:',len(raw))
           PY
+          glslangValidator -V --target-env vulkan1.2 -S comp -o /tmp/camera.spv tools/fsr31-026/camera_motion.comp
+          python3 - <<'PY_SHADER'
+          from pathlib import Path
+          import struct
+          raw=Path('/tmp/camera.spv').read_bytes()
+          words=struct.unpack('<%dI'%(len(raw)//4),raw)
+          Path('generated/camera_motion_spv.h').write_text(
+              '#pragma once\n#include <stdint.h>\nstatic const uint32_t BS4_FSR31_CAMERA_SPV[] = {\n'+
+              ','.join('0x%08x'%v for v in words)+'};\n')
+          PY_SHADER
+          g++ -std=c++17 -pthread -I/usr/include tools/fsr31-026/port_scene_frame.cpp tools/fsr31-026/tests/port_scene_frame_test.cpp -o /tmp/port-scene-test
+          /tmp/port-scene-test
           cmake -S . -B build -GNinja -DCMAKE_TOOLCHAIN_FILE=fsr-aarch64.ini -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target bachata_fsr31 -j 6
       - name: Validate ARM64 and exports
