@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+"""Native core025 Port motion MRT7/vertex-fragment shader pipeline permutation.
+
+Applied only after shader ABI+SPIR-V+ObjectMotion source adapter.
+"""
+import json,sys
+from pathlib import Path
+root=Path(sys.argv[1]).resolve()
+edits=json.loads(r'''{"src/video_core/renderer_vulkan/vk_graphics_pipeline.h":[["    u32 mrt_mask;","    u32 mrt_mask;\n    u32 motion_vectors; // Separate Port object-motion shader pipeline permutation"]],"src/video_core/renderer_vulkan/vk_pipeline_cache.cpp":[["#include <ranges>","#include <ranges>\n#include <bit>\n#include <cstdlib>"],["#include \"video_core/renderer_vulkan/vk_instance.h\"","#include \"video_core/renderer_vulkan/vk_instance.h\"\n#include \"video_core/renderer_vulkan/motion_history.h\""],["        info.vs_info.clip_disable = regs.IsClipDisabled();","        info.vs_info.clip_disable = regs.IsClipDisabled();\n        info.vs_info.motion_vectors = graphics_key.motion_vectors != 0;"],["        info.fs_info.num_inputs = regs.num_interp;","        info.fs_info.num_inputs = regs.num_interp;\n        info.fs_info.motion_vectors = graphics_key.motion_vectors != 0;"],["    // Second pass to mask out render targets not written by shader and fill remaining info","\n    // Select only Bloodborne-style skinned G-buffer shaders for extra RT7.\n    // Never alter the normal graphics pipeline when FSR temporal is disabled.\n    const char* fsr_mode=std::getenv(\"BACHATA_FSR31_MODE\");\n    const bool temporal=fsr_mode && fsr_mode[0]>='1' &&\n                        fsr_mode[0]<='4' && fsr_mode[1]==0;\n    const bool can_move=temporal && db_enabled && !skip_cb_binding &&\n        std::popcount(key.mrt_mask)>=5 && key.depth_samples==1 &&\n        instance.GetPhysicalDevice().getFeatures().vertexPipelineStoresAndAtomics;\n    if(can_move) {\n        const auto* vs=infos[u32(LogicalStage::Vertex)];\n        const auto* fs=infos[u32(LogicalStage::Fragment)];\n        bool skeletal=false;\n        if(vs && fs) for(const auto& res:vs->buffers) {\n            if(res.IsSpecial()) continue;\n            const auto guest=res.GetSharp(*vs);\n            if(guest.Valid() && guest.GetStride()==16 &&\n               Motion::ClassifyBuffer(guest.GetSize())!=Motion::BufferRole::Other) {\n                skeletal=true;break;\n            }\n        }\n        if(skeletal) {\n            key.motion_vectors=1;\n            if(!RefreshGraphicsStages())return false;\n            constexpr u32 attachment=Shader::MotionVectors::Output;\n            key.mrt_mask|=1u<<attachment;\n            key.num_color_attachments=attachment+1;\n            auto& buf=key.color_buffers[attachment];\n            buf.data_format=AmdGpu::DataFormat::Format32_32_32_32;\n            buf.num_format=AmdGpu::NumberFormat::Float;\n            buf.swizzle=AmdGpu::IdentityMapping;\n            key.write_masks[attachment]=vk::ColorComponentFlagBits::eR |\n               vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB |\n               vk::ColorComponentFlagBits::eA;\n            key.color_samples[attachment]=1;\n        }\n    }\n\n    // Second pass to mask out render targets not written by shader and fill remaining info"]]}''')
+for relative,pairs in edits.items():
+    f=root/relative
+    source=f.read_text()
+    for before,after in pairs:
+        if source.count(before)!=1:
+            raise RuntimeError(f"{relative}: unexpected native source anchor {before[:90]!r}")
+        source=source.replace(before,after)
+    f.write_text(source)
+print("PASS: real G-buffer motion graphics permutation and original disabled pipeline kept separate")
