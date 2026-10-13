@@ -401,7 +401,10 @@ void bs4_native_scene_draw_state(VkCommandBuffer cb,const Bs4NativeRenderState& 
         reinterpret_cast<VkImageView>(state.depth):VK_NULL_HANDLE;
     boundary.guestExtent={state.width,state.height};
     std::copy(d.raw.begin(),d.raw.end(),boundary.rawViewport);
-    native_ui_boundaries.emplace(cb,boundary);
+    // A command buffer may contain multiple UI draws in a single frame.
+    // Preserve the newest native attachment/viewport instead of retaining
+    // the first entry and misrouting later shared-target HUD draws.
+    native_ui_boundaries.insert_or_assign(cb,boundary);
 }
 
 bool bs4_native_scene_ui_state(VkCommandBuffer cb,Bs4NativeUiBoundary& out) {
