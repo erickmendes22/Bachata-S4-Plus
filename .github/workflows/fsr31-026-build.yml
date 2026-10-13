@@ -14,6 +14,8 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+      - name: Verify reference scene and UI resolution patch profiles
+        run: python3 tools/fsr31-025/test_port_resolution_patch.py
       - name: Configure Ubuntu for ARM64 cross-build
         run: |
           set -euxo pipefail
