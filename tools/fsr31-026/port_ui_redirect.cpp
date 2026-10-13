@@ -335,9 +335,17 @@ bool safeOriginal(State& s){
        scene.format!=VK_FORMAT_R8G8B8A8_UNORM)return false;
     if(!s.color.empty()) {
         const auto& c=s.color[0];
+        // The guest can have a compact 640x360 LDR scene and a separate
+        // native-size 1920x1080 UI target. Requiring identical VkImages
+        // makes the temporal/720p handoff impossible in this valid case.
+        // Also accept the Port's native-sized shared scene/UI allocation.
         if(!c.imageView || c.storeOp!=VK_ATTACHMENT_STORE_OP_STORE || c.resolveImageView ||
-           !bs4_fsr31_capture_image(c.imageView,&target) || target.image!=scene.image ||
-           target.format!=scene.format)return false;
+           !bs4_fsr31_capture_image(c.imageView,&target) ||
+           target.format!=scene.format ||
+           target.size.width<1920 || target.size.height<1080 ||
+           !(target.usage&VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) ||
+           (target.image==scene.image &&
+            (scene.size.width<1920 || scene.size.height<1080)))return false;
     } else if(!s.hasStencil || !s.hasDepth) return false;
     return true;
 }

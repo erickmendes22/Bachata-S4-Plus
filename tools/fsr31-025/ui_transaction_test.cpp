@@ -6,6 +6,9 @@
 namespace {
 const auto cb=(VkCommandBuffer)0x100;
 const auto scene=(VkImageView)0x200,depthView=(VkImageView)0x300,out=(VkImageView)0x400;
+// Separate real LDR scene and native-sized UI image: the R27 GPU test
+// incorrectly used the SAME VkImage for both and missed the impossible check.
+const auto ldr=(VkImageView)0x201;
 bool ready=true,failDepth=false;
 int ended=0,began=0,dispatches=0;
 VkAttachmentLoadOp seenStencil=VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -57,8 +60,8 @@ void start(bool withCount=false){
 }
 }
 extern "C" uint64_t bs4_port_frame_generation(){return 1;}
-extern "C" int bs4_fsr31_capture_image(VkImageView v,Bs4FsrCaptureImage* i){if(v==scene){*i={(VkImage)0x600,VK_FORMAT_R8G8B8A8_UNORM,{1920,1080},VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_ASPECT_COLOR_BIT};return 1;}if(v==depthView){*i={(VkImage)0x700,VK_FORMAT_D32_SFLOAT_S8_UINT,{1920,1080},VK_IMAGE_USAGE_TRANSFER_SRC_BIT,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_ASPECT_DEPTH_BIT|VK_IMAGE_ASPECT_STENCIL_BIT};return 1;}return 0;}
-extern "C" VkImageView bs4_port_scene_color(VkCommandBuffer){return scene;}
+extern "C" int bs4_fsr31_capture_image(VkImageView v,Bs4FsrCaptureImage* i){if(v==ldr){*i={(VkImage)0x601,VK_FORMAT_R8G8B8A8_UNORM,{640,360},VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_ASPECT_COLOR_BIT};return 1;}if(v==scene){*i={(VkImage)0x600,VK_FORMAT_R8G8B8A8_UNORM,{1920,1080},VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_ASPECT_COLOR_BIT};return 1;}if(v==depthView){*i={(VkImage)0x700,VK_FORMAT_D32_SFLOAT_S8_UINT,{1920,1080},VK_IMAGE_USAGE_TRANSFER_SRC_BIT,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_ASPECT_DEPTH_BIT|VK_IMAGE_ASPECT_STENCIL_BIT};return 1;}return 0;}
+extern "C" VkImageView bs4_port_scene_color(VkCommandBuffer){return ldr;}
 extern "C" VkImageView bs4_port_current_scene(VkCommandBuffer,VkExtent2D* s){*s={640,360};return depthView;}
 extern "C" int bs4_port_can_prepare_ui(VkCommandBuffer){return ready;}
 extern "C" VkImageView bs4_port_prepared_output(VkCommandBuffer){return ready?out:VK_NULL_HANDLE;}
@@ -88,6 +91,11 @@ int main(){
  assert(seenViewport.width==1920 && seenViewport.height==1080);
  assert(seenScissor.extent.width==1920 && seenScissor.extent.height==1080);
  assert(bs4_port_ui_present((VkCommandBuffer)0x101)==out);
+ // The 640x360 scene must be DISTINCT from the 1920x1080 guest UI, while
+ // the latter gets redirected only after FSR success. A mistaken scene
+ // alias must never be presented as the final full-size HUD image.
+ assert(currentUi.color==(VkImage)0x600);
+ assert(ldr!=scene);
  // A later stencil-only mask and a later color pass keep prior UI stencil.
  VkRenderingAttachmentInfo z{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};z.imageView=depthView;z.storeOp=VK_ATTACHMENT_STORE_OP_STORE;VkRenderingInfo mask{VK_STRUCTURE_TYPE_RENDERING_INFO};mask.renderArea.extent={1920,1080};mask.layerCount=1;mask.pDepthAttachment=mask.pStencilAttachment=&z;VkRenderingInfo redirected{};assert(bs4_port_ui_redirect_begin((VkCommandBuffer)0x101,&mask,false,&redirected));assert(redirected.colorAttachmentCount==0);assert(redirected.pStencilAttachment->loadOp==VK_ATTACHMENT_LOAD_OP_LOAD);assert(redirected.pDepthAttachment->loadOp==VK_ATTACHMENT_LOAD_OP_LOAD);
  puts("PASS: no guest pass interruption on missing FSR or failed proxy allocation; one real handoff; completed-only presentation; subsequent stencil masks preserved with LOAD");
