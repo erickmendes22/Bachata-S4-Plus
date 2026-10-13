@@ -16,21 +16,35 @@ FsrPass pointer. ARM64 native callback ABI tests pass with absent/declined/activ
 SDK at zero and Android-like PIE bases, preserving original arguments and SIMD
 arguments on fallback. These do not establish GPU/device gameplay correctness.
 
-Unresolved: Port OnDraw selects UI on ldr_target == color and redirects every
-UI color/depth attachment and later sampled display image. The imported SDK
-expects a different larger UI attachment. The supplied A03FA2DB log reports
-camera and LDR candidates but no temporal dispatch. Existing separate-image
-GPU tests do not cover the Port shared-target case. A correct native boundary
-handoff and positive shared-target composition test are required before release.
-Do not revive speculative render-pass interruption or global image substitution.
+Verified checkpoint: run 38463663035 completed the native same-LDR boundary
+handoff into explicitly prepared 720p UI targets: camera warmup used the copy
+fallback, followed by seven real AMD FSR dispatches. Every readback preserved
+916600 blue scene pixels and 5000 red HUD pixels with zero Vulkan validation
+errors. This is a synthetic software-Vulkan test, not gameplay on Adreno.
+
+The next checkpoint adds native Pipeline::BindResources shader identity (without
+debug-utils names), copied Scheduler::BeginRendering handoffs, automatic 720p
+color/depth allocation, and cached viewport/scissor/120-byte push-state restoration.
+CPU tests cover 100 consecutive UI/non-UI restores. Native ARM64 emulation covers
+four pipeline-entry ABI cases and six original shader-identity cases.
+
+Automatic UI routing is scoped to the source image and command buffer. Later
+rendering instances and sampled views follow the owned UI target; sampled aliases
+preserve format and component mapping. Source transitions are mirrored to the UI
+image, and resource lifetimes follow native source image/view destruction. The GPU
+test additionally reopens the original attachment with LOAD and checks alias identity.
+The first automatic-target CI stopped on an invalid field in the test, after both
+SDK builds and the three motion/depth GPU cases passed. The field is corrected in
+c65ec621172e02a955d4f14030d59a1599833118; automatic-target execution is still pending.
+
+Remaining release requirements: successful automatic-target GPU test; complete
+native stencil-only/depth-state parity; verify presentation samples the composed
+image in real gameplay; integrate the Android controls/resolution patches and
+Bionic loader into the exact R27 APK; validate final packaging and signing.
+Camera motion is implemented; full object-motion/reactive-mask parity is not
+established. Do not represent the synthetic tests as gameplay stability evidence.
 
 R27 Elden024 routing, core023 removal, patches and native controls are mandatory
-packaging invariants. No APK is generated at this checkpoint.
-
-Additional candidate fixes: reject a new invalid scene without retaining the old
-candidate, and consume a completed scene only after successful composition.
-The SDK workflow also covers preservation of the shared-target rendering
-instance: it must keep the scene and HUD intact without inventing a temporal
-dispatch. This negative case does not satisfy the positive shared-target release
-requirement above. The native scheduler may reuse the same rendering instance,
-so changing the BeginRendering attachment heuristic cannot implement OnDraw.
+packaging invariants. No APK is generated at this checkpoint. No new emulator
+core is built. Do not revive speculative render-pass interruption or global
+image substitution.

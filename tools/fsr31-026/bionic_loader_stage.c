@@ -3,7 +3,7 @@
 // load the glibc FSR3 library, and Android's linker does not expand $ORIGIN.
 // The Android launcher points LD_PRELOAD at this tiny Bionic .so via an
 // absolute path. Its constructor replaces the value with the correct glibc
-// module name before the real ELF loader launches shadps4-arm64-024.
+// module name before the real ELF loader launches shadps4-arm64-025.
 extern char **environ;
 extern int setenv(const char*, const char*, int);
 static int prefix(const char* a,const char* b) {
