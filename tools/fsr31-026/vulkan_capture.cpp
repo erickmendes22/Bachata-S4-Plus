@@ -180,8 +180,14 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
         // Never activate on menu frames that did not contain a 3D scene.
         // Support 640x360, 960x540, 1152x648; 1280x720 does not need
         // temporal upscale if the requested presentation is also 720p.
-        if (w>=600 && h>=320 && ((w<1280&&h<720)||
-            (port&&w==1280&&h==720&&!bs4_native_scene_ui_boundary(cmd)))) {
+        // The camera must identify THIS rendering extent before replacing
+        // the previously completed low-resolution scene. A 1280x720 UI
+        // pass is not automatically another game scene: doing so discarded
+        // the 640x360 scene ahead of the native UI handoff.
+        if (w>=600 && h>=320 &&
+            ((w<1280&&h<720)||
+             (port&&w==1280&&h==720&&!bs4_native_scene_ui_boundary(cmd))) &&
+            (!port||(camera_ready&&camera_size.width==w&&camera_size.height==h))) {
             // A new scene replaces the previous candidate even when its
             // camera, format or allocation is rejected. Never compose stale
             // scene contents into a later HUD pass.
