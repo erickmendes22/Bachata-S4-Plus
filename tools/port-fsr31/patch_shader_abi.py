@@ -20,7 +20,7 @@ def apply(relative, edits):
     p.write_text(content)
 
 apply("src/shader_recompiler/resource.h", [
-    ("#include <span>", "#include <cstddef>\n#include <span>"),
+    ("#pragma once", "#pragma once\n#include <cstddef>"),
     ("    static constexpr u32 BufOffsetIndex = UdRegsIndex + NUM_USER_DATA_REGS / 4;",
      "    static constexpr u32 BufOffsetIndex = UdRegsIndex + NUM_USER_DATA_REGS / 4;\n"
      "    static constexpr u32 MotionParamIndex = BufOffsetIndex + NUM_BUFFERS / 16 + 1;\n"
