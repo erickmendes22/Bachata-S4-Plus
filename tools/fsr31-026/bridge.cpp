@@ -1,6 +1,7 @@
 #include "vulkan_capture.h"
 #include "port_scene_frame.h"
 #include "native_scene_observer.h"
+#include "native_ui_targets.h"
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Native FSR 3.1 backend, using FireBurn/FSR-Vulkan c64f093.
 // This is the *effect library* only. The existing core must supply real
@@ -42,6 +43,7 @@ namespace {
 void native_draw_worker(const void* payload,uint64_t command) {
     Bs4NativeRenderState state{};std::memcpy(&state,payload,sizeof(state));
     bs4_native_scene_draw_state(reinterpret_cast<VkCommandBuffer>(command),state);
+    bs4_native_ui_draw(reinterpret_cast<VkCommandBuffer>(command),state);
 }
 }
 BS4_PUBLIC void bs4_fsr31_native_begin(void* scheduler,const void* render_state,
@@ -55,6 +57,21 @@ BS4_PUBLIC void bs4_fsr31_native_begin(void* scheduler,const void* render_state,
     bs4_native_enqueue_draw(scheduler,state,
         reinterpret_cast<Bs4NativeAllocate>(native_base+0x12f55a4),
         reinterpret_cast<Bs4NativeFlush>(native_base+0x12f56bc),native_draw_worker);
+}
+BS4_PUBLIC void bs4_fsr31_native_pipeline(const void* pipeline) {
+    if(!pipeline||!bs4_fsr31_owner_requested())return;
+    const char* input=std::getenv("BACHATA_FSR31_INPUT");
+    if(!input||std::strcmp(input,"port"))return;
+    const auto* bytes=static_cast<const unsigned char*>(pipeline);
+    // Existing 025 Pipeline::GetDebugString iterates six Info pointers at
+    // this+0x88. Logical vertex slot 3 is this+0xa0. The native BindResources
+    // worker reads this+0x60 as its Vulkan layout, independently verified.
+    if(bytes[0xb9])return; // compute pipelines do not own a guest vertex shader
+    uintptr_t info{};VkPipelineLayout layout{};uint64_t hash{};
+    std::memcpy(&info,bytes+0xa0,sizeof(info));std::memcpy(&layout,bytes+0x60,sizeof(layout));
+    if(!info||!layout)return;
+    std::memcpy(&hash,reinterpret_cast<const void*>(info+0x1d38),sizeof(hash));
+    bs4_native_scene_register_pipeline(layout,hash);
 }
 BS4_PUBLIC int bs4_fsr31_abi() { return 0x00030104; }
 BS4_PUBLIC int bs4_fsr31_create(const FfxVkPortableDeviceInfo* dev,
@@ -249,6 +266,9 @@ BS4_PUBLIC int bs4_fsr31_pre_ui_prepare(VkCommandBuffer command,VkImageView colo
 
 BS4_PUBLIC VkPhysicalDevice bs4_fsr31_physical_device() {
     std::lock_guard lock{guard};return device_attached?acquired_device.physicalDevice:VK_NULL_HANDLE;
+}
+BS4_PUBLIC VkDevice bs4_fsr31_device() {
+    std::lock_guard lock{guard};return device_attached?acquired_device.device:VK_NULL_HANDLE;
 }
 
 BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice device,

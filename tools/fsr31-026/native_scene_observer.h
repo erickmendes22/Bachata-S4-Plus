@@ -20,3 +20,10 @@ struct Bs4NativeUiBoundary {
 };
 void bs4_native_scene_draw_state(VkCommandBuffer,const Bs4NativeRenderState&);
 bool bs4_native_scene_ui_state(VkCommandBuffer,Bs4NativeUiBoundary&);
+void bs4_native_scene_register_pipeline(VkPipelineLayout,uint64_t vertexHash);
+bool bs4_native_scene_dynamic_ready(VkCommandBuffer);
+bool bs4_native_scene_apply_ui_scale(VkCommandBuffer,VkExtent2D guest,VkExtent2D output,
+                                    bool scaled,VkExtent2D hardwareViewport);
+
+bool bs4_native_scene_can_ui_scale(VkCommandBuffer,VkExtent2D guest,VkExtent2D output,
+                                  VkExtent2D hardwareViewport);

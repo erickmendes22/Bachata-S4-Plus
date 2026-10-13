@@ -3,6 +3,7 @@
 // hashes, no Mesa/Turnip private memory-layout reads.
 #include "vulkan_capture.h"
 #include "native_scene_observer.h"
+#include "native_ui_targets.h"
 extern "C" int bs4_fsr31_owner_requested();
 #include <cstdlib>
 #include <atomic>
@@ -28,6 +29,7 @@ struct View {
     VkImage image = VK_NULL_HANDLE;
     VkImageAspectFlags aspects{};
     VkFormat format = VK_FORMAT_UNDEFINED;
+    VkImageViewCreateInfo description{};
 };
 std::mutex mutex;
 std::unordered_map<VkImage, Image> images;
@@ -331,6 +333,27 @@ extern "C" int bs4_fsr31_capture_image(VkImageView view, Bs4FsrCaptureImage* out
     return 1;
 }
 
+extern "C" int bs4_fsr31_capture_scene(VkCommandBuffer cb,VkImageView* color,VkImageView* depth,VkExtent2D* extent) {
+    if(!color||!depth||!extent)return 0;
+    std::lock_guard lock{mutex};const auto it=command_scenes.find(cb);
+    if(it==command_scenes.end()||!it->second.color||(!it->second.inside&&!it->second.ready))return 0;
+    *color=it->second.color;*depth=it->second.depth;*extent=it->second.extent;return 1;
+}
+extern "C" int bs4_fsr31_capture_view(VkImageView view,VkImageViewCreateInfo* out) {
+    if(!out)return 0;std::lock_guard lock{mutex};const auto it=views.find(view);
+    if(it==views.end())return 0;*out=it->second.description;return 1;
+}
+extern "C" void bs4_fsr31_track_ui_image(VkImage image,const VkImageCreateInfo* ci,
+    VkImageView view,const VkImageViewCreateInfo* vi) {
+    if(!image||!ci||!view||!vi)return;std::lock_guard lock{mutex};
+    if(!images.count(image))images[image]={ci->format,{ci->extent.width,ci->extent.height},
+        ci->usage,ci->initialLayout,{},0,ci->samples};
+    views[view]={image,vi->subresourceRange.aspectMask,vi->format,*vi};
+}
+extern "C" void bs4_fsr31_untrack_ui_image(VkImage image,VkImageView view) {
+    std::lock_guard lock{mutex};images.erase(image);views.erase(view);
+}
+
 extern "C" int bs4_fsr31_run_scaled_ui(VkCommandBuffer cb,VkImageView uiColor,VkImageView uiDepth) {
     ScenePass scene{};
     {
@@ -418,6 +441,8 @@ extern "C" int bs4_fsr31_run_scaled_ui(VkCommandBuffer cb,VkImageView uiColor,Vk
     begin(cb,&info);
     {
         std::lock_guard lock{mutex};command_scenes.erase(cb);
+        const auto c=images.find(target.image);if(c!=images.end())c->second.layout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        const auto d=images.find(depthTarget.image);if(d!=images.end())d->second.layout=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     }
     return dispatched?2:1; // 2: real temporal background; 1: Port UI copy fallback
 }
@@ -478,20 +503,22 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_begin_command(
         VkCommandBuffer cb,const VkCommandBufferBeginInfo* info) {
     if (!original_begin_command) return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_begin_command(cb,info);
-    if(status==VK_SUCCESS){bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);}
+    if(status==VK_SUCCESS){bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);}
     return status;
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_reset_command(
         VkCommandBuffer cb,VkCommandBufferResetFlags flags) {
     if(!original_reset_command)return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_reset_command(cb,flags);
-    if(status==VK_SUCCESS){bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);}
+    if(status==VK_SUCCESS){bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);}
     return status;
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_free_commands(
         VkDevice device,VkCommandPool pool,uint32_t count,const VkCommandBuffer* cb) {
-    if(cb&&count){std::lock_guard lock{mutex};
-        for(uint32_t i=0;i<count;++i){command_scenes.erase(cb[i]);bs4_native_scene_reset(cb[i]);}}
+    if(cb&&count){
+        for(uint32_t i=0;i<count;++i){bs4_native_ui_reset(cb[i]);bs4_native_scene_reset(cb[i]);}
+        std::lock_guard lock{mutex};
+        for(uint32_t i=0;i<count;++i)command_scenes.erase(cb[i]);}
     if(original_free_commands)original_free_commands(device,pool,count,cb);
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image(
@@ -507,6 +534,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image(
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_destroy_image(
     VkDevice dev,VkImage img,const VkAllocationCallbacks* ac) {
+    bs4_native_ui_release(img);
     {std::lock_guard lock{mutex}; images.erase(img);}
     if(original_destroy_image) original_destroy_image(dev,img,ac);
 }
@@ -517,7 +545,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image_view(
     auto r=original_create_image_view(dev,ci,ac,view);
     if(r==VK_SUCCESS && ci && view) {
         std::lock_guard lock{mutex};
-        views[*view]={ci->image,ci->subresourceRange.aspectMask,ci->format};
+        views[*view]={ci->image,ci->subresourceRange.aspectMask,ci->format,*ci};
     }
     return r;
 }

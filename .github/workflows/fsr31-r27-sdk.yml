@@ -88,7 +88,8 @@ jobs:
             tools/fsr31-026/temporal_generic.cpp
             tools/fsr31-026/port_scene_frame.cpp
             tools/fsr31-026/native_draw_handoff.cpp
-            tools/fsr31-026/native_scene_observer.cpp)
+            tools/fsr31-026/native_scene_observer.cpp
+            tools/fsr31-026/native_ui_targets.cpp)
           target_compile_features(bachata_fsr31 PRIVATE cxx_std_17)
           target_include_directories(bachata_fsr31 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/generated")
           target_compile_definitions(bachata_fsr31 PRIVATE _GNU_SOURCE=1)
@@ -129,6 +130,8 @@ jobs:
           /tmp/native-observer-test
           g++ -std=c++17 -O2 -Wall -Wextra -Werror tools/fsr31-026/native_draw_handoff.cpp tools/fsr31-026/tests/native_draw_handoff_test.cpp -o /tmp/native-draw-handoff-test
           /tmp/native-draw-handoff-test
+          g++ -std=c++17 -pthread -I/usr/include tools/fsr31-026/native_scene_observer.cpp tools/fsr31-026/port_scene_frame.cpp tools/fsr31-026/tests/native_ui_scale_test.cpp -o /tmp/native-ui-scale-test
+          /tmp/native-ui-scale-test
           cmake -S . -B build -GNinja -DCMAKE_TOOLCHAIN_FILE=fsr-aarch64.ini -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target bachata_fsr31 -j 6
       - name: Validate actual Port motion and AMD dispatch on software Vulkan
@@ -146,6 +149,7 @@ jobs:
           /tmp/bs4-fsr-sdk-smoke | tee r13-composition-gpu.txt
           /tmp/bs4-fsr-sdk-smoke shared-target | tee shared-target-preservation-gpu.txt
           /tmp/bs4-fsr-sdk-smoke run-scaled-ui | tee native-run-scaled-ui-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke owned-ui | tee automatic-native-ui-gpu.txt
       - name: Validate ARM64 and exports
         run: |
           set -euxo pipefail
@@ -168,5 +172,6 @@ jobs:
             r13-composition-gpu.txt
             shared-target-preservation-gpu.txt
             native-run-scaled-ui-gpu.txt
+            automatic-native-ui-gpu.txt
           if-no-files-found: error
           retention-days: 7

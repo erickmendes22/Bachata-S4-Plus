@@ -25,10 +25,14 @@ struct DrawState {
     VkExtent2D area{};
     uint32_t mrt{};
     std::array<float,4> raw{};
+    std::array<unsigned char,120> pushRaw{};
+    VkShaderStageFlags pushStages{};
     bool rawValid{},inside{},haveCamera{};
     VkViewport viewport{};
     bool viewportValid{},viewportWithCount{};
     VkPipelineLayout graphicsLayout{};
+    VkRect2D scissor{};
+    bool scissorValid{},scissorWithCount{};
     std::map<uint32_t,Buffers> pushes;
     std::map<uint32_t,VkDescriptorSet> sets;
     std::array<float,216> constants{};
@@ -54,6 +58,8 @@ PFN_vkCmdPushDescriptorSetKHR pushDescriptors;
 PFN_vkUpdateDescriptorSets updateDescriptors;
 PFN_vkCmdBindDescriptorSets bindSets;
 PFN_vkCmdPushConstants pushConstants;
+PFN_vkCmdSetScissor setScissor;
+PFN_vkCmdSetScissorWithCount setScissorCount;
 PFN_vkCmdSetViewport setViewport;
 PFN_vkCmdSetViewportWithCount setViewportCount;
 PFN_vkSetDebugUtilsObjectNameEXT objectName;
@@ -201,6 +207,7 @@ void VKAPI_CALL constants_hook(VkCommandBuffer cb,VkPipelineLayout l,VkShaderSta
     if((stage&VK_SHADER_STAGE_VERTEX_BIT)&&offset==0&&size==120&&values) {
         std::lock_guard lock{guard};auto& d=commands[cb];
         std::memcpy(d.raw.data(),values,16);d.rawValid=true;d.graphicsLayout=l;
+        std::memcpy(d.pushRaw.data(),values,120);d.pushStages=stage;
         for(float v:d.raw)if(!std::isfinite(v))d.rawValid=false;
     }
     pushConstants(cb,l,stage,offset,size,values);
@@ -214,6 +221,16 @@ void VKAPI_CALL viewport_count_hook(VkCommandBuffer cb,uint32_t count,const VkVi
     {std::lock_guard lock{guard};auto& d=commands[cb];d.viewportValid=count==1&&v;
      d.viewportWithCount=true;if(d.viewportValid)d.viewport=*v;}
     setViewportCount(cb,count,v);
+}
+void VKAPI_CALL scissor_hook(VkCommandBuffer cb,uint32_t first,uint32_t count,const VkRect2D* value) {
+    if(first==0){std::lock_guard lock{guard};auto& d=commands[cb];
+        d.scissorValid=count==1&&value;d.scissorWithCount=false;if(d.scissorValid)d.scissor=*value;}
+    setScissor(cb,first,count,value);
+}
+void VKAPI_CALL scissor_count_hook(VkCommandBuffer cb,uint32_t count,const VkRect2D* value) {
+    {std::lock_guard lock{guard};auto& d=commands[cb];d.scissorValid=count==1&&value;
+        d.scissorWithCount=true;if(d.scissorValid)d.scissor=*value;}
+    setScissorCount(cb,count,value);
 }
 VkResult VKAPI_CALL name_hook(VkDevice dev,const VkDebugUtilsObjectNameInfoEXT* info) {
     if(info&&info->objectType==VK_OBJECT_TYPE_PIPELINE_LAYOUT) {
@@ -335,6 +352,9 @@ extern "C" PFN_vkVoidFunction bs4_native_scene_wrap(const char* name,PFN_vkVoidF
     WRAP(setViewport,"vkCmdSetViewport",viewport_hook)
     WRAP(setViewportCount,"vkCmdSetViewportWithCount",viewport_count_hook)
     WRAP(setViewportCount,"vkCmdSetViewportWithCountEXT",viewport_count_hook)
+    WRAP(setScissor,"vkCmdSetScissor",scissor_hook)
+    WRAP(setScissorCount,"vkCmdSetScissorWithCount",scissor_count_hook)
+    WRAP(setScissorCount,"vkCmdSetScissorWithCountEXT",scissor_count_hook)
     WRAP(objectName,"vkSetDebugUtilsObjectNameEXT",name_hook)
     WRAP(destroyLayout,"vkDestroyPipelineLayout",layout_destroy_hook)
     WRAP(draw,"vkCmdDraw",draw_hook)
@@ -376,4 +396,75 @@ bool bs4_native_scene_ui_state(VkCommandBuffer cb,Bs4NativeUiBoundary& out) {
     std::lock_guard lock{guard};const auto it=native_ui_boundaries.find(cb);
     if(it==native_ui_boundaries.end()||it->second.frame!=frame)return false;
     out=it->second;return true;
+}
+
+void bs4_native_scene_register_pipeline(VkPipelineLayout layout,uint64_t hash) {
+    if(!layout)return;
+    std::lock_guard lock{guard};layoutHashes[layout]=hash;
+}
+
+bool bs4_native_scene_dynamic_ready(VkCommandBuffer cb) {
+    std::lock_guard lock{guard};const auto it=commands.find(cb);
+    if(it==commands.end())return false;
+    const auto& d=it->second;
+    return d.rawValid&&d.viewportValid&&d.scissorValid&&pushConstants&&
+        (d.viewportWithCount?bool(setViewportCount):bool(setViewport))&&
+        (d.scissorWithCount?bool(setScissorCount):bool(setScissor));
+}
+
+static bool scale_ui(VkCommandBuffer cb,VkExtent2D guest,VkExtent2D output,
+                     bool scaled,VkExtent2D hardware,bool record) {
+    struct Snapshot {
+        std::array<float,4> raw{};std::array<unsigned char,120> pushRaw{};
+        VkPipelineLayout graphicsLayout{};VkShaderStageFlags pushStages{};
+        VkViewport viewport{};VkRect2D scissor{};
+        bool rawValid{},viewportValid{},scissorValid{},viewportWithCount{},scissorWithCount{};
+    } d;
+    {std::lock_guard lock{guard};const auto it=commands.find(cb);
+        if(it==commands.end())return false;
+        const auto& original=it->second;
+        d={original.raw,original.pushRaw,original.graphicsLayout,original.pushStages,
+           original.viewport,original.scissor,original.rawValid,original.viewportValid,
+           original.scissorValid,original.viewportWithCount,original.scissorWithCount};}
+    if(!d.rawValid||!d.viewportValid||!d.scissorValid||!pushConstants||
+       !guest.width||!guest.height||!output.width||!output.height)return false;
+    const auto scale=scaled?Vulkan::UiComposition::Scale(guest.width,guest.height,
+        output.width,output.height,Vulkan::UiComposition::NativeViewport(2*d.raw[2],2*d.raw[3])):
+        std::array<float,2>{1.f,1.f};
+    float raw[4];std::memcpy(raw,d.pushRaw.data(),16);
+    raw[0]*=scale[0];raw[2]*=scale[0];raw[1]*=scale[1];raw[3]*=scale[1];
+    std::memcpy(d.pushRaw.data(),raw,16);
+    // Port keeps the hardware-window viewport when clipping is disabled.
+    // Only its raw shader viewport and scissor scale in that case.
+    const bool clipDisabled=d.viewport.x==0&&d.viewport.y==0&&
+        d.viewport.width==float(hardware.width)&&d.viewport.height==float(hardware.height);
+    if(!clipDisabled){d.viewport.x*=scale[0];d.viewport.width*=scale[0];
+        d.viewport.y*=scale[1];d.viewport.height*=scale[1];}
+    if(!std::isfinite(d.viewport.width)||!std::isfinite(d.viewport.height)||
+       std::abs(d.viewport.width)>hardware.width||std::abs(d.viewport.height)>hardware.height)return false;
+    const auto x0=std::lround(double(d.scissor.offset.x)*scale[0]);
+    const auto y0=std::lround(double(d.scissor.offset.y)*scale[1]);
+    const auto x1=std::lround((double(d.scissor.offset.x)+d.scissor.extent.width)*scale[0]);
+    const auto y1=std::lround((double(d.scissor.offset.y)+d.scissor.extent.height)*scale[1]);
+    if(x0<0||y0<0||x1>INT32_MAX||y1>INT32_MAX)return false;
+    d.scissor={{int32_t(x0),int32_t(y0)},{uint32_t(std::max(0L,x1-x0)),uint32_t(std::max(0L,y1-y0))}};
+    if((d.viewportWithCount?!setViewportCount:!setViewport)||
+       (d.scissorWithCount?!setScissorCount:!setScissor))return false;
+    // Original entry points preserve the native cache of unscaled values.
+    // The draw boundary also calls this with scaled=false for other targets,
+    // restoring state even when the native cache suppresses repeated commands.
+    if(!record)return true;
+    pushConstants(cb,d.graphicsLayout,d.pushStages,0,120,d.pushRaw.data());
+    native_viewport(cb,d.viewport,d.viewportWithCount);
+    if(d.scissorWithCount)setScissorCount(cb,1,&d.scissor);else setScissor(cb,0,1,&d.scissor);
+    return true;
+}
+
+bool bs4_native_scene_apply_ui_scale(VkCommandBuffer cb,VkExtent2D guest,VkExtent2D output,
+                                    bool scaled,VkExtent2D hardware) {
+    return scale_ui(cb,guest,output,scaled,hardware,true);
+}
+bool bs4_native_scene_can_ui_scale(VkCommandBuffer cb,VkExtent2D guest,VkExtent2D output,
+                                  VkExtent2D hardware) {
+    return scale_ui(cb,guest,output,true,hardware,false);
 }
