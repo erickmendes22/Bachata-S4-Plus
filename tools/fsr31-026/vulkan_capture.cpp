@@ -139,7 +139,7 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
                         std::vector<VkRenderingAttachmentInfo>& overrides) {
     (void)modified;
     (void)overrides;
-    if(!cmd||!info||info->pNext||info->colorAttachmentCount!=1||
+    if(!cmd||!info||info->pNext||!info->colorAttachmentCount||
        !info->pColorAttachments||!info->pColorAttachments[0].imageView)
         return false;
     VkExtent2D real{};
@@ -148,6 +148,15 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
        real.width>1280||real.height>720)return false;
     Bs4FsrCaptureImage d{};
     if(!bs4_fsr31_capture_image(scene_depth,&d))return false;
+    // One bounded observation for each attachment count after real camera
+    // discovery; never modify the guest pass when selection fails.
+    static std::atomic<uint32_t> observed_counts{0};
+    const uint32_t bit=1u<<std::min(info->colorAttachmentCount,31u);
+    if(!(observed_counts.fetch_or(bit)&bit)) {
+        Bs4FsrCaptureImage c{};bs4_fsr31_capture_image(info->pColorAttachments[0].imageView,&c);
+        std::fprintf(stderr,"[BS4_PORT_STAGE] camera=%ux%u color_count=%u fmt=%u allocation=%ux%u depth=%ux%u usage=%x\n",real.width,real.height,info->colorAttachmentCount,unsigned(c.format),c.size.width,c.size.height,d.size.width,d.size.height,unsigned(c.usage));
+    }
+    if(info->colorAttachmentCount!=1)return false;
     const uint32_t w=real.width,h=real.height;
     const uint64_t frame=bs4_port_frame_generation();
     const VkImageView view=info->pColorAttachments[0].imageView;

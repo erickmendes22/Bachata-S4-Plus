@@ -410,8 +410,20 @@ extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer cb) {
     uint64_t frame=0;bs4_port_current_scene(cb,&sceneExtent);
     std::unique_lock lock{uiMutex};
     const auto it=cmds.find(cb);
-    if(it==cmds.end() || !shaderBoundUI[cb])return false;
+    if(it==cmds.end())return false;
     State& s=it->second;s.candidateScene=candidate;s.sceneExtent=sceneExtent;
+    if(sceneExtent.width) {
+        const unsigned reason=(!shaderBoundUI[cb]?1u:0u)|(!candidate?2u:0u)|
+            ((!s.haveViewport||!s.haveScissor)?4u:0u)|
+            ((std::abs(s.viewport.width)<1919.f||std::abs(s.viewport.height)<1079.f)?8u:0u)|
+            ((s.color.size()>1||s.guest.pNext)?16u:0u);
+        static uint32_t reported=0;const uint32_t bit=1u<<reason;
+        if(!(reported&bit)) {
+            reported|=bit;
+            std::fprintf(stderr,"[BS4_PORT_STAGE] UI_gate_mask=%u scene=%ux%u viewport=%.0fx%.0f color_count=%zu pipeline_UI=%u candidate=%u\n",reason,sceneExtent.width,sceneExtent.height,s.viewport.width,s.viewport.height,s.color.size(),unsigned(shaderBoundUI[cb]),unsigned(candidate!=VK_NULL_HANDLE));
+        }
+    }
+    if(!shaderBoundUI[cb])return false;
     if(!safeOriginal(s))return false;
     if(s.hasDepth || s.hasStencil) {
         Bs4FsrCaptureImage originalDepth{};
