@@ -72,7 +72,7 @@ int main(int argc,char** argv){
   Bs4NativeUiBoundary nativeBoundary{};assert(bs4_native_scene_ui_state(cb,nativeBoundary)&&nativeBoundary.color==(shared?scene.view:ui.view)&&nativeBoundary.guestExtent.width==nativeState.width);
   if(automatic){
    Bs4FsrCaptureImage owned{};assert(bs4_native_ui_output(cb,owned));
-   ui.image=owned.image;ui.view=owned.view;ui.layout=owned.layout;
+   ui.image=owned.image;ui.view=bs4_native_ui_sampled_view(cb,scene.view);ui.layout=owned.layout;
    // Native scheduler ends and later reopens the same original attachment.
    // The automatic layer must keep the 720p UI image, with LOAD contents.
    end(cb);ldr.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;ri.renderArea.extent={640,360};ri.pColorAttachments=&ldr;begin(cb,&ri);
