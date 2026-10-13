@@ -1,0 +1,52 @@
+{
+  "runtimeVersion": "bachata-s4-n026-0.2.6-r",
+  "runtimeCollisionRemoved": true,
+  "diagnosticDispatcherSha256": "19f4e03f08c4fb10b0dd5d6b5e2b0838a53700942636fd932bb7ea6966a32634",
+  "includedDispatcherSha256": "5c162129531b9446557c25c6a06ff5fe2a85f489c8d35d6faa5b929234735882",
+  "fsr31PayloadAndHooks": false,
+  "coreSha256": "373aba94528c85dfcf2846df4589d85d285bf865b3e658bd85de0df11cb80c59",
+  "catalogIds": [
+    "CUSA02999",
+    "CUSA02299"
+  ],
+  "spiderPatchOptions": 7,
+  "androidDexPreserved": true,
+  "otherRuntimesPreserved": true,
+  "allManifestHashesVerified": true,
+  "deviceValidated": false,
+  "apkSha256": "9bed0e88fb2ff6508609b0e7fdef073a2b460e1aef87d4be2a7a56fc6125ce1f",
+  "signature": "P36 V2/V3 verified SDK24-36",
+  "arm64Tests": {
+    "cases": 42,
+    "realNativeStageSwitchExecuted": true,
+    "diagnosticCoreReproduces325Rejection": true,
+    "cleanCoreAccepts325": true,
+    "rbGetenvModeledWithGpSimdFlagsClobber": true,
+    "deviceValidated": false
+  },
+  "spider": {
+    "ebootSha256": "d9736579d38c3862e208e6c3fc5f9a9a6d946e024ecd226235ea9c773b20a70b",
+    "codeSha256": "21381487512c8d12d1e6b2d8ad2a1a01a0c66b161e2f564eda1426eb861d7b66",
+    "ids": [
+      "CUSA02999",
+      "CUSA02299"
+    ],
+    "options": [
+      "Resolution 1280x720",
+      "Resolution 1600x900",
+      "Disable Sun Shadows",
+      "Disable SSAO",
+      "Vehicle Density 50%",
+      "Pedestrian Generation 50%",
+      "60 FPS"
+    ],
+    "verifiedSites": 16,
+    "oldAddressesMatchSuppliedEboot": true,
+    "allDisabledByDefault": true,
+    "fpsConstants": [
+      0.03333333507180214,
+      0.01666666753590107
+    ],
+    "deviceValidated": false
+  }
+}
