@@ -49,7 +49,7 @@ if "BbSettings" in s or "BbStats" in s or "BbToggle" in s or "scheduler.Record" 
 p.write_text(s)
 cm=root/"CMakeLists.txt"
 c=cm.read_text()
-anchor="                src/video_core/renderer_vulkan/vk_rasterizer.h"
+anchor="               src/video_core/renderer_vulkan/vk_rasterizer.h"
 assert c.count(anchor)==1
 c=c.replace(anchor,anchor+'''
                 src/video_core/renderer_vulkan/motion_history.h
