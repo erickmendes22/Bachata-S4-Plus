@@ -91,6 +91,7 @@ int main(){
  assert(seenViewport.width==1920 && seenViewport.height==1080);
  assert(seenScissor.extent.width==1920 && seenScissor.extent.height==1080);
  assert(bs4_port_ui_present((VkCommandBuffer)0x101)==out);
+ assert(currentUi.color==(VkImage)0x600 && currentUi.original==scene);
  // The Port also supports native-coordinate Scaleform inside a reduced
  // guest LDR attachment. Both image identity models must dispatch.
  start(true,true);
@@ -100,12 +101,34 @@ int main(){
  bs4_port_ui_redirect_end(cb);
  assert(bs4_port_ui_present((VkCommandBuffer)0x101)==out);
  assert(seenViewport.width==1920 && seenViewport.height==1080);
- // The 640x360 scene must be DISTINCT from the 1920x1080 guest UI, while
- // the latter gets redirected only after FSR success. A mistaken scene
- // alias must never be presented as the final full-size HUD image.
- assert(currentUi.color==(VkImage)0x600);
+ // The reduced UI may share the real LDR scene; the host HUD remains
+ // a separate 1280x720 target, never the original guest image.
+ assert(currentUi.color==(VkImage)0x601 && currentUi.original==ldr);
  assert(ldr!=scene);
  // A later stencil-only mask and a later color pass keep prior UI stencil.
  VkRenderingAttachmentInfo z{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};z.imageView=depthView;z.storeOp=VK_ATTACHMENT_STORE_OP_STORE;VkRenderingInfo mask{VK_STRUCTURE_TYPE_RENDERING_INFO};mask.renderArea.extent={1920,1080};mask.layerCount=1;mask.pDepthAttachment=mask.pStencilAttachment=&z;VkRenderingInfo redirected{};assert(bs4_port_ui_redirect_begin((VkCommandBuffer)0x101,&mask,false,&redirected));assert(redirected.colorAttachmentCount==0);assert(redirected.pStencilAttachment->loadOp==VK_ATTACHMENT_LOAD_OP_LOAD);assert(redirected.pDepthAttachment->loadOp==VK_ATTACHMENT_LOAD_OP_LOAD);
- puts("PASS: no guest pass interruption on missing FSR or failed proxy allocation; one real handoff; completed-only presentation; subsequent stencil masks preserved with LOAD");
+ // Verify the Port's exact movie shader can activate UI even when generic
+ // depth/blend heuristics are false. A non-Port shader must not be accepted.
+ const VkShaderModule mod=(VkShaderModule)0x511;
+ VkDebugUtilsObjectNameInfoEXT tag{VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT};
+ tag.objectType=VK_OBJECT_TYPE_SHADER_MODULE;
+ tag.objectHandle=(uint64_t)(uintptr_t)mod;
+ tag.pObjectName="vs_0x0000000034e8a281";
+ bs4_port_ui_name(nullptr,&tag);
+ VkPipelineShaderStageCreateInfo stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+ stage.stage=VK_SHADER_STAGE_VERTEX_BIT;stage.module=mod;stage.pName="main";
+ VkPipelineDepthStencilStateCreateInfo opaque{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+ opaque.depthTestEnable=VK_TRUE;
+ VkPipelineColorBlendAttachmentState color{};
+ VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+ blend.attachmentCount=1;blend.pAttachments=&color;
+ VkGraphicsPipelineCreateInfo ci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+ ci.stageCount=1;ci.pStages=&stage;ci.pDepthStencilState=&opaque;ci.pColorBlendState=&blend;
+ VkPipeline pipe{};
+ assert(bs4_port_ui_create_pipelines(nullptr,nullptr,1,&ci,nullptr,&pipe)==VK_SUCCESS);
+ assert(uiPipelines[pipe]);
+ tag.pObjectName="vs_0x00000000deadcafe";bs4_port_ui_name(nullptr,&tag);
+ assert(bs4_port_ui_create_pipelines(nullptr,nullptr,1,&ci,nullptr,&pipe)==VK_SUCCESS);
+ assert(!uiPipelines[pipe]);
+ puts("PASS: 640x360 native and shared LDR HUD, WithCount state restore, stencil masks, exact Port movie shader selection");
 }

@@ -75,6 +75,15 @@ PFN_vkCmdEndRendering realEnd{};
 PFN_vkCmdBeginRenderingKHR realBeginKHR{};
 PFN_vkCmdEndRenderingKHR realEndKHR{};
 bool firstReport=false;
+// Exact Bloodborne Port Scaleform vertex-shader IDs (ui_composition.h).
+// Do not infer the first UI draw from blending or scene dimensions alone.
+constexpr bool PortMovieShader(uint64_t hash) {
+    return hash==0x34e8a281 || hash==0x81d336ce ||
+           hash==0x09957251 || hash==0x24042a9b ||
+           hash==0xa400228b || hash==0xbb4d5f8c ||
+           hash==0xe94b5b06 || hash==0x9951d199 ||
+           hash==0x44072322 || hash==0xa334a845;
+}
 
 VkViewport scaled(VkViewport v) {
     v.x*=2.f/3.f;v.y*=2.f/3.f;
@@ -594,7 +603,18 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_port_ui_create_pipelines(
             bool blended=false;
             if(ci.pColorBlendState)for(uint32_t j=0;j<ci.pColorBlendState->attachmentCount;j++)
                 blended|=ci.pColorBlendState->pAttachments[j].blendEnable;
-            const bool eligible=noDepth && (blended || ci.pDepthStencilState->stencilTestEnable);
+            bool portMovie=false;
+            if(ci.pStages)for(uint32_t j=0;j<ci.stageCount;++j) {
+                if(ci.pStages[j].stage!=VK_SHADER_STAGE_VERTEX_BIT)continue;
+                const auto shader=guestHashes.find(ci.pStages[j].module);
+                if(shader!=guestHashes.end())
+                    portMovie|=PortMovieShader(shader->second);
+            }
+            // The Port triggers on its known Scaleform vertex shaders.
+            // Keep a strict fallback for versions without shader debug names;
+            // safeOriginal still validates color, camera and native viewport.
+            const bool eligible=portMovie ||
+                (noDepth && (blended || ci.pDepthStencilState->stencilTestEnable));
             uiPipelines[output[i]]=eligible;
         }
     }
