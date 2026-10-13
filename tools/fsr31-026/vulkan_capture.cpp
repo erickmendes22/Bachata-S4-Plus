@@ -2,6 +2,7 @@
 // Capture real Vulkan image descriptions from the renderer. No guest shader
 // hashes, no Mesa/Turnip private memory-layout reads.
 #include "vulkan_capture.h"
+#include "render_area_bounds.h"
 extern "C" int bs4_fsr31_selected_preset();
 #include "port_camera_constants.h"
 #include <atomic>
@@ -26,6 +27,7 @@ struct View {
     VkImage image = VK_NULL_HANDLE;
     VkImageAspectFlags aspects{};
     VkFormat format = VK_FORMAT_UNDEFINED;
+    uint32_t baseMip=0;
 };
 std::mutex mutex;
 std::unordered_map<VkImage, Image> images;
@@ -153,7 +155,8 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     const VkImageView view=info->pColorAttachments[0].imageView;
     std::lock_guard lock{mutex};
     const auto v=views.find(view);
-    if(v==views.end() || v->second.format!=VK_FORMAT_R8G8B8A8_UNORM)
+    if(v==views.end() || v->second.baseMip!=0 ||
+       v->second.format!=VK_FORMAT_R8G8B8A8_UNORM)
         return false;
     const auto img=images.find(v->second.image);
     if(img==images.end() ||
@@ -392,7 +395,8 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image_view(
     auto r=original_create_image_view(dev,ci,ac,view);
     if(r==VK_SUCCESS && ci && view) {
         std::lock_guard lock{mutex};
-        views[*view]={ci->image,ci->subresourceRange.aspectMask,ci->format};
+        views[*view]={ci->image,ci->subresourceRange.aspectMask,ci->format,
+                      ci->subresourceRange.baseMipLevel};
     }
     return r;
 }
@@ -401,8 +405,43 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_destroy_image_view(
     {std::lock_guard lock{mutex}; views.erase(view);}
     if(original_destroy_image_view) original_destroy_image_view(dev,view,ac);
 }
+namespace {
+bool bound_rendering(const VkRenderingInfo* input,VkRenderingInfo& output) {
+    if(!input || input->pNext || input->viewMask || input->layerCount!=1 ||
+       input->flags&(VK_RENDERING_RESUMING_BIT|VK_RENDERING_SUSPENDING_BIT))return false;
+    std::vector<VkExtent2D> extents;
+    std::lock_guard lock{mutex};
+    const auto add=[&](const VkRenderingAttachmentInfo* attachment) {
+        if(!attachment || !attachment->imageView)return true;
+        const auto view=views.find(attachment->imageView);
+        if(view==views.end())return false;
+        const auto image=images.find(view->second.image);
+        if(image==images.end() || view->second.baseMip>=32)return false;
+        extents.push_back({std::max(1u,image->second.size.width>>view->second.baseMip),
+                           std::max(1u,image->second.size.height>>view->second.baseMip)});
+        if(attachment->resolveImageView)return false; // do not partially change resolves
+        return true;
+    };
+    if(input->colorAttachmentCount && !input->pColorAttachments)return false;
+    for(uint32_t i=0;i<input->colorAttachmentCount;i++)
+        if(!add(&input->pColorAttachments[i]))return false;
+    if(!add(input->pDepthAttachment) || !add(input->pStencilAttachment))return false;
+    VkRect2D area{};
+    if(!BachataRendering::BoundArea(input->renderArea,extents,area))return false;
+    output=*input;output.renderArea=area;
+    static std::atomic<unsigned> reports{0};
+    if(reports.fetch_add(1)<4)
+        std::fprintf(stderr,"[BS4_PORT] attachment bounds corrected render_area=%ux%u "
+            "-> %ux%u attachment_count=%zu VUID_06079_06080=1\n",
+            input->renderArea.extent.width,input->renderArea.extent.height,
+            area.extent.width,area.extent.height,extents.size());
+    return true;
+}
+}
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering(
     VkCommandBuffer cb,const VkRenderingInfo* info) {
+    VkRenderingInfo bounded{};
+    if(bound_rendering(info,bounded))info=&bounded;
     // Dispatch BEFORE recording the UI depth attachment; otherwise generic
     // FSR3 would select the newly-starting UI depth instead of scene depth.
     VkRenderingInfo modified{};
@@ -432,6 +471,8 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_barrier2(
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering_khr(
     VkCommandBuffer cb,const VkRenderingInfo* info) {
+    VkRenderingInfo bounded{};
+    if(bound_rendering(info,bounded))info=&bounded;
     // Dispatch BEFORE recording the UI depth attachment; otherwise generic
     // FSR3 would select the newly-starting UI depth instead of scene depth.
     VkRenderingInfo modified{};

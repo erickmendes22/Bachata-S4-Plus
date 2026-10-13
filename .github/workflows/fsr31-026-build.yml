@@ -47,7 +47,7 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
             git cmake ninja-build python3-mako python3-setuptools python3-unicorn pkg-config \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            libvulkan-dev:arm64 libvulkan-dev:amd64 mesa-vulkan-drivers libvulkan1:arm64 libx11-dev:arm64 glslang-tools \
+            libvulkan-dev:arm64 libvulkan-dev:amd64 mesa-vulkan-drivers vulkan-validationlayers:amd64 libvulkan1:arm64 libx11-dev:arm64 glslang-tools \
             libstdc++6:arm64
       - name: Execute the guest width and height hook contract
         run: python3 tools/fsr31-025/test_decoupled_resolution_hook.py
@@ -152,6 +152,8 @@ jobs:
           g++ -std=c++17 -O2 -I/usr/include tools/fsr31-025/ui_transaction_test.cpp \
             -lvulkan -o /tmp/ui_transaction_test
           /tmp/ui_transaction_test | tee ui-tests.txt
+          g++ -std=c++17 -O2 tools/fsr31-025/render_area_bounds_test.cpp -o /tmp/render_area_bounds_test
+          /tmp/render_area_bounds_test | tee -a ui-tests.txt
           g++ -std=c++17 -O2 tools/fsr31-025/camera_entrypoint_test.cpp -ldl -o /tmp/camera_entrypoint_test
           /tmp/camera_entrypoint_test | tee camera-entrypoint-tests.txt
           g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include \
@@ -168,6 +170,27 @@ jobs:
             -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/shadps4-arm64-025
           /tmp/shadps4-arm64-025 /tmp/ui.vert.spv /tmp/ui.frag.spv /tmp/post.frag.spv | tee integration-tests.txt
           /tmp/shadps4-arm64-025 /tmp/ui.vert.spv /tmp/ui.frag.spv /tmp/post.frag.spv --scene-sized | tee -a integration-tests.txt
+          /tmp/shadps4-arm64-025 /tmp/ui.vert.spv /tmp/ui.frag.spv /tmp/post.frag.spv --scene-sized --oversized-area | tee -a integration-tests.txt
+          # Negative control: execute the identical new device-shaped test
+          # against the capture implementation actually shipped in R23.
+          curl -fLsS https://raw.githubusercontent.com/erickmendes22/Bachata-S4-Plus/4a12e8e3d383d16318060a2cd2e404405642a70c/tools/fsr31-026/vulkan_capture.cpp -o /tmp/r23-capture.cpp
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          source=Path('tools/fsr31-026/vulkan_capture.cpp')
+          current=source.read_bytes()
+          try:
+              source.write_bytes(Path('/tmp/r23-capture.cpp').read_bytes())
+              subprocess.run(['cmake','--build','build-host','--target','bachata_fsr31','-j','6'],check=True)
+              result=subprocess.run(['/tmp/shadps4-arm64-025','/tmp/ui.vert.spv','/tmp/ui.frag.spv','/tmp/post.frag.spv','--scene-sized','--oversized-area'],capture_output=True,text=True)
+              Path('render-bounds-regression.txt').write_text(result.stdout+result.stderr)
+              assert result.returncode!=0, 'R23 baseline unexpectedly accepted invalid attachment bounds'
+              assert 'BOUNDS_VALIDATION_ERROR' in result.stderr, 'Baseline failed for an unrelated reason'
+              print('PASS: R23 baseline reproduces Vulkan attachment bounds errors; repaired live-hook path passes the identical test')
+          finally:
+              source.write_bytes(current)
+              subprocess.run(['cmake','--build','build-host','--target','bachata_fsr31','-j','6'],check=True)
+          PY
 
       - name: Test R16 core025-only GLIBC FSR preloader
         run: |

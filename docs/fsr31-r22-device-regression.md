@@ -71,3 +71,27 @@ applied alongside it.
 
 This proves the faulty hook and its repair. It does not yet establish that
 the hook caused the heap overwrite, or that either device crash is fixed.
+
+## R23 outcome: 56634D86 / D8BFEA40
+
+Both diagnostics show runtime R23 and the repaired 27-byte helper actually
+applied at 80984816. Both still fault at `eboot.bin+0x2085962`, with block
+`0x254c80000`, header `0x254c7fff0`, and invalid links
+`0x3c00000000000000`. The same failure after the repaired instruction rules
+out that instruction repair as a sufficient fix. The main regression remains.
+
+The earlier GPU integration tests did not exercise 1920x1080 render areas
+with physically 640x360 attachments. That shape violates Vulkan rendering
+attachment bounds (VkRenderingInfo VUID-pNext-06079/06080), but the device
+logs do not associate the reported 1920x1080 rejected passes with the
+later captured 640x360 image in the same event. Do not claim that these
+logs alone establish that shape on the device or that it caused the heap
+overwrite.
+
+The new bounds guard and regression test cover that missing case, including
+mip-relative attachment extents and both core/KHR dynamic rendering hooks.
+The CI negative control runs the same test against the R23 capture source;
+the positive control uses the guarded source with Vulkan validation.
+This is source/test work, not a validated device crash fix. No subsequent
+APK is authorized for delivery as a fix while the reported failure persists
+or its resolution remains unproved.
