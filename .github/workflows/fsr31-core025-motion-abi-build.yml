@@ -63,6 +63,11 @@ jobs:
           python3 tools/port-fsr31/patch_motion_raster.py arm64-source
           git -C arm64-source diff --check
           grep -Fq 'object_motion.PrepareDraw' arm64-source/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+      - name: Connect native ObjectMotion target to FSR before first Scaleform draw
+        run: |
+          set -euxo pipefail
+          python3 tools/port-fsr31/patch_motion_handoff.py arm64-source
+          git -C arm64-source diff --check
       - name: Compile real ARM64 host with existing Bachata FEX engine
         run: |
           set -euxo pipefail
