@@ -426,7 +426,15 @@ extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer cb) {
     }
     const auto end_fn=s.khr?reinterpret_cast<PFN_vkCmdEndRendering>(realEndKHR):realEnd;
     const auto begin_fn=s.khr?reinterpret_cast<PFN_vkCmdBeginRendering>(realBeginKHR):realBegin;
-    if(!end_fn || !begin_fn || !realSetViewport || !realSetScissor)return false;
+    // Core025 may use ONLY Vulkan 1.3 extended dynamic-state entrypoints.
+    // Requiring the old vkCmdSetViewport/Scissor proc pointers made the
+    // R18 WithCount interception ineffective at the *actual* activation.
+    if(!end_fn || !begin_fn ||
+       !(realSetViewport || realSetViewportWithCount) ||
+       !(realSetScissor || realSetScissorWithCount) ||
+       (s.viewportWithCount && !realSetViewportWithCount) ||
+       (s.scissorWithCount && !realSetScissorWithCount))
+       return false;
 
     // R23 recorded vkCmdEndRendering before even checking whether the
     // temporal source/camera existed; a failed dispatch then re-opened the
