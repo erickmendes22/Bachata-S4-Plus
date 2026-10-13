@@ -43,6 +43,12 @@ jobs:
           git -C arm64-source diff --check
           grep -Fq 'EmitVertexMotion(ctx)' arm64-source/src/shader_recompiler/backend/spirv/emit_spirv_special.cpp
           grep -Fq 'motion_in_prev' arm64-source/src/shader_recompiler/backend/spirv/spirv_emit_context.cpp
+      - name: Integrate Port native ObjectMotion GPU buffer renderer into core025
+        run: |
+          set -euxo pipefail
+          python3 tools/port-fsr31/patch_object_motion_native.py arm64-source
+          git -C arm64-source diff --check
+          grep -Fq 'src/video_core/renderer_vulkan/vk_object_motion.cpp' arm64-source/CMakeLists.txt
       - name: Compile real ARM64 host with existing Bachata FEX engine
         run: |
           set -euxo pipefail
