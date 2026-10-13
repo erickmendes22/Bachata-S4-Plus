@@ -461,6 +461,25 @@ extern "C" int bs4_fsr31_run_scaled_ui(VkCommandBuffer cb,VkImageView uiColor,Vk
         const auto c=images.find(target.image);if(c!=images.end())c->second.layout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         const auto d=images.find(depthTarget.image);if(d!=images.end())d->second.layout=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     }
+    // Record the actual dispatch *and* the VkImage passed to the HUD blit.
+    // A preset, device attach or low-resolution camera is not FSR proof.
+    static bool firstTemporalTarget=false,firstCopyFallback=false;
+    if(dispatched&&!firstTemporalTarget) {
+        firstTemporalTarget=true;
+        std::fprintf(stderr,
+            "[BS4_FSR31] FIRST_TEMPORAL_HUD_TARGET dispatch=1 "
+            "scene=%ux%u reconstructed=1280x720 src=%p dst=%p "
+            "ui_view=%p command=%p blit_recorded=1\\n",
+            scene.extent.width,scene.extent.height,
+            reinterpret_cast<void*>(background),reinterpret_cast<void*>(target.image),
+            reinterpret_cast<void*>(uiColor),reinterpret_cast<void*>(cb));
+    } else if(!dispatched&&!firstCopyFallback) {
+        firstCopyFallback=true;
+        std::fprintf(stderr,
+            "[BS4_FSR31] HUD_COPY_ONLY prepare=%d dispatch=0 scene=%ux%u "
+            "dst=%p\\n",int(temporal),scene.extent.width,scene.extent.height,
+            reinterpret_cast<void*>(target.image));
+    }
     return dispatched?2:1; // 2: real temporal background; 1: Port UI copy fallback
 }
 extern "C" int bs4_fsr31_capture_depth(VkExtent2D expected, Bs4FsrCaptureImage* out) {
