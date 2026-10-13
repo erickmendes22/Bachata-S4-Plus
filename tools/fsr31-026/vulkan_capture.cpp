@@ -85,6 +85,17 @@ void update_layout(uint32_t count, const VkImageMemoryBarrier2* barriers) {
         if (it != images.end()) it->second.layout = barriers[i].newLayout;
     }
 }
+void mirrored_ui_barriers(VkCommandBuffer cb,const VkDependencyInfo* dep,PFN_vkCmdPipelineBarrier2 original) {
+    if(!dep||!original||!dep->pImageMemoryBarriers)return;
+    std::vector<VkImageMemoryBarrier2> mirrored;
+    for(uint32_t i=0;i<dep->imageMemoryBarrierCount;i++) {
+        VkImageMemoryBarrier2 b{};if(bs4_native_ui_barrier(cb,dep->pImageMemoryBarriers[i],b))mirrored.push_back(b);
+    }
+    if(mirrored.empty())return;
+    VkDependencyInfo info{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};info.dependencyFlags=dep->dependencyFlags;
+    info.imageMemoryBarrierCount=mirrored.size();info.pImageMemoryBarriers=mirrored.data();
+    original(cb,&info);update_layout(info.imageMemoryBarrierCount,info.pImageMemoryBarriers);
+}
 void record_rendering(const VkRenderingInfo* info) {
     if (!info || !info->pDepthAttachment ||
         !info->pDepthAttachment->imageView) return;
@@ -551,11 +562,17 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image_view(
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_destroy_image_view(
     VkDevice dev,VkImageView view,const VkAllocationCallbacks* ac) {
+    bs4_native_ui_release_view(view);
     {std::lock_guard lock{mutex}; views.erase(view);}
     if(original_destroy_image_view) original_destroy_image_view(dev,view,ac);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering(
     VkCommandBuffer cb,const VkRenderingInfo* info) {
+    VkRenderingInfo redirected{};VkRenderingAttachmentInfo redirectedColor{},redirectedDepth{};
+    if(bs4_native_ui_rendering(cb,info,redirected,redirectedColor,redirectedDepth)) {
+        record_rendering(&redirected);
+        if(original_begin_rendering)original_begin_rendering(cb,&redirected);return;
+    }
     // Dispatch BEFORE recording the UI depth attachment; otherwise generic
     // FSR3 would select the newly-starting UI depth instead of scene depth.
     bs4_native_scene_begin(cb,info);
@@ -576,11 +593,17 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_end_rendering(VkCommandBuffer cb) 
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_barrier2(
     VkCommandBuffer cb,const VkDependencyInfo* dep) {
+    mirrored_ui_barriers(cb,dep,original_barrier2);
     if(dep) update_layout(dep->imageMemoryBarrierCount,dep->pImageMemoryBarriers);
     if(original_barrier2) original_barrier2(cb,dep);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering_khr(
     VkCommandBuffer cb,const VkRenderingInfo* info) {
+    VkRenderingInfo redirected{};VkRenderingAttachmentInfo redirectedColor{},redirectedDepth{};
+    if(bs4_native_ui_rendering(cb,info,redirected,redirectedColor,redirectedDepth)) {
+        record_rendering(&redirected);
+        if(original_begin_rendering_khr)original_begin_rendering_khr(cb,&redirected);return;
+    }
     // Dispatch BEFORE recording the UI depth attachment; otherwise generic
     // FSR3 would select the newly-starting UI depth instead of scene depth.
     bs4_native_scene_begin(cb,info);
@@ -605,6 +628,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_end_rendering_khr(VkCommandBuffer 
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_barrier2_khr(
     VkCommandBuffer cb,const VkDependencyInfo* dep) {
+    mirrored_ui_barriers(cb,dep,reinterpret_cast<PFN_vkCmdPipelineBarrier2>(original_barrier2_khr));
     if(dep)update_layout(dep->imageMemoryBarrierCount,dep->pImageMemoryBarriers);
     if(original_barrier2_khr)original_barrier2_khr(cb,dep);
 }

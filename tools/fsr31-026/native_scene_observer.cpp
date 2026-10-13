@@ -2,6 +2,7 @@
 // R13 restart: read-only guest-buffer observation, no descriptor replacement,
 // no render-pass suspension, no global image redirection.
 #include "native_scene_observer.h"
+extern VkImageView bs4_native_ui_sampled_view(VkCommandBuffer,VkImageView) __attribute__((weak));
 #include "port_scene_frame.h"
 #include "port_ui_composition.h"
 #include <algorithm>
@@ -184,6 +185,17 @@ void VKAPI_CALL push_hook(VkCommandBuffer cb,VkPipelineBindPoint point,VkPipelin
                         uint32_t set,uint32_t count,const VkWriteDescriptorSet* w) {
     if(point==VK_PIPELINE_BIND_POINT_GRAPHICS&&w){std::lock_guard lock{guard};
         for(uint32_t n=0;n<count;n++)writes(commands[cb].pushes[set],w[n]);}
+    if(point==VK_PIPELINE_BIND_POINT_GRAPHICS&&w&&bs4_native_ui_sampled_view) {
+        std::vector<VkWriteDescriptorSet> changed(w,w+count);
+        std::vector<std::vector<VkDescriptorImageInfo>> images(count);
+        for(uint32_t i=0;i<count;i++)if(w[i].pImageInfo&&
+            (w[i].descriptorType==VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER||w[i].descriptorType==VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE)) {
+            images[i].assign(w[i].pImageInfo,w[i].pImageInfo+w[i].descriptorCount);
+            for(auto& image:images[i])image.imageView=bs4_native_ui_sampled_view(cb,image.imageView);
+            changed[i].pImageInfo=images[i].data();
+        }
+        pushDescriptors(cb,point,layout,set,count,changed.data());return;
+    }
     pushDescriptors(cb,point,layout,set,count,w);
 }
 void VKAPI_CALL update_hook(VkDevice d,uint32_t count,const VkWriteDescriptorSet* w,

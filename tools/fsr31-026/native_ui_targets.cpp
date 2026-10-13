@@ -8,11 +8,12 @@
 #include <mutex>
 #include <unordered_map>
 #include <cstdio>
+#include <vector>
 extern "C" VkDevice bs4_fsr31_device();
 extern "C" VkPhysicalDevice bs4_fsr31_physical_device();
 namespace {
 struct Surface {VkImage image{};VkImageView view{};VkDeviceMemory memory{};};
-struct Targets {Surface color;std::map<VkFormat,Surface> depths;};
+struct Targets {Surface color;std::map<VkFormat,Surface> depths;std::unordered_map<VkImageView,VkImageView> aliases;};
 struct Scope {VkImage source{};VkImageView color{},depth{};VkExtent2D guest{};};
 std::mutex mutex;
 std::unordered_map<VkImage,Targets> targets;
@@ -104,9 +105,62 @@ void bs4_native_ui_release(VkImage image) {
     {std::lock_guard lock{mutex};const auto it=targets.find(image);if(it==targets.end())return;
         owned=std::move(it->second);targets.erase(it);
         for(auto s=scopes.begin();s!=scopes.end();)if(s->second.source==image)s=scopes.erase(s);else++s;}
+    for(auto& alias:owned.aliases){bs4_fsr31_untrack_ui_image(VK_NULL_HANDLE,alias.second);vkDestroyImageView(bs4_fsr31_device(),alias.second,nullptr);}
     for(auto& d:owned.depths)destroy(d.second);destroy(owned.color);
 }
 bool bs4_native_ui_output(VkCommandBuffer cb,Bs4FsrCaptureImage& out) {
     VkImageView view{};{std::lock_guard lock{mutex};const auto it=scopes.find(cb);if(it==scopes.end())return false;view=it->second.color;}
     return bs4_fsr31_capture_image(view,&out);
+}
+
+VkImageView bs4_native_ui_sampled_view(VkCommandBuffer cb,VkImageView view) {
+    Scope scope{};{std::lock_guard lock{mutex};const auto it=scopes.find(cb);if(it==scopes.end())return view;scope=it->second;}
+    Bs4FsrCaptureImage source{},output{};VkImageViewCreateInfo ci{};
+    if(!bs4_fsr31_capture_image(view,&source)||source.image!=scope.source||
+       !bs4_fsr31_capture_image(scope.color,&output)||!bs4_fsr31_capture_view(view,&ci)||
+       ci.pNext||ci.viewType!=VK_IMAGE_VIEW_TYPE_2D||ci.subresourceRange.aspectMask!=VK_IMAGE_ASPECT_COLOR_BIT||
+       ci.subresourceRange.baseMipLevel||ci.subresourceRange.levelCount!=1||
+       ci.subresourceRange.baseArrayLayer||ci.subresourceRange.layerCount!=1||
+       (ci.format!=VK_FORMAT_R8G8B8A8_UNORM&&ci.format!=VK_FORMAT_R8G8B8A8_SRGB))return view;
+    std::lock_guard lock{mutex};const auto it=targets.find(scope.source);if(it==targets.end())return view;
+    auto& aliases=it->second.aliases;const auto found=aliases.find(view);if(found!=aliases.end())return found->second;
+    ci.image=output.image;VkImageView alias{};
+    if(vkCreateImageView(bs4_fsr31_device(),&ci,nullptr,&alias)!=VK_SUCCESS)return view;
+    VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};image.format=output.format;
+    image.extent={output.size.width,output.size.height,1};image.usage=output.usage;image.samples=output.samples;
+    image.initialLayout=output.layout;bs4_fsr31_track_ui_image(output.image,&image,alias,&ci);
+    aliases.emplace(view,alias);return alias;
+}
+bool bs4_native_ui_barrier(VkCommandBuffer cb,const VkImageMemoryBarrier2& original,VkImageMemoryBarrier2& mirrored) {
+    Scope scope{};{std::lock_guard lock{mutex};const auto it=scopes.find(cb);if(it==scopes.end())return false;scope=it->second;}
+    Bs4FsrCaptureImage output{};
+    if(original.image!=scope.source||original.subresourceRange.aspectMask!=VK_IMAGE_ASPECT_COLOR_BIT||
+       original.subresourceRange.baseMipLevel||original.subresourceRange.baseArrayLayer||
+       original.subresourceRange.levelCount!=1||original.subresourceRange.layerCount!=1||
+       original.srcQueueFamilyIndex!=VK_QUEUE_FAMILY_IGNORED||original.dstQueueFamilyIndex!=VK_QUEUE_FAMILY_IGNORED||
+       !bs4_fsr31_capture_image(scope.color,&output))return false;
+    mirrored=original;mirrored.image=output.image;mirrored.oldLayout=output.layout;return true;
+}
+bool bs4_native_ui_rendering(VkCommandBuffer cb,const VkRenderingInfo* original,VkRenderingInfo& info,
+                             VkRenderingAttachmentInfo& color,VkRenderingAttachmentInfo& depth) {
+    Scope scope{};{std::lock_guard lock{mutex};const auto it=scopes.find(cb);if(it==scopes.end())return false;scope=it->second;}
+    Bs4FsrCaptureImage source{};
+    if(!original||original->pNext||original->viewMask||original->layerCount!=1||
+       original->renderArea.offset.x||original->renderArea.offset.y||original->colorAttachmentCount!=1||
+       !original->pColorAttachments||original->pColorAttachments[0].resolveMode||
+       !bs4_fsr31_capture_image(original->pColorAttachments[0].imageView,&source)||source.image!=scope.source)return false;
+    if((original->pDepthAttachment||original->pStencilAttachment)&&!scope.depth)return false;
+    info=*original;info.renderArea.extent={1280,720};color=original->pColorAttachments[0];
+    color.imageView=scope.color;info.pColorAttachments=&color;
+    if(original->pDepthAttachment){depth=*original->pDepthAttachment;depth.imageView=scope.depth;info.pDepthAttachment=&depth;}
+    if(original->pStencilAttachment){if(!original->pDepthAttachment)depth=*original->pStencilAttachment;
+        depth.imageView=scope.depth;info.pStencilAttachment=&depth;}
+    return true;
+}
+
+void bs4_native_ui_release_view(VkImageView view) {
+    std::vector<VkImageView> retired;
+    {std::lock_guard lock{mutex};for(auto& target:targets){const auto it=target.second.aliases.find(view);
+        if(it!=target.second.aliases.end()){retired.push_back(it->second);target.second.aliases.erase(it);}}}
+    for(auto alias:retired){bs4_fsr31_untrack_ui_image(VK_NULL_HANDLE,alias);vkDestroyImageView(bs4_fsr31_device(),alias,nullptr);}
 }
