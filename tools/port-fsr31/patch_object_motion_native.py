@@ -39,11 +39,20 @@ one('''    scheduler.Record([barrier](vk::CommandBuffer cmd) {''',
     '''    { const auto cmd=scheduler.CommandBuffer();''')
 one('''    scheduler.Record([barrier](vk::CommandBuffer cmdbuf) {''',
     '''    { const auto cmdbuf=scheduler.CommandBuffer();''')
-# All three lambda wrappers end with the same "});" after pipelineBarrier2;
-# only replace these explicit sites, leaving other lambdas untouched.
-s,n=re.subn(r'(?m)^    \}\);(?=\n)', '    }', s)
-if n != 3:
-    raise RuntimeError(f"Expected three scheduler closures, found {n}")
+# Close only the exact scheduler.Record barrier sites; preserve the
+# unrelated vk::ImageCreateInfo construction's }); closing delimiter.
+one('''        cmd.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &barrier});
+    });''',
+    '''        cmd.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &barrier});
+    }''')
+one('''            cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
+        });''',
+    '''            cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
+        }''')
+one('''        cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
+    });''',
+    '''        cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
+    }''')
 if "BbSettings" in s or "BbStats" in s or "BbToggle" in s or "scheduler.Record" in s:
     raise RuntimeError("Port dependency remains unadapted")
 p.write_text(s)
