@@ -5,6 +5,11 @@ on:
     paths:
       - 'tools/fsr31-026/**'
       - '.github/workflows/fsr31-r27-sdk.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/fsr31-026/**'
+      - '.github/workflows/fsr31-r27-sdk.yml'
 permissions:
   contents: read
 jobs:
