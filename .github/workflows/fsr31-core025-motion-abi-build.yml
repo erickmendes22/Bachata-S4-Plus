@@ -1,0 +1,56 @@
+name: Core025 Bloodborne temporal object-motion ABI ARM64
+on:
+  push:
+    branches: [feature/fsr31-core025-native-motion]
+    paths:
+      - '.github/workflows/fsr31-core025-motion-abi-build.yml'
+      - 'tools/port-fsr31/patch_shader_abi.py'
+permissions: {contents: read}
+jobs:
+  arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native ARM64 Linux build prerequisites
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            git clang lld cmake ninja-build nodejs python3 python3-mako python3-setuptools \
+            llvm binutils-aarch64-linux-gnu build-essential pkg-config \
+            libx11-dev libxext-dev libxrandr-dev libxi-dev libxss-dev \
+            libasound2-dev libpulse-dev libudev-dev libuuid1 uuid-dev \
+            libvulkan-dev libwayland-dev libxkbcommon-dev libdecor-0-dev \
+            libegl1-mesa-dev libgles2-mesa-dev libfreetype-dev
+      - name: Clone Bachata native ARM64 renderer and required submodules
+        run: |
+          set -euxo pipefail
+          git clone --depth=1 --recurse-submodules --shallow-submodules --jobs=8 \
+            https://github.com/zenithblue-oss/shadps4-arm64.git arm64-source
+          git -C arm64-source rev-parse HEAD | tee arm64-source-revision.txt
+      - name: Apply full 128-byte Port shader ABI to core025 native source
+        run: |
+          set -euxo pipefail
+          python3 tools/port-fsr31/patch_shader_abi.py arm64-source
+          git -C arm64-source diff --check
+          grep -Fq 'static_assert(offsetof(PushData, motion_param) == 120)' arm64-source/src/shader_recompiler/resource.h
+          grep -Fq 'motion_vectors == other.motion_vectors' arm64-source/src/shader_recompiler/runtime_info.h
+      - name: Compile real ARM64 host with existing Bachata FEX engine
+        run: |
+          set -euxo pipefail
+          bash arm64-source/runtime/scripts/build-shadps4-arm64.sh
+          test -s arm64-source/runtime/build/shadps4-arm64/shadps4
+          file arm64-source/runtime/build/shadps4-arm64/shadps4
+          readelf -h arm64-source/runtime/build/shadps4-arm64/shadps4 \
+            | grep -F 'Machine:' | grep -F 'AArch64'
+          sha256sum arm64-source/runtime/build/shadps4-arm64/shadps4 \
+            | tee arm64-patched-sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CORE025-PORT-MOTION-ABI-SOURCE-ONLY
+          path: |
+            arm64-source-revision.txt
+            arm64-patched-sha256.txt
+            arm64-source/runtime/build/shadps4-arm64/shadps4
+          retention-days: 7
