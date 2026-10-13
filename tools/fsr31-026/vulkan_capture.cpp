@@ -169,6 +169,14 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     stage.extent={w,h};
     stage.inside=true;
     stage.ready=false;
+    static bool observed=false;
+    if(!observed) {
+        observed=true;
+        std::fprintf(stderr,
+            "[BS4_PORT] first LDR candidate scene=%ux%u "
+            "allocation=%ux%u depth_match=1\n",
+            w,h,img->second.size.width,img->second.size.height);
+    }
     return false; // NEVER change the guest rendering or its attachments
 }
 

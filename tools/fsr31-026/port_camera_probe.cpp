@@ -78,8 +78,12 @@ void inspect_buffer(VkCommandBuffer cb,const VkDescriptorBufferInfo& info) {
     const auto d=active_depth.find(cb);
     const auto e=active_extent.find(cb);
     if(d==active_depth.end() || e==active_extent.end() ||
-       !d->second || c.width!=e->second.width ||
-       c.height!=e->second.height)return;
+       !d->second || c.width>e->second.width ||
+       c.height>e->second.height)return;
+    // The guest retains native-sized (often 1920x1080) G-buffer render
+    // areas even when Bloodborne's patched scene constants are 640x360.
+    // Camera dimensions are logical pixels; only the bounds, true depth,
+    // valid camera and multi-target G-buffer establish this association.
     float viewportX=0,viewportY=0;
     // The port's CameraMotion::OnGBufferPass applies these signs to
     // projection x/y before reconstructing motion from guest depth.
@@ -117,9 +121,16 @@ extern "C" void bs4_port_note_render(VkCommandBuffer cb,
                     uint32_t attachment_count) {
     if(!cb || !size.width || !size.height)return;
     std::lock_guard lock{guard};
-    if(depth && attachment_count>=2 && size.width<=1280 &&
-       size.height<=720) {
+    if(depth && attachment_count>=5 && size.width>=64 &&
+       size.height>=64 && size.width<=4096 && size.height<=4096) {
         active_depth[cb]=depth;active_extent[cb]=size;
+        static bool first=true;
+        if(first) {
+            first=false;
+            std::fprintf(stderr,
+                "[BS4_PORT] first G-buffer observed renderArea=%ux%u "
+                "mrt=%u depth=1\n",size.width,size.height,attachment_count);
+        }
     }
 }
 extern "C" VkImageView bs4_port_camera_for_scene(VkCommandBuffer cb,
