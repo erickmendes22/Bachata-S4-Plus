@@ -148,6 +148,8 @@ jobs:
           g++ -std=c++17 -O2 -I/usr/include tools/fsr31-025/ui_transaction_test.cpp \
             -lvulkan -o /tmp/ui_transaction_test
           /tmp/ui_transaction_test | tee ui-tests.txt
+          g++ -std=c++17 -O2 tools/fsr31-025/camera_entrypoint_test.cpp -ldl -o /tmp/camera_entrypoint_test
+          /tmp/camera_entrypoint_test | tee camera-entrypoint-tests.txt
           g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include \
             tools/fsr31-025/scene_gpu_test.cpp -Lbuild-host -lbachata_fsr31 \
             -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/shadps4-arm64-025
@@ -193,6 +195,7 @@ jobs:
             sha256.txt
             needed.txt
             symbols.txt
+            camera-entrypoint-tests.txt
             ui-tests.txt
             scene-tests.txt
           if-no-files-found: error

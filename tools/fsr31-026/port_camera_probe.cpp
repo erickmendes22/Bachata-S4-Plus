@@ -440,9 +440,13 @@ extern "C" PFN_vkVoidFunction bs4_port_wrap_proc(
     PORT_WRAP(real_unmap,"vkUnmapMemory",bs4_port_unmap)
     PORT_WRAP(real_bind,"vkBindBufferMemory",bs4_port_bind)
     PORT_WRAP(real_bind2,"vkBindBufferMemory2",bs4_port_bind2)
+    PORT_WRAP(real_bind2,"vkBindBufferMemory2KHR",bs4_port_bind2)
     PORT_WRAP(real_free_memory,"vkFreeMemory",bs4_port_free_memory)
     PORT_WRAP(real_destroy_buffer,"vkDestroyBuffer",bs4_port_destroy_buffer)
     PORT_WRAP(real_push_desc,"vkCmdPushDescriptorSetKHR",bs4_port_push_desc)
+    // Vulkan 1.4 promotes push descriptors without changing this ABI.
+    // Core025's native dispatcher can select the promoted entrypoint.
+    PORT_WRAP(real_push_desc,"vkCmdPushDescriptorSet",bs4_port_push_desc)
     PORT_WRAP(real_update_desc,"vkUpdateDescriptorSets",bs4_port_update_desc)
     PORT_WRAP(real_bind_sets,"vkCmdBindDescriptorSets",bs4_port_bind_sets)
     PORT_WRAP(real_draw,"vkCmdDraw",bs4_port_draw)
