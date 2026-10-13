@@ -380,7 +380,9 @@ extern "C" int bs4_fsr31_run_scaled_ui(VkCommandBuffer cb,VkImageView uiColor,Vk
     Bs4NativeUiBoundary boundary{};
     Bs4FsrCaptureImage source{},target{},depthTarget{};
     if(!scene.color||(!scene.inside&&!scene.ready)||
-       !bs4_native_scene_ui_state(cb,boundary)||boundary.color!=scene.color||
+       // Native HUD is a separate target from the low-res 3D scene.
+       // The draw hook verified the HUD target, so reject scene aliasing here.
+       !bs4_native_scene_ui_state(cb,boundary)||!boundary.color||boundary.color==scene.color||
        !bs4_fsr31_capture_image(scene.color,&source)||
        !bs4_fsr31_capture_image(uiColor,&target)||source.image==target.image||
        source.format!=VK_FORMAT_R8G8B8A8_UNORM||target.format!=source.format||
