@@ -1,0 +1,37 @@
+name: Core025 native runtime libatomic dependency
+on:
+  push:
+    branches: [feature/fsr31-core025-native-motion]
+    paths:
+      - '.github/workflows/fsr31-core025-runtime-deps.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  runtime:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export genuine ARM64 GLIBC libatomic runtime
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libatomic1 binutils
+          mkdir -p runtime-deps
+          SRC="$(ldconfig -p | sed -n 's/^.*libatomic.so.1 (libc6,AArch64) => //p' | head -1)"
+          if [ -z "$SRC" ]; then
+            SRC=/usr/lib/aarch64-linux-gnu/libatomic.so.1
+          fi
+          test -f "$SRC"
+          cp -L "$SRC" runtime-deps/libatomic.so.1
+          file runtime-deps/libatomic.so.1
+          readelf -h runtime-deps/libatomic.so.1 | grep -F 'AArch64'
+          readelf -d runtime-deps/libatomic.so.1 | grep NEEDED
+          sha256sum runtime-deps/libatomic.so.1 > runtime-deps/sha256.txt
+          echo 'Bundled for core025 native FSR3 ObjectMotion. GCC Runtime Library Exception applies.' > runtime-deps/NOTICE.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CORE025-ARM64-libatomic-runtime
+          path: runtime-deps/
+          retention-days: 7
