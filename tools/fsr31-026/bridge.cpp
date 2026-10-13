@@ -31,20 +31,6 @@ std::atomic<VkPhysicalDevice> fsr31_tracked_physical{VK_NULL_HANDLE};
 bool valid = false;
 }
 #define BS4_PUBLIC extern "C" __attribute__((visibility("default")))
-// Called only after SearchBinaryInfo has already read the same 64 KiB
-// window and failed. Preserve native failure; do not invent BinaryInfo.
-BS4_PUBLIC void bs4_fsr31_shader_rejected(const uint8_t* code) {
-    if(!code)return;
-    std::fprintf(stderr,"[BS4_SHADER_REJECT] code=%p bytes=65536 native_assert_preserved=1\n",(const void*)code);
-    for(unsigned offset=0;offset<65536;offset+=64) {
-        char hex[129];
-        static constexpr char digits[]="0123456789abcdef";
-        for(unsigned i=0;i<64;i++){const auto v=code[offset+i];hex[2*i]=digits[v>>4];hex[2*i+1]=digits[v&15];}
-        hex[128]=0;
-        std::fprintf(stderr,"[BS4_SHADER_BYTES] +%04x %s\n",offset,hex);
-    }
-    std::fflush(stderr);
-}
 /* The stock R15 Android launcher has no FSR3.1 preference bridge.
  * The R16 FEX loader preloads this library ONLY for shadps4-arm64-025.
  * Enable Ultra Performance there by default, matching the requested

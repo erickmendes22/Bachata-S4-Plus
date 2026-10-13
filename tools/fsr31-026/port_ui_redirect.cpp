@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Port-style *separate* 720p RGBA8 HUD target. The FSR output is an actual
-// render target, not a blit to a guest 1080p image. Only the original
-// Bloodborne Scaleform vertex shader hashes may trigger the redirection.
+// render target. The port scaled-session criterion is the native viewport
+// on the camera-associated LDR target, independent of static pipeline state.
 #include "vulkan_capture.h"
 #include <vulkan/vulkan.h>
 #include <algorithm>
@@ -40,7 +40,6 @@ struct State {
     VkImageView candidateScene=VK_NULL_HANDLE;
     VkExtent2D sceneExtent{};
     uint64_t frame=0;
-    bool earlierStencilOnlyMask=false;
     VkRenderingInfo resumed{};
     std::array<VkRenderingAttachmentInfo,1> hudColor{};
     VkRenderingAttachmentInfo hudDepth{},hudStencil{};
@@ -49,8 +48,6 @@ std::mutex uiMutex;
 std::unordered_map<VkCommandBuffer,State> cmds;
 std::unordered_map<VkImageView,Depth> uiDepth;
 std::unordered_map<VkShaderModule,uint64_t> guestHashes;
-std::unordered_map<VkPipeline,bool> uiPipelines;
-std::unordered_map<VkCommandBuffer,bool> shaderBoundUI;
 std::unordered_map<VkCommandBuffer,VkImageView> lastOutput;
 std::unordered_set<VkCommandBuffer> completedHud;
 struct UiFrame {
@@ -153,7 +150,7 @@ extern "C" void bs4_port_ui_install_rendering(
 }
 extern "C" void bs4_port_ui_reset(VkCommandBuffer cb){
     std::lock_guard lock{uiMutex};
-    cmds.erase(cb);shaderBoundUI.erase(cb);lastOutput.erase(cb);
+    cmds.erase(cb);lastOutput.erase(cb);
     completedHud.erase(cb);
 }
 extern "C" VkImageView bs4_port_ui_present(VkCommandBuffer cb){
@@ -180,17 +177,7 @@ extern "C" int bs4_port_ui_projection_signs(
     *y=s.viewport.height<0.f?-1.f:1.f;
     return 1;
 }
-extern "C" void bs4_port_ui_note_draw(VkCommandBuffer cb) {
-    std::lock_guard lock{uiMutex};
-    auto it=cmds.find(cb);
-    if(it==cmds.end() || !it->second.inside)return;
-    // Bloodborne UI movie masks sometimes draw into stencil with NO color.
-    // Redirecting only later color draws would lose those masks. For now,
-    // use the unchanged game renderer instead of breaking those frames.
-    if(!it->second.uiPhase && shaderBoundUI[cb] &&
-       it->second.color.empty() && it->second.hasStencil)
-        it->second.earlierStencilOnlyMask=true;
-}
+extern "C" void bs4_port_ui_note_draw(VkCommandBuffer cb) {(void)cb;}
 extern "C" VkImageView bs4_port_ui_redirect_sampled(
     VkCommandBuffer cb,VkImageView candidate) {
     if(!cb || !candidate)return VK_NULL_HANDLE;
@@ -412,18 +399,10 @@ extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer cb) {
     const auto it=cmds.find(cb);
     if(it==cmds.end())return false;
     State& s=it->second;s.candidateScene=candidate;s.sceneExtent=sceneExtent;
-    if(sceneExtent.width) {
-        const unsigned reason=(!shaderBoundUI[cb]?1u:0u)|(!candidate?2u:0u)|
-            ((!s.haveViewport||!s.haveScissor)?4u:0u)|
-            ((std::abs(s.viewport.width)<1919.f||std::abs(s.viewport.height)<1079.f)?8u:0u)|
-            ((s.color.size()>1||s.guest.pNext)?16u:0u);
-        static uint32_t reported=0;const uint32_t bit=1u<<reason;
-        if(!(reported&bit)) {
-            reported|=bit;
-            std::fprintf(stderr,"[BS4_PORT_STAGE] UI_gate_mask=%u scene=%ux%u viewport=%.0fx%.0f color_count=%zu pipeline_UI=%u candidate=%u\n",reason,sceneExtent.width,sceneExtent.height,s.viewport.width,s.viewport.height,s.color.size(),unsigned(shaderBoundUI[cb]),unsigned(candidate!=VK_NULL_HANDLE));
-        }
-    }
-    if(!shaderBoundUI[cb])return false;
+    // TemporalUpscaler::OnDraw (scaled_session): native viewport + real
+    // camera-associated LDR target identifies the composition boundary.
+    // pDepthStencilState may legally be null under dynamic state; blending
+    // also does not define a movie draw (opaque UI is valid).
     if(!safeOriginal(s))return false;
     if(s.hasDepth || s.hasStencil) {
         Bs4FsrCaptureImage originalDepth{};
@@ -558,38 +537,14 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_port_ui_create_pipelines(
     VkPipeline* output) {
     if(!realCreatePipelines)return VK_ERROR_INITIALIZATION_FAILED;
     const VkResult status=realCreatePipelines(dev,cache,count,cis,ac,output);
-    if(status==VK_SUCCESS&&cis&&output){
-        std::lock_guard lock{uiMutex};
-        for(uint32_t i=0;i<count;++i){
-            if(!output[i])continue;
-            // Port native-viewport path: no title-specific shader hashes.
-            // Only non-depth-tested blended/stencil UI pipelines may trigger;
-            // safeOriginal separately verifies the camera-matched LDR image.
-            const auto& ci=cis[i];
-            const bool noDepth=ci.pDepthStencilState &&
-                !ci.pDepthStencilState->depthTestEnable &&
-                !ci.pDepthStencilState->depthWriteEnable;
-            bool blended=false;
-            if(ci.pColorBlendState)for(uint32_t j=0;j<ci.pColorBlendState->attachmentCount;j++)
-                blended|=ci.pColorBlendState->pAttachments[j].blendEnable;
-            const bool eligible=noDepth && (blended || ci.pDepthStencilState->stencilTestEnable);
-            uiPipelines[output[i]]=eligible;
-        }
-    }
     return status;
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_destroy_pipeline(
     VkDevice d,VkPipeline p,const VkAllocationCallbacks* ac) {
-    {std::lock_guard lock{uiMutex};uiPipelines.erase(p);}
     if(realDestroyPipeline)realDestroyPipeline(d,p,ac);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_bind_pipeline(
     VkCommandBuffer cb,VkPipelineBindPoint point,VkPipeline p) {
-    if(point==VK_PIPELINE_BIND_POINT_GRAPHICS) {
-        std::lock_guard lock{uiMutex};
-        const auto it=uiPipelines.find(p);
-        shaderBoundUI[cb]=it!=uiPipelines.end()&&it->second;
-    }
     if(realBindPipeline)realBindPipeline(cb,point,p);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_viewport(
