@@ -33,6 +33,9 @@ struct State {
     VkImageView originalUI=VK_NULL_HANDLE,output=VK_NULL_HANDLE;
     VkViewport viewport{};
     VkRect2D scissor{};
+    // Port supports Scaleform rendered in native 1920x1080 or game-render
+    // coordinates (640x360 when 720p Ultra Performance is selected).
+    float uiScaleX=2.f/3.f,uiScaleY=2.f/3.f;
     bool haveViewport=false,haveScissor=false;
     // Core025 uses Vulkan 1.3 dynamic state *WithCount, not vkCmdSetViewport.
     bool viewportWithCount=false,scissorWithCount=false;
@@ -85,16 +88,16 @@ constexpr bool PortMovieShader(uint64_t hash) {
            hash==0x44072322 || hash==0xa334a845;
 }
 
-VkViewport scaled(VkViewport v) {
-    v.x*=2.f/3.f;v.y*=2.f/3.f;
-    v.width*=2.f/3.f;v.height*=2.f/3.f;
+VkViewport scaled(VkViewport v,const State& state) {
+    v.x*=state.uiScaleX;v.y*=state.uiScaleY;
+    v.width*=state.uiScaleX;v.height*=state.uiScaleY;
     return v;
 }
-VkRect2D scaled(VkRect2D r) {
-    r.offset.x=int32_t(std::round(r.offset.x*2.0/3.0));
-    r.offset.y=int32_t(std::round(r.offset.y*2.0/3.0));
-    r.extent.width=uint32_t(std::round(r.extent.width*2.0/3.0));
-    r.extent.height=uint32_t(std::round(r.extent.height*2.0/3.0));
+VkRect2D scaled(VkRect2D r,const State& state) {
+    r.offset.x=int32_t(std::round(double(r.offset.x)*state.uiScaleX));
+    r.offset.y=int32_t(std::round(double(r.offset.y)*state.uiScaleY));
+    r.extent.width=uint32_t(std::round(double(r.extent.width)*state.uiScaleX));
+    r.extent.height=uint32_t(std::round(double(r.extent.height)*state.uiScaleY));
     return r;
 }
 // Restoring dynamic state must use the same Vulkan command family as the
@@ -344,8 +347,20 @@ bool safeOriginal(State& s){
        s.guest.renderArea.offset.y || (!nativeArea && !reducedArea) ||
        s.color.size()>1 || s.guest.pNext ||
        (s.guest.flags & (VK_RENDERING_RESUMING_BIT|VK_RENDERING_SUSPENDING_BIT)) ||
-       !s.haveViewport || !s.haveScissor || !s.candidateScene ||
-       std::abs(s.viewport.width)<1919.f || std::abs(s.viewport.height)<1079.f)return false;
+       !s.haveViewport || !s.haveScissor || !s.candidateScene)return false;
+    // As in Port UiComposition::NativeViewport, Scaleform can use native
+    // coordinates or the reduced scene viewport. Never require native UI
+    // coordinates just because the original PS4 game is 1920x1080.
+    const auto vw=std::abs(s.viewport.width);
+    const auto vh=std::abs(s.viewport.height);
+    const bool nativeCoordinates=std::abs(vw-1920.f)<1.f &&
+                                 std::abs(vh-1080.f)<1.f;
+    const bool reducedCoordinates=reducedArea &&
+        std::abs(vw-float(area.width))<1.f &&
+        std::abs(vh-float(area.height))<1.f;
+    if(!nativeCoordinates && !reducedCoordinates)return false;
+    s.uiScaleX=1280.f/(nativeCoordinates?1920.f:float(area.width));
+    s.uiScaleY=720.f/(nativeCoordinates?1080.f:float(area.height));
     Bs4FsrCaptureImage scene{},target{};
     if(!bs4_fsr31_capture_image(s.candidateScene,&scene) ||
        scene.format!=VK_FORMAT_R8G8B8A8_UNORM)return false;
@@ -546,8 +561,8 @@ extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer cb) {
     if(!substitute(s,out,depth,ri))return false;
     begin_fn(cb,&ri);
     // The game bound a 1920x1080 viewport, now the host HUD is 1280x720.
-    const VkViewport vp=scaled(s.viewport);
-    const VkRect2D sc=scaled(s.scissor);
+    const VkViewport vp=scaled(s.viewport,s);
+    const VkRect2D sc=scaled(s.scissor,s);
     if(!emitViewport(cb,s,vp) || !emitScissor(cb,s,sc))return false;
     s.uiPhase=true;s.uiPass=true;
     s.originalUI=s.color.empty()?s.candidateScene:s.color[0].imageView;
@@ -644,7 +659,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_viewport(
         if(s.haveViewport){
             s.viewport=*v;
             redirect=s.uiPass || s.jitterActive;
-            if(s.uiPass)out=scaled(*v);
+            if(s.uiPass)out=scaled(*v,s);
             else if(s.jitterActive){out=*v;out.x+=s.jitterX;out.y+=s.jitterY;}
         }
     }
@@ -660,7 +675,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_viewport_count(
         if(s.haveViewport){
             s.viewport=*v;
             redirect=s.uiPass || s.jitterActive;
-            if(s.uiPass)out=scaled(*v);
+            if(s.uiPass)out=scaled(*v,s);
             else if(s.jitterActive){out=*v;out.x+=s.jitterX;out.y+=s.jitterY;}
         }
     }
@@ -676,7 +691,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_scissor(
         if(s.haveScissor){
             s.scissor=*rect;
             redirect=s.uiPass;
-            if(redirect)out=scaled(*rect);
+            if(redirect)out=scaled(*rect,s);
         }
     }
     if(realSetScissor)realSetScissor(cb,first,count,redirect?&out:rect);
@@ -691,7 +706,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_scissor_count(
         if(s.haveScissor){
             s.scissor=*rect;
             redirect=s.uiPass;
-            if(redirect)out=scaled(*rect);
+            if(redirect)out=scaled(*rect,s);
         }
     }
     if(realSetScissorCount)realSetScissorCount(cb,count,redirect?&out:rect);

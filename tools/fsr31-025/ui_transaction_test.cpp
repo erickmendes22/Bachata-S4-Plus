@@ -31,7 +31,7 @@ void VKAPI_PTR end(VkCommandBuffer){++ended;}
 void VKAPI_PTR viewport(VkCommandBuffer,uint32_t,uint32_t,const VkViewport* v){seenViewport=*v;}
 void VKAPI_PTR scissor(VkCommandBuffer,uint32_t,uint32_t,const VkRect2D* s){seenScissor=*s;}
 VkResult VKAPI_PTR pipelines(VkDevice,VkPipelineCache,uint32_t n,const VkGraphicsPipelineCreateInfo*,const VkAllocationCallbacks*,VkPipeline* p){for(uint32_t i=0;i<n;i++)p[i]=(VkPipeline)0x500;return VK_SUCCESS;}
-void start(bool withCount=false,bool reducedUi=false){
+void start(bool withCount=false,bool reducedUi=false,bool reducedCoordinates=false){
  cmds.clear();uiDepth.clear();currentUi={};shaderBoundUI.clear();lastOutput.clear();completedHud.clear();ended=began=dispatches=0;
  bs4_port_ui_install_rendering(begin,end,nullptr,nullptr);
  realSetViewport=withCount?nullptr:viewport;
@@ -41,8 +41,10 @@ void start(bool withCount=false,bool reducedUi=false){
  VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};color.imageView=reducedUi?ldr:scene;color.imageLayout=VK_IMAGE_LAYOUT_GENERAL;color.storeOp=VK_ATTACHMENT_STORE_OP_STORE;color.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;
  VkRenderingAttachmentInfo z{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};z.imageView=depthView;z.storeOp=VK_ATTACHMENT_STORE_OP_STORE;z.loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;
  VkRenderingInfo info{VK_STRUCTURE_TYPE_RENDERING_INFO};info.renderArea.extent=reducedUi?VkExtent2D{640,360}:VkExtent2D{1920,1080};info.layerCount=1;info.colorAttachmentCount=1;info.pColorAttachments=&color;info.pDepthAttachment=info.pStencilAttachment=&z;VkRenderingInfo redirected{};assert(!bs4_port_ui_redirect_begin(cb,&info,false,&redirected));
- const VkViewport vp{0,0,1920,1080,0,1};
- const VkRect2D sc{{0,0},{1920,1080}};
+ const float width=reducedCoordinates?640.f:1920.f;
+ const float height=reducedCoordinates?360.f:1080.f;
+ const VkViewport vp{0,0,width,height,0,1};
+ const VkRect2D sc{{0,0},{uint32_t(width),uint32_t(height)}};
  if(withCount) {
      const auto setV=reinterpret_cast<PFN_vkCmdSetViewportWithCount>(
          bs4_port_ui_wrap_proc("vkCmdSetViewportWithCount",
@@ -105,6 +107,17 @@ int main(){
  // a separate 1280x720 target, never the original guest image.
  assert(currentUi.color==(VkImage)0x601 && currentUi.original==ldr);
  assert(ldr!=scene);
+ // R27 rejected the actual 640x360 viewport despite discovering the
+ // real guest scene. Verify the Port's reduced-coordinate UI path.
+ start(true,true,true);
+ assert(bs4_port_ui_try_activate(cb));
+ assert(dispatches==1);
+ assert(seenViewport.width==1280 && seenViewport.height==720);
+ assert(seenScissor.extent.width==1280 && seenScissor.extent.height==720);
+ assert(cmds[cb].uiScaleX==2.f && cmds[cb].uiScaleY==2.f);
+ bs4_port_ui_redirect_end(cb);
+ assert(seenViewport.width==640 && seenViewport.height==360);
+ assert(seenScissor.extent.width==640 && seenScissor.extent.height==360);
  // A later stencil-only mask and a later color pass keep prior UI stencil.
  VkRenderingAttachmentInfo z{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};z.imageView=depthView;z.storeOp=VK_ATTACHMENT_STORE_OP_STORE;VkRenderingInfo mask{VK_STRUCTURE_TYPE_RENDERING_INFO};mask.renderArea.extent={1920,1080};mask.layerCount=1;mask.pDepthAttachment=mask.pStencilAttachment=&z;VkRenderingInfo redirected{};assert(bs4_port_ui_redirect_begin((VkCommandBuffer)0x101,&mask,false,&redirected));assert(redirected.colorAttachmentCount==0);assert(redirected.pStencilAttachment->loadOp==VK_ATTACHMENT_LOAD_OP_LOAD);assert(redirected.pDepthAttachment->loadOp==VK_ATTACHMENT_LOAD_OP_LOAD);
  // Verify the Port's exact movie shader can activate UI even when generic
