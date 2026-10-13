@@ -31,16 +31,16 @@ void VKAPI_PTR end(VkCommandBuffer){++ended;}
 void VKAPI_PTR viewport(VkCommandBuffer,uint32_t,uint32_t,const VkViewport* v){seenViewport=*v;}
 void VKAPI_PTR scissor(VkCommandBuffer,uint32_t,uint32_t,const VkRect2D* s){seenScissor=*s;}
 VkResult VKAPI_PTR pipelines(VkDevice,VkPipelineCache,uint32_t n,const VkGraphicsPipelineCreateInfo*,const VkAllocationCallbacks*,VkPipeline* p){for(uint32_t i=0;i<n;i++)p[i]=(VkPipeline)0x500;return VK_SUCCESS;}
-void start(bool withCount=false){
+void start(bool withCount=false,bool reducedUi=false){
  cmds.clear();uiDepth.clear();currentUi={};shaderBoundUI.clear();lastOutput.clear();completedHud.clear();ended=began=dispatches=0;
  bs4_port_ui_install_rendering(begin,end,nullptr,nullptr);
  realSetViewport=withCount?nullptr:viewport;
  realSetScissor=withCount?nullptr:scissor;
  realSetViewportCount=nullptr;realSetScissorCount=nullptr;
  countedViewports=countedScissors=0;
- VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};color.imageView=scene;color.imageLayout=VK_IMAGE_LAYOUT_GENERAL;color.storeOp=VK_ATTACHMENT_STORE_OP_STORE;color.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;
+ VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};color.imageView=reducedUi?ldr:scene;color.imageLayout=VK_IMAGE_LAYOUT_GENERAL;color.storeOp=VK_ATTACHMENT_STORE_OP_STORE;color.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;
  VkRenderingAttachmentInfo z{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};z.imageView=depthView;z.storeOp=VK_ATTACHMENT_STORE_OP_STORE;z.loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;
- VkRenderingInfo info{VK_STRUCTURE_TYPE_RENDERING_INFO};info.renderArea.extent={1920,1080};info.layerCount=1;info.colorAttachmentCount=1;info.pColorAttachments=&color;info.pDepthAttachment=info.pStencilAttachment=&z;VkRenderingInfo redirected{};assert(!bs4_port_ui_redirect_begin(cb,&info,false,&redirected));
+ VkRenderingInfo info{VK_STRUCTURE_TYPE_RENDERING_INFO};info.renderArea.extent=reducedUi?VkExtent2D{640,360}:VkExtent2D{1920,1080};info.layerCount=1;info.colorAttachmentCount=1;info.pColorAttachments=&color;info.pDepthAttachment=info.pStencilAttachment=&z;VkRenderingInfo redirected{};assert(!bs4_port_ui_redirect_begin(cb,&info,false,&redirected));
  const VkViewport vp{0,0,1920,1080,0,1};
  const VkRect2D sc{{0,0},{1920,1080}};
  if(withCount) {
@@ -91,6 +91,15 @@ int main(){
  assert(seenViewport.width==1920 && seenViewport.height==1080);
  assert(seenScissor.extent.width==1920 && seenScissor.extent.height==1080);
  assert(bs4_port_ui_present((VkCommandBuffer)0x101)==out);
+ // The Port also supports native-coordinate Scaleform inside a reduced
+ // guest LDR attachment. Both image identity models must dispatch.
+ start(true,true);
+ assert(bs4_port_ui_try_activate(cb));
+ assert(dispatches==1 && seenViewport.width==1280 && seenViewport.height==720);
+ assert(currentUi.original==ldr);
+ bs4_port_ui_redirect_end(cb);
+ assert(bs4_port_ui_present((VkCommandBuffer)0x101)==out);
+ assert(seenViewport.width==1920 && seenViewport.height==1080);
  // The 640x360 scene must be DISTINCT from the 1920x1080 guest UI, while
  // the latter gets redirected only after FSR success. A mistaken scene
  // alias must never be presented as the final full-size HUD image.

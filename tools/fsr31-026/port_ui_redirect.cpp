@@ -324,10 +324,17 @@ bool substitute(State& state,VkImageView output,Depth& depth,
     return true;
 }
 bool safeOriginal(State& s){
+    const VkExtent2D area=s.guest.renderArea.extent;
+    const bool nativeArea=area.width==1920 && area.height==1080;
+    const bool reducedArea=area.width>=64 && area.height>=64 &&
+                           area.width<=1280 && area.height<=720;
+    // The Port also handles Scaleform on the same native-game *reduced*
+    // LDR target. The camera is still 640x360 while the UI coordinates
+    // are natively 1920x1080; Vulkan renderArea need not match the viewport.
     if(!s.inside || s.uiPhase || s.guest.renderArea.offset.x ||
-       s.guest.renderArea.offset.y || s.guest.renderArea.extent.width!=1920 ||
-       s.guest.renderArea.extent.height!=1080 || s.color.size()>1 ||
-       s.guest.pNext || (s.guest.flags & (VK_RENDERING_RESUMING_BIT|VK_RENDERING_SUSPENDING_BIT)) ||
+       s.guest.renderArea.offset.y || (!nativeArea && !reducedArea) ||
+       s.color.size()>1 || s.guest.pNext ||
+       (s.guest.flags & (VK_RENDERING_RESUMING_BIT|VK_RENDERING_SUSPENDING_BIT)) ||
        !s.haveViewport || !s.haveScissor || !s.candidateScene ||
        std::abs(s.viewport.width)<1919.f || std::abs(s.viewport.height)<1079.f)return false;
     Bs4FsrCaptureImage scene{},target{};
@@ -342,10 +349,17 @@ bool safeOriginal(State& s){
         if(!c.imageView || c.storeOp!=VK_ATTACHMENT_STORE_OP_STORE || c.resolveImageView ||
            !bs4_fsr31_capture_image(c.imageView,&target) ||
            target.format!=scene.format ||
-           target.size.width<1920 || target.size.height<1080 ||
-           !(target.usage&VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) ||
-           (target.image==scene.image &&
-            (scene.size.width<1920 || scene.size.height<1080)))return false;
+           !(target.usage&VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT))return false;
+        const bool separateNative=nativeArea &&
+            target.size.width>=1920 && target.size.height>=1080;
+        const bool sameReduced=reducedArea && target.image==scene.image &&
+            target.size.width==scene.size.width &&
+            target.size.height==scene.size.height &&
+            target.size.width>=area.width && target.size.height>=area.height;
+        // Never mistake an unrelated small postprocess attachment for UI.
+        // The native viewport, a recognized graphics UI draw and a valid
+        // camera-matched LDR candidate are required by the caller as well.
+        if(!separateNative && !sameReduced)return false;
     } else if(!s.hasStencil || !s.hasDepth) return false;
     return true;
 }
