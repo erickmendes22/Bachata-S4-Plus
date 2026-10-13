@@ -309,9 +309,12 @@ bool safeOriginal(State& s){
     const auto shader=pipelineVertexHashes.find(s.graphicsPipeline);
     if(shader==pipelineVertexHashes.end() || !BachataUi::MovieShader(shader->second))
         return false;
+    const auto area=s.guest.renderArea.extent;
+    const bool nativeArea=area.width==1920 && area.height==1080;
+    const bool sceneArea=area.width==s.sceneExtent.width &&
+                         area.height==s.sceneExtent.height;
     if(!s.inside || s.uiPhase || s.guest.renderArea.offset.x ||
-       s.guest.renderArea.offset.y || s.guest.renderArea.extent.width!=1920 ||
-       s.guest.renderArea.extent.height!=1080 || s.color.size()>1 ||
+       s.guest.renderArea.offset.y || (!nativeArea && !sceneArea) || s.color.size()>1 ||
        s.guest.pNext || (s.guest.flags & (VK_RENDERING_RESUMING_BIT|VK_RENDERING_SUSPENDING_BIT)) ||
        !s.haveViewport || !s.haveScissor || !s.candidateScene ||
        std::abs(s.viewport.width)<1919.f || std::abs(s.viewport.height)<1079.f)return false;

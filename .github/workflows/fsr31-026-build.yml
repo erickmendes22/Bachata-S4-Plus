@@ -163,6 +163,7 @@ jobs:
             tools/fsr31-025/runscaled_integration_gpu_test.cpp -Lbuild-host -lbachata_fsr31 \
             -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/shadps4-arm64-025
           /tmp/shadps4-arm64-025 /tmp/ui.vert.spv /tmp/ui.frag.spv /tmp/post.frag.spv | tee integration-tests.txt
+          /tmp/shadps4-arm64-025 /tmp/ui.vert.spv /tmp/ui.frag.spv /tmp/post.frag.spv --scene-sized | tee -a integration-tests.txt
 
       - name: Test R16 core025-only GLIBC FSR preloader
         run: |
