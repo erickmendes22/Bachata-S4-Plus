@@ -22,6 +22,7 @@ struct Image {
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
     VkImageAspectFlags aspects{};
     uint64_t last_depth_use{};
+    VkSampleCountFlagBits samples{};
 };
 struct View {
     VkImage image = VK_NULL_HANDLE;
@@ -39,6 +40,7 @@ struct ScenePass {
     VkExtent2D extent{};
     bool inside = false;
     bool ready = false;
+    bool khr = false;
 };
 std::unordered_map<VkCommandBuffer, ScenePass> command_scenes;
 bool pre_ui_dispatch_logged=false;
@@ -46,6 +48,9 @@ bool pre_ui_eligible_logged=false;
 using PreUiDispatch=int (*)(VkCommandBuffer,VkImageView,VkExtent2D,VkExtent2D,VkImage*);
 extern "C" int bs4_fsr31_pre_ui_dispatch(VkCommandBuffer,VkImageView,
                 VkImageView,VkExtent2D,VkExtent2D,VkImage*);
+extern "C" int bs4_fsr31_pre_ui_prepare(VkCommandBuffer,VkImageView,
+                VkImageView,VkExtent2D,VkExtent2D);
+extern "C" VkPhysicalDevice bs4_fsr31_physical_device();
 
 PFN_vkBeginCommandBuffer original_begin_command{};
 PFN_vkResetCommandBuffer original_reset_command{};
@@ -322,8 +327,99 @@ extern "C" int bs4_fsr31_capture_image(VkImageView view, Bs4FsrCaptureImage* out
     auto i=images.find(v->second.image);
     if(i==images.end()) return 0;
     *out={v->second.image,v->second.format,i->second.size,
-        i->second.usage,i->second.layout,v->second.aspects};
+        i->second.usage,i->second.layout,v->second.aspects,i->second.samples};
     return 1;
+}
+
+extern "C" int bs4_fsr31_run_scaled_ui(VkCommandBuffer cb,VkImageView uiColor,VkImageView uiDepth) {
+    ScenePass scene{};
+    {
+        std::lock_guard lock{mutex};const auto it=command_scenes.find(cb);
+        if(it==command_scenes.end())return 0;scene=it->second;
+    }
+    Bs4NativeUiBoundary boundary{};
+    Bs4FsrCaptureImage source{},target{},depthTarget{};
+    if(!scene.color||(!scene.inside&&!scene.ready)||
+       !bs4_native_scene_ui_state(cb,boundary)||boundary.color!=scene.color||
+       !bs4_fsr31_capture_image(scene.color,&source)||
+       !bs4_fsr31_capture_image(uiColor,&target)||source.image==target.image||
+       source.format!=VK_FORMAT_R8G8B8A8_UNORM||target.format!=source.format||
+       target.size.width!=1280||target.size.height!=720||
+       source.samples!=VK_SAMPLE_COUNT_1_BIT||target.samples!=VK_SAMPLE_COUNT_1_BIT||
+       source.size.width<scene.extent.width||source.size.height<scene.extent.height||
+       !(source.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)||
+       !(target.usage&VK_IMAGE_USAGE_TRANSFER_DST_BIT)||
+       !(target.usage&VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT))return 0;
+    const auto physical=bs4_fsr31_physical_device();if(!physical)return 0;
+    VkFormatProperties features{};vkGetPhysicalDeviceFormatProperties(physical,target.format,&features);
+    if(!(features.optimalTilingFeatures&VK_FORMAT_FEATURE_BLIT_SRC_BIT)||
+       !(features.optimalTilingFeatures&VK_FORMAT_FEATURE_BLIT_DST_BIT)||
+       !(features.optimalTilingFeatures&VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))return 0;
+    if(boundary.depth) {
+        Bs4FsrCaptureImage originalDepth{};
+        if(!uiDepth||!bs4_fsr31_capture_image(boundary.depth,&originalDepth)||
+           !bs4_fsr31_capture_image(uiDepth,&depthTarget)||
+           originalDepth.format!=depthTarget.format||
+           originalDepth.samples!=VK_SAMPLE_COUNT_1_BIT||depthTarget.samples!=VK_SAMPLE_COUNT_1_BIT||
+           depthTarget.size.width!=1280||depthTarget.size.height!=720||
+           !(depthTarget.usage&VK_IMAGE_USAGE_TRANSFER_DST_BIT)||
+           !(depthTarget.usage&VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT))return 0;
+    }
+    auto end=scene.khr?reinterpret_cast<PFN_vkCmdEndRendering>(original_end_rendering_khr):original_end_rendering;
+    auto begin=scene.khr?reinterpret_cast<PFN_vkCmdBeginRendering>(original_begin_rendering_khr):original_begin_rendering;
+    if(!begin||(scene.inside&&!end))return 0;
+    // All UI targets and copy fallback prerequisites are validated first.
+    // A missing temporal history/context takes RunUiOnly's copy path; it
+    // never reopens the original reduced LDR pass with speculative LOAD.
+    const bool temporal=scene.depth&&bs4_fsr31_pre_ui_prepare(cb,scene.color,
+        scene.depth,scene.extent,{1280,720});
+    if(scene.inside){end(cb);scene_rendering_ended(cb);bs4_native_scene_end(cb);}
+    VkImage upscaled{};
+    const bool dispatched=temporal&&bs4_fsr31_pre_ui_dispatch(cb,scene.color,
+        scene.depth,scene.extent,{1280,720},&upscaled);
+    const VkImage background=dispatched?upscaled:source.image;
+    const VkImageLayout old=dispatched?VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:source.layout;
+    auto transition=[&](VkImage image,VkImageAspectFlags aspect,VkImageLayout previous,VkImageLayout next){
+        VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+        b.srcStageMask=b.dstStageMask=VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        b.srcAccessMask=b.dstAccessMask=VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT;
+        b.oldLayout=previous;b.newLayout=next;b.image=image;
+        b.srcQueueFamilyIndex=b.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+        b.subresourceRange={aspect,0,1,0,1};VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.imageMemoryBarrierCount=1;dep.pImageMemoryBarriers=&b;vkCmdPipelineBarrier2(cb,&dep);
+    };
+    transition(background,VK_IMAGE_ASPECT_COLOR_BIT,old,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    transition(target.image,VK_IMAGE_ASPECT_COLOR_BIT,target.layout,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    VkImageBlit blit{};blit.srcSubresource=blit.dstSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
+    blit.srcOffsets[1]=dispatched?VkOffset3D{1280,720,1}:
+        VkOffset3D{int32_t(scene.extent.width),int32_t(scene.extent.height),1};
+    blit.dstOffsets[1]={1280,720,1};
+    vkCmdBlitImage(cb,background,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,target.image,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&blit,VK_FILTER_LINEAR);
+    transition(background,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,old);
+    transition(target.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    color.imageView=uiColor;color.imageLayout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    color.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;color.storeOp=VK_ATTACHMENT_STORE_OP_STORE;
+    VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    VkRenderingInfo info{VK_STRUCTURE_TYPE_RENDERING_INFO};info.renderArea.extent={1280,720};
+    info.layerCount=1;info.colorAttachmentCount=1;info.pColorAttachments=&color;
+    if(boundary.depth) {
+        const bool stencil=depthTarget.format==VK_FORMAT_D32_SFLOAT_S8_UINT||depthTarget.format==VK_FORMAT_D24_UNORM_S8_UINT;
+        const VkImageAspectFlags aspects=VK_IMAGE_ASPECT_DEPTH_BIT|(stencil?VK_IMAGE_ASPECT_STENCIL_BIT:0);
+        transition(depthTarget.image,aspects,depthTarget.layout,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        const VkClearDepthStencilValue clear{1.f,0};const VkImageSubresourceRange range{aspects,0,1,0,1};
+        vkCmdClearDepthStencilImage(cb,depthTarget.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&clear,1,&range);
+        transition(depthTarget.image,aspects,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        depth.imageView=uiDepth;depth.imageLayout=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depth.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;depth.storeOp=VK_ATTACHMENT_STORE_OP_STORE;
+        info.pDepthAttachment=&depth;if(stencil)info.pStencilAttachment=&depth;
+    }
+    begin(cb,&info);
+    {
+        std::lock_guard lock{mutex};command_scenes.erase(cb);
+    }
+    return dispatched?2:1; // 2: real temporal background; 1: Port UI copy fallback
 }
 extern "C" int bs4_fsr31_capture_depth(VkExtent2D expected, Bs4FsrCaptureImage* out) {
     if(!out) return 0;
@@ -356,7 +452,7 @@ extern "C" int bs4_fsr31_capture_depth(VkExtent2D expected, Bs4FsrCaptureImage* 
         if (img.last_depth_use<=best) continue;
         best=img.last_depth_use;
         *out={handle,img.format,img.size,img.usage,img.layout,
-              VK_IMAGE_ASPECT_DEPTH_BIT};
+              VK_IMAGE_ASPECT_DEPTH_BIT,img.samples};
     }
     static bool reported_any=false;
     static bool reported_missing=false;
@@ -405,7 +501,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image(
     if(r==VK_SUCCESS && ci && img) {
         std::lock_guard lock{mutex};
         images[*img]={ci->format,{ci->extent.width,ci->extent.height},ci->usage,
-                      ci->initialLayout,{},0};
+                      ci->initialLayout,{},0,ci->samples};
     }
     return r;
 }
@@ -465,6 +561,10 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering_khr(
     VkRenderingInfo modified{};
     std::vector<VkRenderingAttachmentInfo> overrides;
     const bool composite=first_pre_ui_color(cb,info,modified,overrides);
+    {
+        std::lock_guard lock{mutex};const auto it=command_scenes.find(cb);
+        if(it!=command_scenes.end()&&it->second.inside)it->second.khr=true;
+    }
     bs4_native_scene_begin(cb,info);
     record_rendering(info);
     if(original_begin_rendering_khr)

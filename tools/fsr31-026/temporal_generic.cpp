@@ -313,6 +313,9 @@ static uint64_t generic_render_impl(
         report_once(5,"depth image matching render extent not captured");
         return 0;
     }
+    if(color.samples!=VK_SAMPLE_COUNT_1_BIT||depth.samples!=VK_SAMPLE_COUNT_1_BIT) {
+        report_once(18,"multisampled temporal inputs require an explicit resolve");return 0;
+    }
     if(want_port && (color.size.width<input_extent.width ||
                      color.size.height<input_extent.height)) {
         report_once(17,"Port scene rectangle exceeds color allocation");return 0;

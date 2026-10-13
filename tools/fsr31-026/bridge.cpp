@@ -247,6 +247,10 @@ BS4_PUBLIC int bs4_fsr31_pre_ui_prepare(VkCommandBuffer command,VkImageView colo
     return preset>=0?bs4_fsr31_generic_prepare(&info,command,color,render,output,preset,depth):0;
 }
 
+BS4_PUBLIC VkPhysicalDevice bs4_fsr31_physical_device() {
+    std::lock_guard lock{guard};return device_attached?acquired_device.physicalDevice:VK_NULL_HANDLE;
+}
+
 BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice device,
                                  void* allocator, uint32_t swap_images) {
     std::fprintf(stderr, "[BS4_FSR31] attach live Vulkan device=%p\n", (void*)device);

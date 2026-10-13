@@ -56,6 +56,8 @@ jobs:
             git -C fsr-vulkan apply --check "/tmp/$name"
             git -C fsr-vulkan apply "/tmp/$name"
           done
+          git -C fsr-vulkan apply --check "$PWD/tools/fsr31-026/patches/0001-combined-depth-stencil-barriers.patch"
+          git -C fsr-vulkan apply "$PWD/tools/fsr31-026/patches/0001-combined-depth-stencil-barriers.patch"
       - name: Build FSR 3.1 ARM64 glibc SDK as independently loadable shared library
         run: |
           set -euxo pipefail
@@ -143,6 +145,7 @@ jobs:
           g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include tools/fsr31-026/tests/r13_composition_gpu_test.cpp -Lbuild-host -lbachata_fsr31 -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/bs4-fsr-sdk-smoke
           /tmp/bs4-fsr-sdk-smoke | tee r13-composition-gpu.txt
           /tmp/bs4-fsr-sdk-smoke shared-target | tee shared-target-preservation-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke run-scaled-ui | tee native-run-scaled-ui-gpu.txt
       - name: Validate ARM64 and exports
         run: |
           set -euxo pipefail
@@ -164,5 +167,6 @@ jobs:
             port-scene-gpu.txt
             r13-composition-gpu.txt
             shared-target-preservation-gpu.txt
+            native-run-scaled-ui-gpu.txt
           if-no-files-found: error
           retention-days: 7
