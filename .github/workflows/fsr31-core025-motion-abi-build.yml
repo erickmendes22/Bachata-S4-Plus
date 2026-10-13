@@ -12,6 +12,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+      - name: Preflight native patch Python scripts
+        run: python3 -m py_compile tools/port-fsr31/patch_shader_abi.py tools/port-fsr31/patch_motion_spirv.py tools/port-fsr31/patch_object_motion_native.py
       - name: Install native ARM64 Linux build prerequisites
         run: |
           set -euxo pipefail
