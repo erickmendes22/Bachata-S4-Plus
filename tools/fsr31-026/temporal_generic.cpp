@@ -31,6 +31,7 @@ struct Frame {
     Surface scene;
     Surface depth;
     Surface motion;
+    Surface object_motion; // Port RT7, RGBA32F screen vectors + validity + stored depth
     Surface output;
 };
 std::mutex mutex;
@@ -50,6 +51,15 @@ struct PortCameraFrame {
     float nearPlane=.1f,farPlane=3000.f;
 };
 PortCameraFrame port_camera{};
+struct PortObjectFrame {
+    VkCommandBuffer command{};
+    VkImageView view{};
+    VkExtent2D size{};
+    uint64_t generation{};
+    bool valid{};
+};
+PortObjectFrame port_object{};
+extern "C" uint64_t bs4_port_frame_generation();
 VkDescriptorSetLayout port_desc_layout{};
 VkPipelineLayout port_pipeline_layout{};
 VkPipeline port_pipeline{};
@@ -151,7 +161,8 @@ void free_all() {
     if(port_descriptor_pool)vkDestroyDescriptorPool(device,port_descriptor_pool,nullptr);
     port_descriptor_pool={};
     for(auto& f:frames){free_surface(f.scene);free_surface(f.depth);
-        free_surface(f.motion);free_surface(f.output);}
+        free_surface(f.motion);free_surface(f.object_motion);
+        free_surface(f.output);}
     frames.clear();
     has_previous=false;frame_id=0;cursor=0;
 }
@@ -235,6 +246,8 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
         if(!alloc(f.scene,color_format,render,sampled,VK_IMAGE_ASPECT_COLOR_BIT) ||
            !alloc(f.depth,depth_format,render,sampled,VK_IMAGE_ASPECT_DEPTH_BIT) ||
            !alloc(f.motion,VK_FORMAT_R16G16_SFLOAT,render,storage,VK_IMAGE_ASPECT_COLOR_BIT) ||
+           !alloc(f.object_motion,VK_FORMAT_R32G32B32A32_SFLOAT,render,
+                  sampled,VK_IMAGE_ASPECT_COLOR_BIT) ||
            !alloc(f.output,output_format,output,
                    storage|VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|
                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
@@ -249,9 +262,10 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
         VkDescriptorImageInfo images[3]{};
         images[0]={VK_NULL_HANDLE,f.depth.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         images[1]={VK_NULL_HANDLE,f.motion.view,VK_IMAGE_LAYOUT_GENERAL};
-        // The current Port camera mode (0) doesn't sample object motion.
-        // Keep binding 2 valid and immutable until its surface is retired.
-        images[2]=images[0];
+        // An immutable, *owned* copy of Port's actual RT7, updated only by
+        // ordered GPU copy commands. Descriptor set binding2 is never rewritten.
+        images[2]={VK_NULL_HANDLE,f.object_motion.view,
+                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         VkWriteDescriptorSet writes[3]{};
         for(uint32_t binding=0;binding<3;++binding){
             writes[binding].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -310,6 +324,16 @@ extern "C" __attribute__((visibility("default"))) int bs4_fsr31_supply_port_came
     for(float value:next.reproject)if(!std::isfinite(value))return 0;
     std::lock_guard lock{mutex};
     port_camera={next,cb,scene_depth,true};
+    return 1;
+}
+
+extern "C" __attribute__((visibility("default"))) int bs4_fsr31_supply_port_object(
+    VkCommandBuffer cb,VkImageView view,VkExtent2D size) {
+    if(!cb||!view||!size.width||!size.height||
+       size.width>4096||size.height>4096)return 0;
+    const uint64_t generation=bs4_port_frame_generation();
+    std::lock_guard lock{mutex};
+    port_object={cb,view,size,generation,true};
     return 1;
 }
 
@@ -407,8 +431,9 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     const bool depth_can_blit =
         (depth_features.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) &&
         (depth_features.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT);
+    const uint64_t scene_generation=pre_ui?bs4_port_frame_generation():0;
     std::lock_guard lock{mutex};
-    // Port RunScaled must receive real G-buffer camera data from core024.
+    // Port RunScaled must receive real G-buffer camera data from core025.
     // Never fake motion with image search/optical flow (R20 visual artifact).
     if(pre_ui && (!port_camera.valid || port_camera.command!=cb ||
                   port_camera.depth!=scene_depth_view ||
@@ -501,8 +526,49 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     barrier(cb,depth.image,VK_IMAGE_ASPECT_DEPTH_BIT,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,depth.layout);
     transit(cb,f.depth,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    // Port RT7 carries per-object rg velocity, b=valid, a=fragment depth.
+    // Copy the real G-buffer motion attachment into this frame's owned image:
+    // descriptor binding2 stays immutable until the frame's GPU work retires.
+    bool object_ready=false;
+    Bs4FsrCaptureImage object_image{};
+    if(pre_ui && port_object.valid &&
+       port_object.command==cb && port_object.generation==scene_generation &&
+       port_object.size.width>=internal.width &&
+       port_object.size.height>=internal.height &&
+       bs4_fsr31_capture_image(port_object.view,&object_image) &&
+       object_image.image && object_image.format==VK_FORMAT_R32G32B32A32_SFLOAT &&
+       (object_image.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT) &&
+       object_image.size.width>=internal.width &&
+       object_image.size.height>=internal.height &&
+       object_image.layout!=VK_IMAGE_LAYOUT_UNDEFINED) {
+        transit(cb,f.object_motion,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        barrier(cb,object_image.image,VK_IMAGE_ASPECT_COLOR_BIT,
+                object_image.layout,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        VkImageCopy copy{};
+        copy.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
+        copy.dstSubresource=copy.srcSubresource;
+        copy.extent={internal.width,internal.height,1};
+        vkCmdCopyImage(cb,object_image.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       f.object_motion.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&copy);
+        barrier(cb,object_image.image,VK_IMAGE_ASPECT_COLOR_BIT,
+                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,object_image.layout);
+        object_ready=true;
+    }
+    transit(cb,f.object_motion,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     transit(cb,f.motion,VK_IMAGE_LAYOUT_GENERAL);
-    record_port_camera_motion(cb,f,port_camera.push,internal);
+    PortCameraPush combined=port_camera.push;
+    combined.mode=object_ready?1u:0u;
+    record_port_camera_motion(cb,f,combined,internal);
+    if(object_ready) {
+        static bool logged=false;
+        if(!logged) {
+            logged=true;
+            std::fprintf(stderr,
+                "[BS4_FSR31] real Port object motion imported %ux%u frame=%llu\n",
+                internal.width,internal.height,
+                static_cast<unsigned long long>(scene_generation));
+        }
+    }
     // Shader storage writes must be visible to the FSR 3.1 compute passes.
     barrier(cb,f.motion.image,VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -548,7 +614,10 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     }
     transit(cb,f.output,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     has_previous=true;
-    if(pre_ui)port_camera.valid=false;
+    if(pre_ui) {
+        port_camera.valid=false;
+        port_object.valid=false;
+    }
     if(frame_id==1)
         std::fprintf(stderr,"[BS4_FSR31] real FSR3.1 dispatch recorded (%ux%u->%ux%u)\n",
              internal.width,internal.height,output_extent.width,output_extent.height);
