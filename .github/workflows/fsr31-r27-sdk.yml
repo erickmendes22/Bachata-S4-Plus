@@ -124,6 +124,8 @@ jobs:
               '#pragma once\n#include <stdint.h>\nstatic const uint32_t BS4_FSR31_CAMERA_SPV[] = {\n'+
               ','.join('0x%08x'%v for v in words)+'};\n')
           PY_SHADER
+          g++ -std=c++17 -Wall -Wextra -Werror -I/usr/include tools/fsr31-026/tests/native_depth_stencil_attachment_test.cpp -o /tmp/r27-depth-stencil-test
+          /tmp/r27-depth-stencil-test
           g++ -std=c++17 -pthread -I/usr/include tools/fsr31-026/port_scene_frame.cpp tools/fsr31-026/tests/port_scene_frame_test.cpp -o /tmp/port-scene-test
           /tmp/port-scene-test
           g++ -std=c++17 -pthread -I/usr/include tools/fsr31-026/native_scene_observer.cpp tools/fsr31-026/port_scene_frame.cpp tools/fsr31-026/tests/native_scene_observer_test.cpp -o /tmp/native-observer-test
