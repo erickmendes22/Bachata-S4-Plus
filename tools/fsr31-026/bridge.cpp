@@ -52,6 +52,17 @@ BS4_PUBLIC void bs4_fsr31_native_begin(void* scheduler,const void* render_state,
     const char* input=std::getenv("BACHATA_FSR31_INPUT");
     if(!input||std::strcmp(input,"port"))return;
     Bs4NativeRenderState state{};std::memcpy(&state,render_state,sizeof(state));
+    // GBuffer/MRT and attachment-free passes cannot contain a native HUD draw.
+    // Do not add a queue operation for those passes: n032 queued one operation
+    // for EVERY BeginRendering and caused a severe GPU worker backlog.
+    if(state.colorCount>1||
+       (!state.colorCount&&!state.depthEnabled&&!state.stencilEnabled))return;
+    static std::atomic<uint64_t> eligible{0};
+    const auto n=eligible.fetch_add(1,std::memory_order_relaxed)+1;
+    if(n==1||n==4096)std::fprintf(stderr,
+        "[BS4_FSR31] NATIVE_BEGIN_ELIGIBLE calls=%llu colors=%u extent=%ux%u depth=%u stencil=%u\\n",
+        static_cast<unsigned long long>(n),state.colorCount,state.width,state.height,
+        unsigned(state.depthEnabled),unsigned(state.stencilEnabled));
     // Addresses are pinned by hook_fsr_draw025.py's input SHA256. Native
     // allocator/flush preserve the existing worker's chunk/ordering protocol.
     bs4_native_enqueue_draw(scheduler,state,
