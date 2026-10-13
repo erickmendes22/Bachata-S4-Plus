@@ -27,6 +27,7 @@ struct Surface {
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
 };
 struct Frame {
+    VkDescriptorSet motion_descriptor{};
     Surface scene;
     Surface depth;
     Surface motion;
@@ -56,7 +57,7 @@ VkDevice device{};
 VkPhysicalDevice physical{};
 FfxVkPortableUpscaleContext* fsr{};
 FfxVkPortableUpscaleCreateInfo config{};
-PFN_vkCmdPushDescriptorSetKHR port_push_descriptors{};
+VkDescriptorPool port_descriptor_pool{};
 std::vector<Frame> frames;
 size_t cursor=0;
 bool has_previous=false;
@@ -147,7 +148,8 @@ void free_all() {
     if(port_pipeline_layout)vkDestroyPipelineLayout(device,port_pipeline_layout,nullptr);
     if(port_desc_layout)vkDestroyDescriptorSetLayout(device,port_desc_layout,nullptr);
     port_pipeline={};port_pipeline_layout={};port_desc_layout={};
-    port_push_descriptors=nullptr;
+    if(port_descriptor_pool)vkDestroyDescriptorPool(device,port_descriptor_pool,nullptr);
+    port_descriptor_pool={};
     for(auto& f:frames){free_surface(f.scene);free_surface(f.depth);
         free_surface(f.motion);free_surface(f.output);}
     frames.clear();
@@ -166,16 +168,8 @@ bool build_compute(){
     VkDescriptorSetLayoutCreateInfo port_dci{
         VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     port_dci.bindingCount=3;port_dci.pBindings=port_bindings;
-    // Host shaders must not mutate a recycled descriptor set while an
-    // earlier GPU submission may still be reading that same set.
-    // The existing core025 Vulkan device enables VK_KHR_push_descriptor.
-    port_push_descriptors=reinterpret_cast<PFN_vkCmdPushDescriptorSetKHR>(
-        vkGetDeviceProcAddr(device,"vkCmdPushDescriptorSetKHR"));
-    if(!port_push_descriptors) {
-        std::fprintf(stderr,"[BS4_FSR31] required push descriptor proc unavailable\n");
-        return false;
-    }
-    port_dci.flags=VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
+    // Immutable descriptors bound to resources allocated for each frame.
+    // No requirement for VK_KHR_push_descriptor on the live graphics device.
     if(!result(vkCreateDescriptorSetLayout(device,&port_dci,nullptr,
                                            &port_desc_layout),"port motion layout"))
         return false;
@@ -205,7 +199,17 @@ bool build_compute(){
                    &port_ci,nullptr,&port_pipeline);
     vkDestroyShaderModule(device,port_module,nullptr);
     if(!result(port_result,"port camera pipeline"))return false;
-    return true;
+    VkDescriptorPoolSize sizes[]{
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,4},
+        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,8}
+    };
+    VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    pool.maxSets=4;
+    pool.poolSizeCount=2;
+    pool.pPoolSizes=sizes;
+    return result(vkCreateDescriptorPool(device,&pool,nullptr,
+                                         &port_descriptor_pool),
+                  "immutable port motion descriptor pool");
 }
 FfxVkPortableImage describe(const Surface& s,FfxVkPortableResourceState state) {
     FfxVkPortableImage im{};
@@ -236,6 +240,31 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                    VK_IMAGE_ASPECT_COLOR_BIT))
             return false;
+        VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        ai.descriptorPool=port_descriptor_pool;
+        ai.descriptorSetCount=1;
+        ai.pSetLayouts=&port_desc_layout;
+        if(!result(vkAllocateDescriptorSets(device,&ai,&f.motion_descriptor),
+                   "immutable motion descriptor allocate"))return false;
+        VkDescriptorImageInfo images[3]{};
+        images[0]={VK_NULL_HANDLE,f.depth.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        images[1]={VK_NULL_HANDLE,f.motion.view,VK_IMAGE_LAYOUT_GENERAL};
+        // The current Port camera mode (0) doesn't sample object motion.
+        // Keep binding 2 valid and immutable until its surface is retired.
+        images[2]=images[0];
+        VkWriteDescriptorSet writes[3]{};
+        for(uint32_t binding=0;binding<3;++binding){
+            writes[binding].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[binding].dstSet=f.motion_descriptor;
+            writes[binding].dstBinding=binding;
+            writes[binding].descriptorCount=1;
+            writes[binding].descriptorType=(binding==1)?
+                VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            writes[binding].pImageInfo=&images[binding];
+        }
+        // Done exactly once, before the first GPU submission can use this set.
+        // Recycled frames never update descriptors still referenced in-flight.
+        vkUpdateDescriptorSets(device,3,writes,0,nullptr);
      }
     const auto r=ffxVkPortableUpscaleContextCreate(&info,&config,&fsr);
     if(r!=FFX_VK_PORTABLE_OK) {
@@ -250,26 +279,10 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
 // reconstructs motion from G-buffer depth + current/previous matrices.
 void record_port_camera_motion(VkCommandBuffer cb,const Frame& f,
                                const PortCameraPush& camera,VkExtent2D extent) {
-    VkDescriptorImageInfo info[3]{};
-    info[0]={VK_NULL_HANDLE,f.depth.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    info[1]={VK_NULL_HANDLE,f.motion.view,VK_IMAGE_LAYOUT_GENERAL};
-    // In mode=0 this binding is not sampled, but Vulkan still requires it.
-    info[2]=info[0];
-    VkWriteDescriptorSet writes[3]{};
-    for(uint32_t i=0;i<3;++i) {
-        writes[i]={VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        writes[i].dstSet=VK_NULL_HANDLE; // ignored for push descriptors
-        writes[i].dstBinding=i;
-        writes[i].descriptorCount=1;
-        writes[i].descriptorType=(i==1)?
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        writes[i].pImageInfo=&info[i];
-    }
     vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,port_pipeline);
-    // Descriptor contents become part of THIS command buffer. There is no
-    // CPU-side update to descriptors held by prior frames in flight.
-    port_push_descriptors(cb,VK_PIPELINE_BIND_POINT_COMPUTE,
-                          port_pipeline_layout,0,3,writes);
+    vkCmdBindDescriptorSets(cb,VK_PIPELINE_BIND_POINT_COMPUTE,
+                            port_pipeline_layout,0,1,
+                            &f.motion_descriptor,0,nullptr);
     vkCmdPushConstants(cb,port_pipeline_layout,VK_SHADER_STAGE_COMPUTE_BIT,
                        0,sizeof(camera),&camera);
     vkCmdDispatch(cb,(extent.width+7)/8,(extent.height+7)/8,1);
