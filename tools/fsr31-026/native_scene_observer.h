@@ -8,3 +8,5 @@ void bs4_native_scene_reset(VkCommandBuffer);
 void bs4_native_scene_present();
 // Returns the depth and render dimensions captured in this command buffer.
 bool bs4_native_scene_camera(VkCommandBuffer,VkImageView*,VkExtent2D*);
+
+bool bs4_native_scene_ui_boundary(VkCommandBuffer);

@@ -132,6 +132,9 @@ jobs:
           export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name '*lvp*.json' | head -n1)"
           test -n "$VK_ICD_FILENAMES"
           /tmp/shadps4-arm64-025 | tee port-scene-gpu.txt
+          /tmp/shadps4-arm64-025 quality-1x | tee -a port-scene-gpu.txt
+          g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include tools/fsr31-026/tests/r13_composition_gpu_test.cpp -Lbuild-host -lbachata_fsr31 -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/shadps4-arm64-025
+          /tmp/shadps4-arm64-025 | tee r13-composition-gpu.txt
       - name: Validate ARM64 and exports
         run: |
           set -euxo pipefail
@@ -150,5 +153,6 @@ jobs:
             needed.txt
             symbols.txt
             port-scene-gpu.txt
+            r13-composition-gpu.txt
           if-no-files-found: error
           retention-days: 7

@@ -10,7 +10,7 @@
 template<class T>T handle(uintptr_t n){return reinterpret_cast<T>(n);}
 template<class T>T wrap(const char* name,T original){return reinterpret_cast<T>(bs4_native_scene_wrap(name,reinterpret_cast<PFN_vkVoidFunction>(original)));}
 std::array<unsigned char,2048> memory{};
-int forwarded=0,viewportCalls=0;
+int forwarded=0,viewportCalls=0,viewportCountCalls=0;
 VkViewport actualViewport{};
 VkResult VKAPI_CALL allocate(VkDevice,const VkMemoryAllocateInfo*,const VkAllocationCallbacks*,VkDeviceMemory* out){*out=handle<VkDeviceMemory>(1);return VK_SUCCESS;}
 VkResult VKAPI_CALL map(VkDevice,VkDeviceMemory,VkDeviceSize offset,VkDeviceSize,VkMemoryMapFlags,void** out){*out=memory.data()+offset;return VK_SUCCESS;}
@@ -19,6 +19,9 @@ VkResult VKAPI_CALL bind(VkDevice,VkBuffer,VkDeviceMemory,VkDeviceSize){return V
 void VKAPI_CALL push(VkCommandBuffer,VkPipelineBindPoint,VkPipelineLayout,uint32_t,uint32_t count,const VkWriteDescriptorSet* w){assert(count==1&&w&&w->pBufferInfo);}
 void VKAPI_CALL constants(VkCommandBuffer,VkPipelineLayout,VkShaderStageFlags,uint32_t offset,uint32_t size,const void*){assert(offset==0&&size==120);}
 void VKAPI_CALL viewport(VkCommandBuffer,uint32_t first,uint32_t count,const VkViewport* value){assert(first==0&&count==1);actualViewport=*value;viewportCalls++;}
+void VKAPI_CALL viewport_count(VkCommandBuffer,uint32_t count,const VkViewport* value){assert(count==1);actualViewport=*value;viewportCountCalls++;}
+VkResult VKAPI_CALL name(VkDevice,const VkDebugUtilsObjectNameInfoEXT*){return VK_SUCCESS;}
+void VKAPI_CALL destroy_layout(VkDevice,VkPipelineLayout,const VkAllocationCallbacks*){}
 void VKAPI_CALL draw(VkCommandBuffer,uint32_t n,uint32_t i,uint32_t first,uint32_t base){assert(n==30&&i==1&&first==0&&base==0);forwarded++;}
 int main(){
  setenv("BACHATA_FSR31_INPUT","port",1);
@@ -26,6 +29,8 @@ int main(){
  auto b=wrap("vkBindBufferMemory",&bind);auto p=wrap("vkCmdPushDescriptorSetKHR",&push);
  auto c=wrap("vkCmdPushConstants",&constants);auto v=wrap("vkCmdSetViewport",&viewport);
  auto d=wrap("vkCmdDraw",&draw);auto u=wrap("vkUnmapMemory",&unmap);
+ auto vc=wrap("vkCmdSetViewportWithCountEXT",&viewport_count);
+ auto named=wrap("vkSetDebugUtilsObjectNameEXT",&name);auto destroyed=wrap("vkDestroyPipelineLayout",&destroy_layout);
  VkDeviceMemory mem{};VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};ai.allocationSize=memory.size();assert(a({},&ai,nullptr,&mem)==VK_SUCCESS);
  void* ptr{};assert(m({},mem,32,VK_WHOLE_SIZE,0,&ptr)==VK_SUCCESS);
  auto buffer=handle<VkBuffer>(2);assert(b({},buffer,mem,64)==VK_SUCCESS);
@@ -49,6 +54,10 @@ int main(){
  assert(!out.reset&&out.motion.proj[1]==-3&&out.motion.jitter[0]==-.25f);
  assert(std::abs(out.motion.jitter[1]-1.f/6.f)<1e-6f);
  assert(actualViewport.x==vp.x&&actualViewport.y==vp.y&&viewportCalls==4);
+ bs4_native_scene_present();bs4_fsr31_port_end_frame();
+ setup();vc(cb,1,&vp);const auto oldCalls=viewportCalls;d(cb,30,1,0,0);
+ assert(bs4_fsr31_port_camera(cb,depth,{640,360},out)&&out.motion.jitter[0]==.25f);
+ assert(viewportCountCalls==3&&viewportCalls==oldCalls&&actualViewport.x==vp.x&&actualViewport.y==vp.y);
  std::array<unsigned char,2048> original=memory;
  // Native viewport field interpretation is validated against the actual
  // recorded viewport, rather than accepting a sign guessed from its size.
@@ -58,7 +67,14 @@ int main(){
  bufferInfo.range=863;setup();d(cb,30,1,0,0);assert(!bs4_native_scene_camera(cb,&found,&size));bufferInfo.range=864;
  info.colorAttachmentCount=4;setup();d(cb,30,1,0,0);assert(!bs4_native_scene_camera(cb,&found,&size));info.colorAttachmentCount=5;
  u({},mem);setup();d(cb,30,1,0,0);assert(!bs4_native_scene_camera(cb,&found,&size));
- assert(memory==original&&forwarded==7); // no guest memory writes; every draw forwarded
+ assert(memory==original&&forwarded==8); // no guest memory writes; every draw forwarded
+ auto layout=handle<VkPipelineLayout>(9);
+ VkDebugUtilsObjectNameInfoEXT ni{VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT};ni.objectType=VK_OBJECT_TYPE_PIPELINE_LAYOUT;ni.objectHandle=9;
+ ni.pObjectName="Graphics PipelineLayout fs_0x0000000012345678,vs_0x0000000034e8a281";assert(named({},&ni)==VK_SUCCESS);
+ c(cb,layout,VK_SHADER_STAGE_VERTEX_BIT,0,120,raw.data());assert(bs4_native_scene_ui_boundary(cb));
+ ni.pObjectName="Graphics PipelineLayout fs_0x0000000034e8a281,vs_0x00000000abcdabcd";assert(named({},&ni)==VK_SUCCESS);assert(!bs4_native_scene_ui_boundary(cb));
+ ni.pObjectName="Graphics PipelineLayout vs_0x0000000034e8a281";assert(named({},&ni)==VK_SUCCESS);assert(bs4_native_scene_ui_boundary(cb));
+ destroyed({},layout,nullptr);assert(!bs4_native_scene_ui_boundary(cb));
  unsetenv("BACHATA_FSR31_INPUT");assert(wrap("vkCmdDraw",&draw)==&draw);
  std::cout<<"PASS native observer: forwarded draws, 864-byte camera, 120-byte raw viewport, depth pairing, finite bounds, unmap, no guest writes\n";
 }

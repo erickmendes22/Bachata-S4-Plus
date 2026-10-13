@@ -95,6 +95,40 @@ void record_rendering(const VkRenderingInfo* info) {
     img->second.layout = info->pDepthAttachment->imageLayout;
 }
 
+// A native pass must fit its actual attachments. Reduce only a proven scene:
+// valid native camera, origin zero, and a first color allocated at its render
+// size. Native-sized HUD and unrelated small passes remain unchanged.
+bool checked_scene_area(VkCommandBuffer cb,const VkRenderingInfo* original,VkRenderingInfo& checked) {
+    const char* mode=std::getenv("BACHATA_FSR31_INPUT");
+    if(!mode||std::strcmp(mode,"port")||!original||original->pNext||
+       original->viewMask||original->layerCount!=1||
+       original->renderArea.offset.x||original->renderArea.offset.y||
+       !original->colorAttachmentCount||!original->pColorAttachments)return false;
+    VkImageView depth{};VkExtent2D camera{};
+    if(!bs4_native_scene_camera(cb,&depth,&camera))return false;
+    std::lock_guard lock{mutex};
+    auto valid=[&](const VkRenderingAttachmentInfo& att,bool first) {
+        if(!att.imageView)return !first;
+        if(att.resolveMode||att.resolveImageView)return false;
+        auto view=views.find(att.imageView);if(view==views.end())return false;
+        auto image=images.find(view->second.image);if(image==images.end())return false;
+        return image->second.size.width>=camera.width&&image->second.size.height>=camera.height&&
+               (!first||(image->second.size.width==camera.width&&image->second.size.height==camera.height));
+    };
+    for(uint32_t i=0;i<original->colorAttachmentCount;i++)
+        if(!valid(original->pColorAttachments[i],i==0))return false;
+    if(original->pDepthAttachment&&!valid(*original->pDepthAttachment,false))return false;
+    if(original->pStencilAttachment&&!valid(*original->pStencilAttachment,false))return false;
+    const auto area=original->renderArea.extent;
+    if(area.width<camera.width||area.height<camera.height||
+       (area.width==camera.width&&area.height==camera.height))return false;
+    checked=*original;checked.renderArea.extent=camera;
+    static bool logged=false;if(!logged){logged=true;std::fprintf(stderr,
+        "[BS4_R13_PORT] native scene render area %ux%u -> %ux%u camera_and_attachments_verified=1\n",
+        area.width,area.height,camera.width,camera.height);}
+    return true;
+}
+
 /* An actual reduced scene (not a post-present downsample) is characterized
  * by a small render area, color image of matching size, and a completed
  * Vulkan dynamic-rendering pass. The transition to a larger output-image
@@ -127,7 +161,9 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
         // Never activate on menu frames that did not contain a 3D scene.
         // Support 640x360, 960x540, 1152x648; 1280x720 does not need
         // temporal upscale if the requested presentation is also 720p.
-        if (w>=600 && w<1280 && h>=320 && h<720) {
+        if (w>=600 && h>=320 && ((w<1280&&h<720)||
+            (port&&w==1280&&h==720&&!bs4_native_scene_ui_boundary(cmd)))) {
+            if(port&&info->colorAttachmentCount!=1)return false;
             if(port&&(!camera_ready||camera_size.width!=w||camera_size.height!=h))return false;
             const auto v=views.find(view);
             if (v!=views.end()) {
@@ -150,6 +186,7 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
         // This is the first full-size UI pass following a completed small
         // 3D scene on the SAME command buffer. Cross-CB ordering is unknown:
         // never issue Vulkan commands based on unproven inter-CB ordering.
+        if(port&&!bs4_native_scene_ui_boundary(cmd))return false;
         if(w<1280||h<700||!stage.ready||!stage.color||
            !stage.depth||stage.color==view)
             return false;
@@ -157,6 +194,7 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
         if(dst_v==views.end())return false;
         const auto dst_i=images.find(dst_v->second.image);
         if(dst_i==images.end() ||
+            (port&&dst_i->second.format!=VK_FORMAT_R8G8B8A8_UNORM) ||
             !(dst_i->second.usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
             return false;
         dst=dst_v->second.image;
@@ -384,6 +422,9 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering(
     VkCommandBuffer cb,const VkRenderingInfo* info) {
     // Dispatch BEFORE recording the UI depth attachment; otherwise generic
     // FSR3 would select the newly-starting UI depth instead of scene depth.
+    bs4_native_scene_begin(cb,info);
+    VkRenderingInfo checked{};
+    if(checked_scene_area(cb,info,checked))info=&checked;
     VkRenderingInfo modified{};
     std::vector<VkRenderingAttachmentInfo> overrides;
     const bool composite=first_pre_ui_color(cb,info,modified,overrides);
@@ -406,6 +447,9 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering_khr(
     VkCommandBuffer cb,const VkRenderingInfo* info) {
     // Dispatch BEFORE recording the UI depth attachment; otherwise generic
     // FSR3 would select the newly-starting UI depth instead of scene depth.
+    bs4_native_scene_begin(cb,info);
+    VkRenderingInfo checked{};
+    if(checked_scene_area(cb,info,checked))info=&checked;
     VkRenderingInfo modified{};
     std::vector<VkRenderingAttachmentInfo> overrides;
     const bool composite=first_pre_ui_color(cb,info,modified,overrides);

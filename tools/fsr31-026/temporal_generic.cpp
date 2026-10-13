@@ -269,20 +269,22 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
        input_extent.width==0||input_extent.height==0) {
         report_once(3,"input/output extent zero");return 0;
     }
+    const char* mode=std::getenv("BACHATA_FSR31_INPUT");
+    const bool want_port=mode&&std::strcmp(mode,"port")==0;
     // R11 incorrectly downsized the fully rendered 1920x1080 scene to
     // 427x240 and then reconstructed 1280x720. This cannot improve game
     // performance and destroys visual detail. Host temporal upscaling must
     // consume the *actual* smaller scene image, never synthesize one.
     // Exactly matches the original shadPS4 FsrPass skip condition.
     if (input_extent.width >= output_extent.width &&
-        input_extent.height >= output_extent.height) {
+        input_extent.height >= output_extent.height &&
+        !(want_port&&pre_ui&&input_extent.width==output_extent.width&&
+          input_extent.height==output_extent.height)) {
         report_once(14, "source already >= presentation size; no forced downsample");
         return 0;
     }
     // Explicit opt-in while the native producer is integrated. This is not
     // enabled in a release APK until the R13 renderer supplies the contract.
-    const char* mode=std::getenv("BACHATA_FSR31_INPUT");
-    const bool want_port=mode&&std::strcmp(mode,"port")==0;
     Bs4PortCameraDispatch camera{};
     if(want_port&&(!pre_ui||!bs4_fsr31_port_camera(cb,scene_depth_view,input_extent,camera))) {
         report_once(16,"native Port camera/depth handoff missing; no guessed temporal input");

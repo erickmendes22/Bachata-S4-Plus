@@ -3,6 +3,7 @@
 // no render-pass suspension, no global image redirection.
 #include "native_scene_observer.h"
 #include "port_scene_frame.h"
+#include "port_ui_composition.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -24,7 +25,8 @@ struct DrawState {
     std::array<float,4> raw{};
     bool rawValid{},inside{},haveCamera{};
     VkViewport viewport{};
-    bool viewportValid{};
+    bool viewportValid{},viewportWithCount{};
+    VkPipelineLayout graphicsLayout{};
     std::map<uint32_t,Buffers> pushes;
     std::map<uint32_t,VkDescriptorSet> sets;
     std::array<float,216> constants{};
@@ -38,6 +40,7 @@ std::unordered_map<VkBuffer,Buffer> buffers;
 std::unordered_map<VkDescriptorSet,Buffers> descriptors;
 std::unordered_map<VkCommandBuffer,DrawState> commands;
 uint64_t frame=1;
+std::unordered_map<VkPipelineLayout,uint64_t> layoutHashes;
 PFN_vkAllocateMemory allocate;
 PFN_vkMapMemory mapMemory;
 PFN_vkUnmapMemory unmapMemory;
@@ -50,6 +53,9 @@ PFN_vkUpdateDescriptorSets updateDescriptors;
 PFN_vkCmdBindDescriptorSets bindSets;
 PFN_vkCmdPushConstants pushConstants;
 PFN_vkCmdSetViewport setViewport;
+PFN_vkCmdSetViewportWithCount setViewportCount;
+PFN_vkSetDebugUtilsObjectNameEXT objectName;
+PFN_vkDestroyPipelineLayout destroyLayout;
 PFN_vkCmdDraw draw;
 PFN_vkCmdDrawIndexed drawIndexed;
 PFN_vkCmdDrawIndirect drawIndirect;
@@ -192,27 +198,54 @@ void VKAPI_CALL constants_hook(VkCommandBuffer cb,VkPipelineLayout l,VkShaderSta
                               uint32_t offset,uint32_t size,const void* values) {
     if((stage&VK_SHADER_STAGE_VERTEX_BIT)&&offset==0&&size==120&&values) {
         std::lock_guard lock{guard};auto& d=commands[cb];
-        std::memcpy(d.raw.data(),values,16);d.rawValid=true;
+        std::memcpy(d.raw.data(),values,16);d.rawValid=true;d.graphicsLayout=l;
         for(float v:d.raw)if(!std::isfinite(v))d.rawValid=false;
     }
     pushConstants(cb,l,stage,offset,size,values);
 }
 void VKAPI_CALL viewport_hook(VkCommandBuffer cb,uint32_t first,uint32_t count,const VkViewport* v) {
-    if(first==0){std::lock_guard lock{guard};auto& d=commands[cb];d.viewportValid=count==1&&v;
+    if(first==0){std::lock_guard lock{guard};auto& d=commands[cb];d.viewportValid=count==1&&v;d.viewportWithCount=false;
         if(d.viewportValid)d.viewport=*v;}
     setViewport(cb,first,count,v);
+}
+void VKAPI_CALL viewport_count_hook(VkCommandBuffer cb,uint32_t count,const VkViewport* v) {
+    {std::lock_guard lock{guard};auto& d=commands[cb];d.viewportValid=count==1&&v;
+     d.viewportWithCount=true;if(d.viewportValid)d.viewport=*v;}
+    setViewportCount(cb,count,v);
+}
+VkResult VKAPI_CALL name_hook(VkDevice dev,const VkDebugUtilsObjectNameInfoEXT* info) {
+    if(info&&info->objectType==VK_OBJECT_TYPE_PIPELINE_LAYOUT) {
+        std::lock_guard lock{guard};auto layout=(VkPipelineLayout)(uintptr_t)info->objectHandle;
+        layoutHashes.erase(layout);
+        const char* name=info->pObjectName;
+        if(name&&std::strncmp(name,"Graphics PipelineLayout ",24)==0) {
+            const char* vertex=std::strstr(name,"vs_0x");
+            if(vertex) {
+                char* end{};const auto hash=std::strtoull(vertex+5,&end,16);
+                if(end!=vertex+5&&(*end=='\0'||*end=='_'||*end==','))layoutHashes[layout]=hash;
+            }
+        }
+    }
+    return objectName(dev,info);
+}
+void VKAPI_CALL layout_destroy_hook(VkDevice dev,VkPipelineLayout layout,const VkAllocationCallbacks* ac) {
+    {std::lock_guard lock{guard};layoutHashes.erase(layout);}destroyLayout(dev,layout,ac);
 }
 float halton(uint64_t n,unsigned base) {
     float f=1.f,r=0.f;while(n){f/=base;r+=f*float(n%base);n/=base;}return r;
 }
-struct ViewportShift {VkViewport original{},shifted{};bool applied{};};
+struct ViewportShift {VkViewport original{},shifted{};bool applied{},withCount{};};
+void native_viewport(VkCommandBuffer cb,const VkViewport& v,bool withCount) {
+    if(withCount)setViewportCount(cb,1,&v);else setViewport(cb,0,1,&v);
+}
 ViewportShift shift_geometry(VkCommandBuffer cb,uint32_t vertices,uint32_t instances) {
     ViewportShift out{};
     {
         std::lock_guard lock{guard};auto it=commands.find(cb);
-        if(it==commands.end()||!setViewport||frame<2||(vertices<=6&&instances<=1))return out;
+        if(it==commands.end()||frame<2||(vertices<=6&&instances<=1))return out;
         auto& d=it->second;
-        if(!d.haveCamera||!d.inside||d.depth!=d.cameraDepth||!d.viewportValid)return out;
+        if(!d.haveCamera||!d.inside||d.depth!=d.cameraDepth||!d.viewportValid||
+           (d.viewportWithCount?!setViewportCount:!setViewport))return out;
         BachataCamera::Scene camera{};
         if(!BachataCamera::Parse(d.constants.data(),sizeof(d.constants),camera)||
            !raw_matches(d,camera)||
@@ -226,15 +259,15 @@ ViewportShift shift_geometry(VkCommandBuffer cb,uint32_t vertices,uint32_t insta
             d.constants.data(),sizeof(d.constants),d.cameraXSign,d.cameraYSign,x,y};
         if(!bs4_fsr31_port_scene(&f))return out;
         out.original=d.viewport;out.shifted=d.viewport;
-        out.shifted.x+=x;out.shifted.y+=y;out.applied=true;
+        out.shifted.x+=x;out.shifted.y+=y;out.applied=true;out.withCount=d.viewportWithCount;
     }
     // Call the ORIGINAL entry point. Do not corrupt the observer's/native
     // cache of the unshifted viewport, or recursively intercept our own shift.
-    setViewport(cb,0,1,&out.shifted);
+    native_viewport(cb,out.shifted,out.withCount);
     return out;
 }
 void restore(VkCommandBuffer cb,const ViewportShift& shift) {
-    if(shift.applied)setViewport(cb,0,1,&shift.original);
+    if(shift.applied)native_viewport(cb,shift.original,shift.withCount);
 }
 void VKAPI_CALL draw_hook(VkCommandBuffer cb,uint32_t n,uint32_t i,uint32_t first,uint32_t base) {
     observe_draw(cb);const auto shift=shift_geometry(cb,n,i);
@@ -252,11 +285,18 @@ void VKAPI_CALL indexed_indirect_hook(VkCommandBuffer cb,VkBuffer b,VkDeviceSize
 }
 }
 void bs4_native_scene_begin(VkCommandBuffer cb,const VkRenderingInfo* info) {
-    std::lock_guard lock{guard};auto& d=commands[cb];d.inside=info;
-    d.depth=info&&info->pDepthAttachment?info->pDepthAttachment->imageView:VK_NULL_HANDLE;
-    if(d.depth&&d.depth!=d.cameraDepth)d.haveCamera=false;
-    d.mrt=info?info->colorAttachmentCount:0;d.area=info?info->renderArea.extent:VkExtent2D{};
+    {
+        std::lock_guard lock{guard};auto& d=commands[cb];d.inside=info;
+        d.depth=info&&info->pDepthAttachment?info->pDepthAttachment->imageView:VK_NULL_HANDLE;
+        if(d.depth&&d.depth!=d.cameraDepth)d.haveCamera=false;
+        d.mrt=info?info->colorAttachmentCount:0;d.area=info?info->renderArea.extent:VkExtent2D{};
+    }
+    // The native BindResources/UpdateDynamicState commands precede
+    // Scheduler::BeginRendering. Capture their constants here, before any
+    // rendering instance starts; do not wait for a speculative HUD draw.
+    observe_draw(cb);
 }
+
 void bs4_native_scene_end(VkCommandBuffer cb) {
     std::lock_guard lock{guard};commands[cb].inside=false;
 }
@@ -290,10 +330,21 @@ extern "C" PFN_vkVoidFunction bs4_native_scene_wrap(const char* name,PFN_vkVoidF
     WRAP(bindSets,"vkCmdBindDescriptorSets",sets_hook)
     WRAP(pushConstants,"vkCmdPushConstants",constants_hook)
     WRAP(setViewport,"vkCmdSetViewport",viewport_hook)
+    WRAP(setViewportCount,"vkCmdSetViewportWithCount",viewport_count_hook)
+    WRAP(setViewportCount,"vkCmdSetViewportWithCountEXT",viewport_count_hook)
+    WRAP(objectName,"vkSetDebugUtilsObjectNameEXT",name_hook)
+    WRAP(destroyLayout,"vkDestroyPipelineLayout",layout_destroy_hook)
     WRAP(draw,"vkCmdDraw",draw_hook)
     WRAP(drawIndexed,"vkCmdDrawIndexed",indexed_hook)
     WRAP(drawIndirect,"vkCmdDrawIndirect",indirect_hook)
     WRAP(drawIndexedIndirect,"vkCmdDrawIndexedIndirect",indexed_indirect_hook)
 #undef WRAP
     return proc;
+}
+
+bool bs4_native_scene_ui_boundary(VkCommandBuffer cb) {
+    std::lock_guard lock{guard};auto it=commands.find(cb);
+    if(it==commands.end())return false;
+    const auto hash=layoutHashes.find(it->second.graphicsLayout);
+    return hash!=layoutHashes.end()&&Vulkan::UiComposition::MovieShader(hash->second);
 }
