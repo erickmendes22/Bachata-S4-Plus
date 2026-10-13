@@ -7,7 +7,10 @@
 #undef main
 #include "../fsr31-026/vulkan_capture.h"
 #include "../fsr31-026/port_camera_constants.h"
+#include <algorithm>
 #include <cassert>
+#include <cstring>
+#include <vector>
 extern "C" int bs4_fsr31_attach(void*,void*,VkDevice,void*,uint32_t);
 extern "C" int bs4_fsr31_supply_port_camera(VkCommandBuffer,VkImageView,const void*,uint32_t);
 extern "C" VkImageView bs4_fsr31_prepare_resources(VkCommandBuffer,VkImageView,VkImageView,VkExtent2D,VkExtent2D);
@@ -24,7 +27,20 @@ int main(){
  VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};app.apiVersion=VK_API_VERSION_1_3;VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};ici.pApplicationInfo=&app;VkInstance instance{};
  auto createInstance=(PFN_vkCreateInstance)vkGetInstanceProcAddr(nullptr,"vkCreateInstance");check(createInstance(&ici,nullptr,&instance));
  const auto choice=choosePhysicalDevice(instance);assert(choice.device);VkPhysicalDeviceVulkan13Features v13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};v13.synchronization2=v13.dynamicRendering=VK_TRUE;VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};f2.pNext=&v13;f2.features.shaderStorageImageWriteWithoutFormat=VK_TRUE;
- float priority=1;VkDeviceQueueCreateInfo qci{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};qci.queueFamilyIndex=choice.queueFamily;qci.queueCount=1;qci.pQueuePriorities=&priority;VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};dci.pNext=&f2;dci.queueCreateInfoCount=1;dci.pQueueCreateInfos=&qci;VkDevice device{};
+ float priority=1;VkDeviceQueueCreateInfo qci{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};qci.queueFamilyIndex=choice.queueFamily;qci.queueCount=1;qci.pQueuePriorities=&priority;VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};dci.pNext=&f2;dci.queueCreateInfoCount=1;dci.pQueueCreateInfos=&qci;
+ // The emulator enables this extension, and the camera motion renderer
+ // requires it. The Vulkan smoke fixture must mirror that device contract.
+ uint32_t extensionCount=0;
+ check(vkEnumerateDeviceExtensionProperties(choice.device,nullptr,&extensionCount,nullptr));
+ std::vector<VkExtensionProperties> extensions(extensionCount);
+ check(vkEnumerateDeviceExtensionProperties(choice.device,nullptr,&extensionCount,extensions.data()));
+ const char* pushExt=VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME;
+ const auto found=std::find_if(extensions.begin(),extensions.end(),[&](const auto& e){
+     return std::strcmp(e.extensionName,pushExt)==0;
+ });
+ assert(found!=extensions.end()&&"VK_KHR_push_descriptor required by core025 FSR");
+ dci.enabledExtensionCount=1;dci.ppEnabledExtensionNames=&pushExt;
+ VkDevice device{};
  auto createDevice=(PFN_vkCreateDevice)vkGetInstanceProcAddr(instance,"vkCreateDevice");check(createDevice(choice.device,&dci,nullptr,&device));assert(bs4_fsr31_attach((void*)1,(void*)1,device,nullptr,3)==0);
  VkQueue queue{};vkGetDeviceQueue(device,choice.queueFamily,0,&queue);trackedBarrier=(PFN_vkCmdPipelineBarrier2)vkGetDeviceProcAddr(device,"vkCmdPipelineBarrier2");
  auto makeImage=(PFN_vkCreateImage)vkGetDeviceProcAddr(device,"vkCreateImage");auto makeView=(PFN_vkCreateImageView)vkGetDeviceProcAddr(device,"vkCreateImageView");
