@@ -568,8 +568,8 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_destroy_image_view(
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering(
     VkCommandBuffer cb,const VkRenderingInfo* info) {
-    VkRenderingInfo redirected{};VkRenderingAttachmentInfo redirectedColor{},redirectedDepth{};
-    if(bs4_native_ui_rendering(cb,info,redirected,redirectedColor,redirectedDepth)) {
+    VkRenderingInfo redirected{};VkRenderingAttachmentInfo redirectedColor{},redirectedDepth{},redirectedStencil{};
+    if(bs4_native_ui_rendering(cb,info,redirected,redirectedColor,redirectedDepth,redirectedStencil)) {
         record_rendering(&redirected);
         if(original_begin_rendering)original_begin_rendering(cb,&redirected);return;
     }
@@ -599,8 +599,8 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_barrier2(
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering_khr(
     VkCommandBuffer cb,const VkRenderingInfo* info) {
-    VkRenderingInfo redirected{};VkRenderingAttachmentInfo redirectedColor{},redirectedDepth{};
-    if(bs4_native_ui_rendering(cb,info,redirected,redirectedColor,redirectedDepth)) {
+    VkRenderingInfo redirected{};VkRenderingAttachmentInfo redirectedColor{},redirectedDepth{},redirectedStencil{};
+    if(bs4_native_ui_rendering(cb,info,redirected,redirectedColor,redirectedDepth,redirectedStencil)) {
         record_rendering(&redirected);
         if(original_begin_rendering_khr)original_begin_rendering_khr(cb,&redirected);return;
     }
