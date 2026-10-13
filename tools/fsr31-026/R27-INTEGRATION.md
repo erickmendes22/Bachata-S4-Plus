@@ -26,3 +26,11 @@ Do not revive speculative render-pass interruption or global image substitution.
 
 R27 Elden024 routing, core023 removal, patches and native controls are mandatory
 packaging invariants. No APK is generated at this checkpoint.
+
+Additional candidate fixes: reject a new invalid scene without retaining the old
+candidate, and consume a completed scene only after successful composition.
+The SDK workflow also covers preservation of the shared-target rendering
+instance: it must keep the scene and HUD intact without inventing a temporal
+dispatch. This negative case does not satisfy the positive shared-target release
+requirement above. The native scheduler may reuse the same rendering instance,
+so changing the BeginRendering attachment heuristic cannot implement OnDraw.

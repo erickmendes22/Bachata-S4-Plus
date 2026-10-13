@@ -4,7 +4,7 @@ on:
     branches: [feature/r27-fsr31-existing025]
     paths:
       - 'tools/fsr31-026/**'
-      - '.github/workflows/fsr31-026-build.yml'
+      - '.github/workflows/fsr31-r27-sdk.yml'
 permissions:
   contents: read
 jobs:
@@ -138,6 +138,7 @@ jobs:
           /tmp/bs4-fsr-sdk-smoke quality-1x | tee -a port-scene-gpu.txt
           g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include tools/fsr31-026/tests/r13_composition_gpu_test.cpp -Lbuild-host -lbachata_fsr31 -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/bs4-fsr-sdk-smoke
           /tmp/bs4-fsr-sdk-smoke | tee r13-composition-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke shared-target | tee shared-target-preservation-gpu.txt
       - name: Validate ARM64 and exports
         run: |
           set -euxo pipefail
@@ -157,5 +158,6 @@ jobs:
             symbols.txt
             port-scene-gpu.txt
             r13-composition-gpu.txt
+            shared-target-preservation-gpu.txt
           if-no-files-found: error
           retention-days: 7

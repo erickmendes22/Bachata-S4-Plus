@@ -164,6 +164,10 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
         // temporal upscale if the requested presentation is also 720p.
         if (w>=600 && h>=320 && ((w<1280&&h<720)||
             (port&&w==1280&&h==720&&!bs4_native_scene_ui_boundary(cmd)))) {
+            // A new scene replaces the previous candidate even when its
+            // camera, format or allocation is rejected. Never compose stale
+            // scene contents into a later HUD pass.
+            stage={};
             if(port&&info->colorAttachmentCount!=1)return false;
             if(port&&(!camera_ready||camera_size.width!=w||camera_size.height!=h))return false;
             const auto v=views.find(view);
@@ -203,8 +207,6 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
         dst_w=dst_i->second.size.width;
         dst_h=dst_i->second.size.height;
         completed=stage;
-        stage.ready=false;
-        stage.color=VK_NULL_HANDLE;
     }
     if (!pre_ui_eligible_logged) {
         pre_ui_eligible_logged=true;
@@ -286,6 +288,15 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     overrides[0].loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;
     overrides[0].imageLayout=ui_layout;
     modified.pColorAttachments=overrides.data();
+    // Consume only after dispatch and composition have been recorded. A
+    // rejected preparation must leave the completed candidate available.
+    {
+        std::lock_guard lock{mutex};
+        const auto it=command_scenes.find(cmd);
+        if(it!=command_scenes.end()&&it->second.ready&&
+           it->second.color==completed.color&&it->second.depth==completed.depth)
+            it->second={};
+    }
     if(!pre_ui_dispatch_logged){
         pre_ui_dispatch_logged=true;
         std::fprintf(stderr,
