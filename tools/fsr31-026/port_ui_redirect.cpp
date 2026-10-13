@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Port-style *separate* 720p RGBA8 HUD target. The FSR output is an actual
-// render target. The port scaled-session criterion is the native viewport
+// render target. Composition starts on a shader-identified Scaleform draw
 // on the camera-associated LDR target, independent of static pipeline state.
 #include "vulkan_capture.h"
+#include "port_ui_identity.h"
 #include <vulkan/vulkan.h>
 #include <algorithm>
 #include <array>
@@ -40,6 +41,7 @@ struct State {
     VkImageView candidateScene=VK_NULL_HANDLE;
     VkExtent2D sceneExtent{};
     uint64_t frame=0;
+    VkPipeline graphicsPipeline=VK_NULL_HANDLE;
     VkRenderingInfo resumed{};
     std::array<VkRenderingAttachmentInfo,1> hudColor{};
     VkRenderingAttachmentInfo hudDepth{},hudStencil{};
@@ -48,6 +50,8 @@ std::mutex uiMutex;
 std::unordered_map<VkCommandBuffer,State> cmds;
 std::unordered_map<VkImageView,Depth> uiDepth;
 std::unordered_map<VkShaderModule,uint64_t> guestHashes;
+std::unordered_map<VkPipeline,uint64_t> pipelineVertexHashes;
+std::unordered_set<VkPipeline> rejectedBoundaryPipelines;
 std::unordered_map<VkCommandBuffer,VkImageView> lastOutput;
 std::unordered_set<VkCommandBuffer> completedHud;
 struct UiFrame {
@@ -61,6 +65,7 @@ extern "C" uint64_t bs4_port_frame_generation();
 PFN_vkSetDebugUtilsObjectNameEXT realObjectName{};
 PFN_vkCreateGraphicsPipelines realCreatePipelines{};
 PFN_vkDestroyPipeline realDestroyPipeline{};
+PFN_vkDestroyShaderModule realDestroyShader{};
 PFN_vkCmdBindPipeline realBindPipeline{};
 PFN_vkCmdSetViewport realSetViewport{};
 PFN_vkCmdSetScissor realSetScissor{};
@@ -301,6 +306,9 @@ bool substitute(State& state,VkImageView output,Depth& depth,
     return true;
 }
 bool safeOriginal(State& s){
+    const auto shader=pipelineVertexHashes.find(s.graphicsPipeline);
+    if(shader==pipelineVertexHashes.end() || !BachataUi::MovieShader(shader->second))
+        return false;
     if(!s.inside || s.uiPhase || s.guest.renderArea.offset.x ||
        s.guest.renderArea.offset.y || s.guest.renderArea.extent.width!=1920 ||
        s.guest.renderArea.extent.height!=1080 || s.color.size()>1 ||
@@ -399,11 +407,23 @@ extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer cb) {
     const auto it=cmds.find(cb);
     if(it==cmds.end())return false;
     State& s=it->second;s.candidateScene=candidate;s.sceneExtent=sceneExtent;
-    // TemporalUpscaler::OnDraw (scaled_session): native viewport + real
-    // camera-associated LDR target identifies the composition boundary.
-    // pDepthStencilState may legally be null under dynamic state; blending
-    // also does not define a movie draw (opaque UI is valid).
-    if(!safeOriginal(s))return false;
+    // Require the port's Scaleform shader identity. Vulkan viewport size
+    // alone cannot distinguish HUD from fullscreen post-processing.
+    if(!safeOriginal(s)) {
+        if(s.inside && !s.uiPhase && candidate && s.haveViewport &&
+           std::abs(s.viewport.width)>=1919.f &&
+           std::abs(s.viewport.height)>=1079.f &&
+           rejectedBoundaryPipelines.size()<12 &&
+           rejectedBoundaryPipelines.insert(s.graphicsPipeline).second) {
+            const auto shader=pipelineVertexHashes.find(s.graphicsPipeline);
+            std::fprintf(stderr,"[BS4_PORT] composition boundary rejected "
+                "vs=%llx metadata=%u render_area=%ux%u guest_pass_preserved=1\n",
+                (unsigned long long)(shader==pipelineVertexHashes.end()?0:shader->second),
+                shader!=pipelineVertexHashes.end(),s.guest.renderArea.extent.width,
+                s.guest.renderArea.extent.height);
+        }
+        return false;
+    }
     if(s.hasDepth || s.hasStencil) {
         Bs4FsrCaptureImage originalDepth{};
         const VkImageView d=s.hasDepth?s.depth.imageView:s.stencil.imageView;
@@ -510,8 +530,10 @@ extern "C" bool bs4_port_ui_try_activate(VkCommandBuffer cb) {
         firstReport=true;
         std::fprintf(stderr,
             "[BS4_PORT] FIRST_REAL_RUNSCALED_UI scene=%ux%u "
-            "output=1280x720 camera_target_verified=1 guest_UI_preserved=1\n",
-            s.sceneExtent.width,s.sceneExtent.height);
+            "output=1280x720 camera_target_verified=1 guest_UI_preserved=1 "
+            "ui_vs=%llx identity_verified=1\n",
+            s.sceneExtent.width,s.sceneExtent.height,
+            (unsigned long long)pipelineVertexHashes[s.graphicsPipeline]);
     }
     return true;
 }
@@ -519,17 +541,23 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_port_ui_name(
     VkDevice dev,const VkDebugUtilsObjectNameInfoEXT* info) {
     if(info && info->objectType==VK_OBJECT_TYPE_SHADER_MODULE &&
        info->pObjectName) {
+        std::lock_guard lock{uiMutex};
+        guestHashes.erase((VkShaderModule)(uintptr_t)info->objectHandle);
         const char* q=std::strstr(info->pObjectName,"0x");
         if(q){
             char* end=nullptr;
             uint64_t h=std::strtoull(q+2,&end,16);
             if(end!=q+2) {
-                std::lock_guard lock{uiMutex};
                 guestHashes[(VkShaderModule)(uintptr_t)info->objectHandle]=h;
             }
         }
     }
     return realObjectName?realObjectName(dev,info):VK_ERROR_EXTENSION_NOT_PRESENT;
+}
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_destroy_shader(
+    VkDevice d,VkShaderModule module,const VkAllocationCallbacks* ac) {
+    {std::lock_guard lock{uiMutex};guestHashes.erase(module);}
+    if(realDestroyShader)realDestroyShader(d,module,ac);
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_port_ui_create_pipelines(
     VkDevice dev,VkPipelineCache cache,uint32_t count,
@@ -537,14 +565,32 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_port_ui_create_pipelines(
     VkPipeline* output) {
     if(!realCreatePipelines)return VK_ERROR_INITIALIZATION_FAILED;
     const VkResult status=realCreatePipelines(dev,cache,count,cis,ac,output);
+    // A batch can create some pipelines even when its final result fails.
+    if(cis && output) {
+        std::lock_guard lock{uiMutex};
+        for(uint32_t i=0;i<count;i++) {
+            if(!output[i])continue;
+            pipelineVertexHashes.erase(output[i]);
+            for(uint32_t j=0;j<cis[i].stageCount;j++) {
+                const auto& stage=cis[i].pStages[j];
+                if(stage.stage!=VK_SHADER_STAGE_VERTEX_BIT)continue;
+                const auto hash=guestHashes.find(stage.module);
+                if(hash!=guestHashes.end())pipelineVertexHashes[output[i]]=hash->second;
+            }
+        }
+    }
     return status;
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_destroy_pipeline(
     VkDevice d,VkPipeline p,const VkAllocationCallbacks* ac) {
+    {std::lock_guard lock{uiMutex};pipelineVertexHashes.erase(p);}
     if(realDestroyPipeline)realDestroyPipeline(d,p,ac);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_bind_pipeline(
     VkCommandBuffer cb,VkPipelineBindPoint point,VkPipeline p) {
+    if(point==VK_PIPELINE_BIND_POINT_GRAPHICS) {
+        std::lock_guard lock{uiMutex};cmds[cb].graphicsPipeline=p;
+    }
     if(realBindPipeline)realBindPipeline(cb,point,p);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_port_ui_viewport(
@@ -620,6 +666,7 @@ extern "C" PFN_vkVoidFunction bs4_port_ui_wrap_proc(
     UI_WRAP(realObjectName,"vkSetDebugUtilsObjectNameEXT",bs4_port_ui_name)
     UI_WRAP(realCreatePipelines,"vkCreateGraphicsPipelines",bs4_port_ui_create_pipelines)
     UI_WRAP(realDestroyPipeline,"vkDestroyPipeline",bs4_port_ui_destroy_pipeline)
+    UI_WRAP(realDestroyShader,"vkDestroyShaderModule",bs4_port_ui_destroy_shader)
     UI_WRAP(realBindPipeline,"vkCmdBindPipeline",bs4_port_ui_bind_pipeline)
     UI_WRAP(realSetViewport,"vkCmdSetViewport",bs4_port_ui_viewport)
     UI_WRAP(realSetScissor,"vkCmdSetScissor",bs4_port_ui_scissor)

@@ -158,10 +158,11 @@ jobs:
           /tmp/shadps4-arm64-025 | tee scene-tests.txt
           glslangValidator -V --target-env vulkan1.2 -S vert -o /tmp/ui.vert.spv tools/fsr31-025/integration_ui.vert
           glslangValidator -V --target-env vulkan1.2 -S frag -o /tmp/ui.frag.spv tools/fsr31-025/integration_ui.frag
+          glslangValidator -V --target-env vulkan1.2 -S frag -o /tmp/post.frag.spv tools/fsr31-025/integration_post.frag
           g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include \
             tools/fsr31-025/runscaled_integration_gpu_test.cpp -Lbuild-host -lbachata_fsr31 \
             -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/shadps4-arm64-025
-          /tmp/shadps4-arm64-025 /tmp/ui.vert.spv /tmp/ui.frag.spv | tee integration-tests.txt
+          /tmp/shadps4-arm64-025 /tmp/ui.vert.spv /tmp/ui.frag.spv /tmp/post.frag.spv | tee integration-tests.txt
 
       - name: Test R16 core025-only GLIBC FSR preloader
         run: |

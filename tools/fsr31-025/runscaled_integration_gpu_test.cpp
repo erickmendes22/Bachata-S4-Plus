@@ -10,6 +10,7 @@
 #include <cassert>
 #include <fstream>
 extern "C" uint64_t bs4_fsr31_try_render(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t);
+extern "C" VkImageView bs4_port_ui_present(VkCommandBuffer);
 extern "C" VkImage bs4_fsr31_output_image(VkImageView);
 extern "C" int bs4_fsr31_attach(void*,void*,VkDevice,void*,uint32_t);
 extern "C" int bs4_fsr31_supply_port_camera(VkCommandBuffer,VkImageView,const void*,uint32_t);
@@ -23,9 +24,9 @@ static void layout(VkCommandBuffer cb,VkImage image,VkImageAspectFlags aspect,Vk
  VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};b.srcStageMask=b.dstStageMask=VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;b.srcAccessMask=b.dstAccessMask=VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT;b.oldLayout=from;b.newLayout=to;b.image=image;b.srcQueueFamilyIndex=b.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;b.subresourceRange={aspect,0,1,0,1};VkDependencyInfo d{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};d.imageMemoryBarrierCount=1;d.pImageMemoryBarriers=&b;trackedBarrier(cb,&d);
 }
 int main(int argc,char** argv){
- assert(argc==3);
+ assert(argc==4);
  setenv("BACHATA_FSR31_MODE","4",1);
- VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};app.apiVersion=VK_API_VERSION_1_3;VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};ici.pApplicationInfo=&app;VkInstance instance{};
+ VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};app.apiVersion=VK_API_VERSION_1_3;VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};ici.pApplicationInfo=&app;const char* debugExtension=VK_EXT_DEBUG_UTILS_EXTENSION_NAME;ici.enabledExtensionCount=1;ici.ppEnabledExtensionNames=&debugExtension;VkInstance instance{};
  auto createInstance=(PFN_vkCreateInstance)vkGetInstanceProcAddr(nullptr,"vkCreateInstance");check(createInstance(&ici,nullptr,&instance));
  const auto choice=choosePhysicalDevice(instance);assert(choice.device);VkPhysicalDeviceVulkan13Features v13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};v13.synchronization2=v13.dynamicRendering=VK_TRUE;VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};f2.pNext=&v13;f2.features.shaderStorageImageWriteWithoutFormat=VK_TRUE;
  float priority=1;VkDeviceQueueCreateInfo qci{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};qci.queueFamilyIndex=choice.queueFamily;qci.queueCount=1;qci.pQueuePriorities=&priority;VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};dci.pNext=&f2;dci.queueCreateInfoCount=1;dci.pQueueCreateInfos=&qci;VkDevice device{};
@@ -66,6 +67,14 @@ int main(int argc,char** argv){
  const VkFormat format=VK_FORMAT_R8G8B8A8_UNORM;VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};rendering.colorAttachmentCount=1;rendering.pColorAttachmentFormats=&format;
  VkGraphicsPipelineCreateInfo graphics{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};graphics.pNext=&rendering;graphics.stageCount=2;graphics.pStages=stages;graphics.pVertexInputState=&vertexInput;graphics.pInputAssemblyState=&assembly;graphics.pViewportState=&viewState;graphics.pRasterizationState=&raster;graphics.pMultisampleState=&ms;graphics.pColorBlendState=&blending;graphics.pDynamicState=&dynamic;graphics.layout=pipelineLayout;graphics.pDepthStencilState=nullptr;
  auto makePipeline=(PFN_vkCreateGraphicsPipelines)vkGetDeviceProcAddr(device,"vkCreateGraphicsPipelines");VkPipeline pipeline{};check(makePipeline(device,VK_NULL_HANDLE,1,&graphics,nullptr,&pipeline));
+ // Exercise the actual core-style shader-name -> pipeline -> bind chain.
+ auto nameShader=(PFN_vkSetDebugUtilsObjectNameEXT)vkGetDeviceProcAddr(device,"vkSetDebugUtilsObjectNameEXT");assert(nameShader);
+ VkDebugUtilsObjectNameInfoEXT name{VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT};name.objectType=VK_OBJECT_TYPE_SHADER_MODULE;name.objectHandle=(uint64_t)(uintptr_t)stages[0].module;name.pObjectName="Vertex_0x0000000034e8a281_0";nameShader(device,&name);
+ // Recreate after naming, as shadPS4 does when compiling its pipelines.
+ check(makePipeline(device,VK_NULL_HANDLE,1,&graphics,nullptr,&pipeline));
+ stages[0].module=shader(argv[1]);stages[1].module=shader(argv[3]);
+ name.objectHandle=(uint64_t)(uintptr_t)stages[0].module;name.pObjectName="Vertex_0x00000000deadbeef_0";nameShader(device,&name);
+ VkPipeline postPipeline{};check(makePipeline(device,VK_NULL_HANDLE,1,&graphics,nullptr,&postPipeline));
  std::array<TestImage,4> mrtImages{};std::array<VkImageView,4> mrtViews{};for(int i=0;i<4;i++)allocate(mrtImages[i],format,VK_IMAGE_ASPECT_COLOR_BIT,mrtViews[i]);
  VkImageLayout colorLayout=VK_IMAGE_LAYOUT_UNDEFINED,depthLayout=VK_IMAGE_LAYOUT_UNDEFINED;
  for(unsigned frame=0;frame<3;frame++){
@@ -76,13 +85,16 @@ int main(int argc,char** argv){
   VkRenderingAttachmentInfo d{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};d.imageView=dv;d.imageLayout=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;d.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;d.storeOp=VK_ATTACHMENT_STORE_OP_STORE;VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};ri.renderArea.extent={1920,1080};ri.layerCount=1;ri.colorAttachmentCount=5;ri.pColorAttachments=colors.data();ri.pDepthAttachment=&d;beginRendering(cb,&ri);
   VkViewport vp{0,0,640,360,0,1};VkRect2D sc{{0,0},{640,360}};viewport(cb,1,&vp);scissor(cb,1,&sc);bindSets(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,pipelineLayout,0,1,&set,0,nullptr);endRendering(cb);
   ri.colorAttachmentCount=1;ri.pDepthAttachment=nullptr;ri.renderArea.extent={640,360};beginRendering(cb,&ri);VkClearAttachment clear{};clear.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;clear.clearValue.color={{.1f,.2f,.9f,1}};VkClearRect rect{{{0,0},{640,360}},0,1};vkCmdClearAttachments(cb,1,&clear,1,&rect);endRendering(cb);
-  ri.renderArea.extent={1920,1080};beginRendering(cb,&ri);vp.width=1920;vp.height=1080;sc.extent={1920,1080};viewport(cb,1,&vp);scissor(cb,1,&sc);bindPipeline(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,pipeline);draw(cb,3,1,0,0);endRendering(cb);
+  // Native-sized postprocessing precedes the genuine Scaleform HUD. It
+  // must finish on its original target without prematurely dispatching FSR.
+  ri.renderArea.extent={1920,1080};beginRendering(cb,&ri);vp.width=1920;vp.height=1080;sc.extent={1920,1080};viewport(cb,1,&vp);scissor(cb,1,&sc);bindPipeline(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,postPipeline);draw(cb,3,1,0,0);endRendering(cb);assert(!bs4_port_ui_present(cb));
+  beginRendering(cb,&ri);vp.width=1920;vp.height=1080;sc.extent={1920,1080};viewport(cb,1,&vp);scissor(cb,1,&sc);bindPipeline(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,pipeline);draw(cb,3,1,0,0);endRendering(cb);
   const auto view=(VkImageView)(uintptr_t)bs4_fsr31_try_render(0,(uint64_t)(uintptr_t)cb,(uint64_t)(uintptr_t)cv,(uint64_t(1080)<<32)|1920,(uint64_t(720)<<32)|1280,0,0);
   if(frame==0)assert(!view);else assert(view);
   if(view){const auto output=bs4_fsr31_output_image(view);assert(output);layout(cb,output,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);bs4_fsr31_set_output_layout(view,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);VkBufferImageCopy copy{};copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.imageExtent={1280,720,1};vkCmdCopyImageToBuffer(cb,output,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,read.buffer,1,&copy);}
   Bs4FsrCaptureImage currentColor{},currentDepth{};assert(bs4_fsr31_capture_image(cv,&currentColor)&&bs4_fsr31_capture_image(dv,&currentDepth));colorLayout=currentColor.layout;depthLayout=currentDepth.layout;
   check(vkEndCommandBuffer(cb));VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cb;check(vkQueueSubmit(queue,1,&submit,nullptr));check(vkQueueWaitIdle(queue));
-  if(view){void* pixels{};check(vkMapMemory(device,read.memory,0,read.allocationSize,0,&pixels));if(!(read.memoryProperties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){VkMappedMemoryRange mr{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};mr.memory=read.memory;mr.size=VK_WHOLE_SIZE;check(vkInvalidateMappedMemoryRanges(device,1,&mr));}const auto bytes=(const uint8_t*)pixels;size_t blue=0,red=0;for(size_t i=0;i<1280*720;i++){blue+=bytes[i*4+2]>180&&bytes[i*4]<80;red+=bytes[i*4]>200&&bytes[i*4+2]<40;}assert(blue>1280*720*98/100);assert(red>1000);std::printf("PASS frame=%u actual hooks: mapped camera -> LDR -> FSR3.1 -> opaque native UI -> Presenter; blue=%zu red=%zu null_static_depth=1\n",frame,blue,red);vkUnmapMemory(device,read.memory);}
+  if(view){void* pixels{};check(vkMapMemory(device,read.memory,0,read.allocationSize,0,&pixels));if(!(read.memoryProperties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){VkMappedMemoryRange mr{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};mr.memory=read.memory;mr.size=VK_WHOLE_SIZE;check(vkInvalidateMappedMemoryRanges(device,1,&mr));}const auto bytes=(const uint8_t*)pixels;size_t blue=0,red=0;for(size_t i=0;i<1280*720;i++){blue+=bytes[i*4+2]>180&&bytes[i*4]<80;red+=bytes[i*4]>200&&bytes[i*4+2]<40;}assert(blue>1280*720*98/100);assert(red>1000);std::printf("PASS frame=%u actual hooks: non-UI fullscreen pass preserved -> identified HUD; mapped camera -> LDR -> FSR3.1 -> opaque native UI -> Presenter; blue=%zu red=%zu null_static_depth=1\n",frame,blue,red);vkUnmapMemory(device,read.memory);}
  }
  return 0;
 }

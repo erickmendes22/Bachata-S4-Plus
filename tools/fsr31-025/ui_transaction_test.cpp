@@ -7,6 +7,7 @@ namespace {
 const auto cb=(VkCommandBuffer)0x100;
 const auto scene=(VkImageView)0x200,depthView=(VkImageView)0x300,out=(VkImageView)0x400;
 bool ready=true,failDepth=false;
+uint64_t vertexHash=0x34e8a281;
 int ended=0,began=0,dispatches=0;
 VkAttachmentLoadOp seenStencil=VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 VkAttachmentLoadOp seenDepth=VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -17,13 +18,13 @@ void VKAPI_PTR viewport(VkCommandBuffer,uint32_t,uint32_t,const VkViewport* v){s
 void VKAPI_PTR scissor(VkCommandBuffer,uint32_t,uint32_t,const VkRect2D*){}
 VkResult VKAPI_PTR pipelines(VkDevice,VkPipelineCache,uint32_t n,const VkGraphicsPipelineCreateInfo*,const VkAllocationCallbacks*,VkPipeline* p){for(uint32_t i=0;i<n;i++)p[i]=(VkPipeline)0x500;return VK_SUCCESS;}
 void start(bool dynamicPipeline=false){
- cmds.clear();uiDepth.clear();currentUi={};lastOutput.clear();completedHud.clear();ended=began=dispatches=0;
+ cmds.clear();pipelineVertexHashes.clear();guestHashes.clear();uiDepth.clear();currentUi={};lastOutput.clear();completedHud.clear();ended=began=dispatches=0;
  bs4_port_ui_install_rendering(begin,end,nullptr,nullptr);realSetViewport=viewport;realSetScissor=scissor;
  VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};color.imageView=scene;color.imageLayout=VK_IMAGE_LAYOUT_GENERAL;color.storeOp=VK_ATTACHMENT_STORE_OP_STORE;color.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;
  VkRenderingAttachmentInfo z{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};z.imageView=depthView;z.storeOp=VK_ATTACHMENT_STORE_OP_STORE;z.loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;
  VkRenderingInfo info{VK_STRUCTURE_TYPE_RENDERING_INFO};info.renderArea.extent={1920,1080};info.layerCount=1;info.colorAttachmentCount=1;info.pColorAttachments=&color;info.pDepthAttachment=info.pStencilAttachment=&z;VkRenderingInfo redirected{};assert(!bs4_port_ui_redirect_begin(cb,&info,false,&redirected));
  const VkViewport vp{0,0,1920,1080,0,1};bs4_port_ui_viewport(cb,0,1,&vp);const VkRect2D sc{{0,0},{1920,1080}};bs4_port_ui_scissor(cb,0,1,&sc);
- VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};ds.stencilTestEnable=VK_TRUE;VkPipelineColorBlendAttachmentState blend{};blend.blendEnable=dynamicPipeline?VK_FALSE:VK_TRUE;VkPipelineColorBlendStateCreateInfo bs{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};bs.attachmentCount=1;bs.pAttachments=&blend;VkGraphicsPipelineCreateInfo ci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};ci.pDepthStencilState=dynamicPipeline?nullptr:&ds;ci.pColorBlendState=&bs;VkPipeline p{};realCreatePipelines=pipelines;assert(bs4_port_ui_create_pipelines(nullptr,nullptr,1,&ci,nullptr,&p)==VK_SUCCESS);bs4_port_ui_bind_pipeline(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,p);
+ VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};ds.stencilTestEnable=VK_TRUE;VkPipelineColorBlendAttachmentState blend{};blend.blendEnable=dynamicPipeline?VK_FALSE:VK_TRUE;VkPipelineColorBlendStateCreateInfo bs{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};bs.attachmentCount=1;bs.pAttachments=&blend;VkPipelineShaderStageCreateInfo stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};stage.stage=VK_SHADER_STAGE_VERTEX_BIT;stage.module=(VkShaderModule)0x800;guestHashes[stage.module]=vertexHash;VkGraphicsPipelineCreateInfo ci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};ci.stageCount=1;ci.pStages=&stage;ci.pDepthStencilState=dynamicPipeline?nullptr:&ds;ci.pColorBlendState=&bs;VkPipeline p{};realCreatePipelines=pipelines;assert(bs4_port_ui_create_pipelines(nullptr,nullptr,1,&ci,nullptr,&p)==VK_SUCCESS);bs4_port_ui_bind_pipeline(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,p);
 }
 }
 extern "C" uint64_t bs4_port_frame_generation(){return 1;}
@@ -44,10 +45,15 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkBindImageMemory(VkDevice,VkImage,VkD
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateImageView(VkDevice,const VkImageViewCreateInfo*,const VkAllocationCallbacks*,VkImageView* v){*v=(VkImageView)0xb00;return VK_SUCCESS;}
 extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdPipelineBarrier2(VkCommandBuffer,const VkDependencyInfo*){}
 int main(){
+ // Fullscreen scene/postprocess with identical viewport/target must not
+ // interrupt the guest pass, including when the SDK is fully prepared.
+ ready=true;vertexHash=0xdeadbeef;start(true);assert(!bs4_port_ui_try_activate(cb));assert(!ended&&!began&&!dispatches);
+ vertexHash=0;start(true);assert(!bs4_port_ui_try_activate(cb));assert(!ended&&!began&&!dispatches);
+ vertexHash=0x34e8a281;
  ready=false;start();assert(!bs4_port_ui_try_activate(cb));assert(!ended&&!began&&!dispatches);
  ready=true;failDepth=true;start();assert(!bs4_port_ui_try_activate(cb));assert(!ended&&!began&&!dispatches);
  failDepth=false;start(true);assert(bs4_port_ui_try_activate(cb));assert(ended==1&&began==1&&dispatches==1);assert(seenStencil==VK_ATTACHMENT_LOAD_OP_CLEAR&&seenDepth==VK_ATTACHMENT_LOAD_OP_CLEAR);assert(seenViewport.width==1280&&seenViewport.height==720);assert(!bs4_port_ui_present(cb));bs4_port_ui_redirect_end(cb);assert(bs4_port_ui_present((VkCommandBuffer)0x101)==out);assert(bs4_port_ui_redirect_sampled((VkCommandBuffer)0x101,scene)==out);
  // A later stencil-only mask and a later color pass keep prior UI stencil.
  VkRenderingAttachmentInfo z{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};z.imageView=depthView;z.storeOp=VK_ATTACHMENT_STORE_OP_STORE;VkRenderingInfo mask{VK_STRUCTURE_TYPE_RENDERING_INFO};mask.renderArea.extent={1920,1080};mask.layerCount=1;mask.pDepthAttachment=mask.pStencilAttachment=&z;VkRenderingInfo redirected{};assert(bs4_port_ui_redirect_begin((VkCommandBuffer)0x101,&mask,false,&redirected));assert(redirected.colorAttachmentCount==0);assert(redirected.pStencilAttachment->loadOp==VK_ATTACHMENT_LOAD_OP_LOAD);assert(redirected.pDepthAttachment->loadOp==VK_ATTACHMENT_LOAD_OP_LOAD);
- puts("PASS: opaque native UI with null static depth state triggers RunScaled; no guest pass interruption on missing FSR or failed proxy allocation; one real handoff; completed-only presentation; subsequent stencil masks preserved with LOAD");
+ puts("PASS: fullscreen non-UI and unknown shaders leave guest pass untouched; shader-identified opaque native UI with null static depth state triggers RunScaled; no guest pass interruption on missing FSR or failed proxy allocation; one real handoff; completed-only presentation; subsequent stencil masks preserved with LOAD");
 }
