@@ -1,0 +1,20 @@
+{
+  "fsrBase": {
+    "name": "Bachata-S4-Plus-v0.2.6-R13-PREUI-720-DEPTH-FIX-P36.apk",
+    "apkSha256": "fb9a5a1616122ed9a82cdc4970b163c8077bf0880226648a4b39af49d01e83be",
+    "sdkSha256": "eef0c3bffcfe5c18a84b3ff654968e824c61dbe1c2c1add94d288f9cc96ec4a7",
+    "sourceBaseline": "e1811c2",
+    "baseCoreReused": false
+  },
+  "targetCore": {
+    "name": "shadps4-arm64-025",
+    "sha256": "373aba94528c85dfcf2846df4589d85d285bf865b3e658bd85de0df11cb80c59",
+    "baseRuntime": "bachata-s4-n027-0.2.6-r"
+  },
+  "portRevision": "d58769c8ae2f36b4f22db864b68e9bffc21a04d2",
+  "sdkRevision": "c64f093404125e960813f95f1996c14780f0dd69",
+  "releaseReady": false,
+  "nativeProducerConnected": true,
+  "deviceValidationPassed": false,
+  "nativeCoreCompiled": false
+}
