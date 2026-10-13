@@ -12,6 +12,8 @@ template<class T>T wrap(const char* name,T original){return reinterpret_cast<T>(
 std::array<unsigned char,2048> memory{};
 int forwarded=0,viewportCalls=0,viewportCountCalls=0;
 VkViewport actualViewport{};
+bool resourcesReady=true;
+extern "C" bool bs4_fsr31_temporal_resources_ready(VkExtent2D){return resourcesReady;}
 VkResult VKAPI_CALL allocate(VkDevice,const VkMemoryAllocateInfo*,const VkAllocationCallbacks*,VkDeviceMemory* out){*out=handle<VkDeviceMemory>(1);return VK_SUCCESS;}
 VkResult VKAPI_CALL map(VkDevice,VkDeviceMemory,VkDeviceSize offset,VkDeviceSize,VkMemoryMapFlags,void** out){*out=memory.data()+offset;return VK_SUCCESS;}
 void VKAPI_CALL unmap(VkDevice,VkDeviceMemory){}
@@ -58,6 +60,9 @@ int main(){
  setup();vc(cb,1,&vp);const auto oldCalls=viewportCalls;d(cb,30,1,0,0);
  assert(bs4_fsr31_port_camera(cb,depth,{640,360},out)&&out.motion.jitter[0]==.25f);
  assert(viewportCountCalls==3&&viewportCalls==oldCalls&&actualViewport.x==vp.x&&actualViewport.y==vp.y);
+ resourcesReady=false;setup();const auto noJitterCalls=viewportCalls;d(cb,30,1,0,0);
+ assert(viewportCalls==noJitterCalls&&actualViewport.x==vp.x&&actualViewport.y==vp.y);
+ resourcesReady=true;
  std::array<unsigned char,2048> original=memory;
  // Native viewport field interpretation is validated against the actual
  // recorded viewport, rather than accepting a sign guessed from its size.
@@ -67,14 +72,28 @@ int main(){
  bufferInfo.range=863;setup();d(cb,30,1,0,0);assert(!bs4_native_scene_camera(cb,&found,&size));bufferInfo.range=864;
  info.colorAttachmentCount=4;setup();d(cb,30,1,0,0);assert(!bs4_native_scene_camera(cb,&found,&size));info.colorAttachmentCount=5;
  u({},mem);setup();d(cb,30,1,0,0);assert(!bs4_native_scene_camera(cb,&found,&size));
- assert(memory==original&&forwarded==8); // no guest memory writes; every draw forwarded
+ assert(memory==original&&forwarded==9); // no guest memory writes; every draw forwarded
  auto layout=handle<VkPipelineLayout>(9);
+ Bs4NativeRenderState native{};native.width=640;native.height=360;native.layers=1;
+ native.colorCount=1;native.colors[0].view=11;
+ Bs4NativeUiBoundary boundary{};
+ bs4_native_scene_draw_state(cb,native);assert(!bs4_native_scene_ui_state(cb,boundary));
  VkDebugUtilsObjectNameInfoEXT ni{VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT};ni.objectType=VK_OBJECT_TYPE_PIPELINE_LAYOUT;ni.objectHandle=9;
  ni.pObjectName="Graphics PipelineLayout fs_0x0000000012345678,vs_0x0000000034e8a281";assert(named({},&ni)==VK_SUCCESS);
  c(cb,layout,VK_SHADER_STAGE_VERTEX_BIT,0,120,raw.data());assert(bs4_native_scene_ui_boundary(cb));
  ni.pObjectName="Graphics PipelineLayout fs_0x0000000034e8a281,vs_0x00000000abcdabcd";assert(named({},&ni)==VK_SUCCESS);assert(!bs4_native_scene_ui_boundary(cb));
  ni.pObjectName="Graphics PipelineLayout vs_0x0000000034e8a281";assert(named({},&ni)==VK_SUCCESS);assert(bs4_native_scene_ui_boundary(cb));
+ bs4_native_scene_draw_state(cb,native);assert(bs4_native_scene_ui_state(cb,boundary));
+ assert(boundary.color==handle<VkImageView>(11)&&boundary.guestExtent.width==640&&boundary.rawViewport[3]==-180);
+ native.colors[0].view=12;bs4_native_scene_draw_state(cb,native);
+ assert(bs4_native_scene_ui_state(cb,boundary)&&boundary.color==handle<VkImageView>(11)); // first UI boundary owns this frame
+ bs4_native_scene_reset(cb);assert(!bs4_native_scene_ui_state(cb,boundary));
+ c(cb,layout,VK_SHADER_STAGE_VERTEX_BIT,0,120,raw.data());
+ native.colorCount=0;native.stencilEnabled=1;native.depth=13;
+ bs4_native_scene_draw_state(cb,native);assert(bs4_native_scene_ui_state(cb,boundary));
+ assert(!boundary.color&&boundary.depth==handle<VkImageView>(13)); // first Scaleform mask pass
  destroyed({},layout,nullptr);assert(!bs4_native_scene_ui_boundary(cb));
+ bs4_native_scene_present();assert(!bs4_native_scene_ui_state(cb,boundary));
  unsetenv("BACHATA_FSR31_INPUT");assert(wrap("vkCmdDraw",&draw)==&draw);
  std::cout<<"PASS native observer: forwarded draws, 864-byte camera, 120-byte raw viewport, depth pairing, finite bounds, unmap, no guest writes\n";
 }

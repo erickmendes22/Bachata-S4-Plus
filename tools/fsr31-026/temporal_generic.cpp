@@ -26,7 +26,7 @@ struct Surface {
     VkFormat format{};
     VkExtent2D size{};
     VkImageUsageFlags usage{};
-    VkImageAspectFlags aspect{};
+    VkImageAspectFlags aspect{},layout_aspect{};
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
 };
 struct Frame {
@@ -51,6 +51,7 @@ Surface previous;
 size_t cursor=0;
 bool has_previous=false;
 bool port_inputs=false;
+std::atomic<uint64_t> ready_port_extent{0};
 uint64_t frame_id=0;
 std::chrono::steady_clock::time_point last_frame{};
 bool once_logged=false;
@@ -82,7 +83,12 @@ uint32_t select_memory(uint32_t mask) {
 }
 bool alloc(Surface& out,VkFormat format,VkExtent2D size,
            VkImageUsageFlags usage,VkImageAspectFlags aspect) {
-    out.format=format;out.size=size;out.usage=usage;out.aspect=aspect;
+    out.format=format;out.size=size;out.usage=usage;out.aspect=aspect;out.layout_aspect=aspect;
+    // Combined depth/stencil images require joint layout transitions unless
+    // separateDepthStencilLayouts was explicitly enabled. The sampled view
+    // below remains depth-only; no optional device feature is assumed.
+    if(format==VK_FORMAT_D32_SFLOAT_S8_UINT||format==VK_FORMAT_D24_UNORM_S8_UINT)
+        out.layout_aspect=VK_IMAGE_ASPECT_DEPTH_BIT|VK_IMAGE_ASPECT_STENCIL_BIT;
     VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     ci.imageType=VK_IMAGE_TYPE_2D;
     ci.extent={size.width,size.height,1};
@@ -127,9 +133,10 @@ void barrier(VkCommandBuffer cb, VkImage image, VkImageAspectFlags aspect,
     vkCmdPipelineBarrier2(cb,&dependency);
 }
 void transit(VkCommandBuffer cb,Surface& s,VkImageLayout next) {
-    barrier(cb,s.image,s.aspect,s.layout,next);s.layout=next;
+    barrier(cb,s.image,s.layout_aspect,s.layout,next);s.layout=next;
 }
 void free_all() {
+    ready_port_extent.store(0,std::memory_order_release);
     if(device)vkDeviceWaitIdle(device);
     if(fsr) {ffxVkPortableUpscaleContextDestroy(fsr);fsr=nullptr;}
     if(flow_pipeline)vkDestroyPipeline(device,flow_pipeline,nullptr);
@@ -223,6 +230,8 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
         std::fprintf(stderr,"[BS4_FSR31] FSR3.1 Vulkan context error=%d\n",int(r));
         return false;
     }
+    if(port_inputs&&output.width==1280&&output.height==720)
+        ready_port_extent.store((uint64_t(render.width)<<32)|render.height,std::memory_order_release);
     std::fprintf(stderr,"[BS4_FSR31] temporal context ready %ux%u->%ux%u\n",
          render.width,render.height,output.width,output.height);
     return true;
@@ -259,10 +268,10 @@ void flow(VkCommandBuffer cb,const Frame& f,VkExtent2D size,
 }
 } // namespace
 
-extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_render(
+static uint64_t generic_render_impl(
     const FfxVkPortableDeviceInfo* owned,VkCommandBuffer cb,VkImageView input,
     VkExtent2D input_extent,VkExtent2D output_extent,int preset,int hdr,int pre_ui,
-    VkImageView scene_depth_view) {
+    VkImageView scene_depth_view,bool prepare_only) {
     if(!owned||!cb||!input||hdr||preset<0||preset>4){report_once(1,"missing arguments or HDR/preset unsupported");return 0;}
     if(!owned->shaderStorageImageWriteWithoutFormatEnabled){report_once(2,"storage image write without format disabled");return 0;}
     if(output_extent.width==0||output_extent.height==0 ||
@@ -390,6 +399,9 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
         port_inputs=want_port;
         if(!allocate_for(*owned,internal,output_extent,VK_FORMAT_R16G16B16A16_SFLOAT,depth.format)){report_once(13,"FSR resource or context creation failed");return 0;}
     }
+    // Preparation performs resource validation/allocation only. It must not
+    // advance the ring/history or record commands into an active render pass.
+    if(prepare_only)return 1;
     Frame& f=frames[cursor++%frames.size()];
     transit(cb,f.scene,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     barrier(cb,color.image,VK_IMAGE_ASPECT_COLOR_BIT,color.layout,
@@ -407,7 +419,10 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
     transit(cb,f.scene,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     transit(cb,f.depth,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    barrier(cb,depth.image,VK_IMAGE_ASPECT_DEPTH_BIT,depth.layout,
+    const VkImageAspectFlags depth_layout_aspects=
+        (depth.format==VK_FORMAT_D32_SFLOAT_S8_UINT||depth.format==VK_FORMAT_D24_UNORM_S8_UINT)?
+        VK_IMAGE_ASPECT_DEPTH_BIT|VK_IMAGE_ASPECT_STENCIL_BIT:VK_IMAGE_ASPECT_DEPTH_BIT;
+    barrier(cb,depth.image,depth_layout_aspects,depth.layout,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     if(want_port || (internal.width==depth.size.width && internal.height==depth.size.height)) {
         VkImageCopy region{};
@@ -426,7 +441,7 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
                        f.depth.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                        1,&resample,VK_FILTER_NEAREST);
     }
-    barrier(cb,depth.image,VK_IMAGE_ASPECT_DEPTH_BIT,
+    barrier(cb,depth.image,depth_layout_aspects,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,depth.layout);
     transit(cb,f.depth,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     if(!has_previous && !want_port) {
@@ -498,6 +513,22 @@ extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_ren
         std::fprintf(stderr,"[BS4_FSR31] real FSR3.1 dispatch recorded (%ux%u->%ux%u)\n",
              internal.width,internal.height,output_extent.width,output_extent.height);
     return reinterpret_cast<uint64_t>(f.output.view);
+}
+
+extern "C" __attribute__((visibility("default"))) uint64_t bs4_fsr31_generic_render(
+    const FfxVkPortableDeviceInfo* owned,VkCommandBuffer cb,VkImageView input,
+    VkExtent2D input_extent,VkExtent2D output_extent,int preset,int hdr,int pre_ui,
+    VkImageView scene_depth_view) {
+    return generic_render_impl(owned,cb,input,input_extent,output_extent,preset,hdr,pre_ui,scene_depth_view,false);
+}
+extern "C" __attribute__((visibility("default"))) int bs4_fsr31_generic_prepare(
+    const FfxVkPortableDeviceInfo* owned,VkCommandBuffer cb,VkImageView input,
+    VkExtent2D input_extent,VkExtent2D output_extent,int preset,VkImageView depth) {
+    return generic_render_impl(owned,cb,input,input_extent,output_extent,preset,0,1,depth,true)!=0;
+}
+extern "C" bool bs4_fsr31_temporal_resources_ready(VkExtent2D size) {
+    return size.width&&size.height&&ready_port_extent.load(std::memory_order_acquire)==
+        ((uint64_t(size.width)<<32)|size.height);
 }
 
 extern "C" __attribute__((visibility("default"))) VkImage

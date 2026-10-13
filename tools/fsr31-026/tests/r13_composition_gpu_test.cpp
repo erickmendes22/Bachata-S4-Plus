@@ -11,6 +11,8 @@
 #include <array>
 #include <cassert>
 extern "C" int bs4_fsr31_attachment_ready();
+extern "C" void bs4_fsr31_native_begin(void*,const void*,uintptr_t);
+extern "C" int bs4_fsr31_pre_ui_prepare(VkCommandBuffer,VkImageView,VkImageView,VkExtent2D,VkExtent2D);
 static unsigned errors=0;
 static VKAPI_ATTR VkBool32 VKAPI_CALL validate(VkDebugUtilsMessageSeverityFlagBitsEXT s,VkDebugUtilsMessageTypeFlagsEXT,const VkDebugUtilsMessengerCallbackDataEXT* d,void*) {if(s&VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT){errors++;std::fprintf(stderr,"VALIDATION: %s\n",d->pMessage);}return VK_FALSE;}
 static void checked(VkResult r){assert(r==VK_SUCCESS);}
@@ -50,7 +52,15 @@ int main(int argc,char** argv){
   // Separate-target case starts a new UI pass. Shared-target case reuses
   // the existing rendering instance, as the native scheduler may do.
   // This is a preservation test, not proof of shared-target FSR support.
-  pushConstants(cb,movie,VK_SHADER_STAGE_VERTEX_BIT,0,120,raw.data());assert(bs4_native_scene_ui_boundary(cb));if(!shared)transition(cb,ui.image,VK_IMAGE_ASPECT_COLOR_BIT,ui.layout,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);VkRenderingAttachmentInfo hud=ldr;hud.imageView=ui.view;hud.clearValue.color={{0,0,0,1}};ri.pColorAttachments=&hud;if(!shared)begin(cb,&ri);
+  pushConstants(cb,movie,VK_SHADER_STAGE_VERTEX_BIT,0,120,raw.data());assert(bs4_native_scene_ui_boundary(cb));
+  // In shared mode this is inside the original LDR rendering instance.
+  // Validation catches any GPU command accidentally emitted by preparation.
+  assert(bool(bs4_fsr31_pre_ui_prepare(cb,scene.view,depth.view,{640,360},{1280,720}))==bool(frame));
+  std::array<unsigned char,0x1200> nativeScheduler{};const uint64_t nativeCommand=reinterpret_cast<uint64_t>(cb);std::memcpy(nativeScheduler.data()+0xf08,&nativeCommand,8);
+  Bs4NativeRenderState nativeState{};nativeState.width=uiWidth;nativeState.height=uiHeight;nativeState.layers=1;nativeState.colorCount=1;nativeState.colors[0].view=reinterpret_cast<uint64_t>(ui.view);
+  bs4_fsr31_native_begin(nativeScheduler.data(),&nativeState,0);
+  Bs4NativeUiBoundary nativeBoundary{};assert(bs4_native_scene_ui_state(cb,nativeBoundary)&&nativeBoundary.color==ui.view&&nativeBoundary.guestExtent.width==uiWidth);
+  if(!shared)transition(cb,ui.image,VK_IMAGE_ASPECT_COLOR_BIT,ui.layout,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);VkRenderingAttachmentInfo hud=ldr;hud.imageView=ui.view;hud.clearValue.color={{0,0,0,1}};ri.pColorAttachments=&hud;if(!shared)begin(cb,&ri);
   VkClearAttachment red{};red.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;red.clearValue.color={{1,0,0,1}};VkClearRect rect{{{0,0},{100,50}},0,1};vkCmdClearAttachments(cb,1,&red,1,&rect);end(cb);
   transition(cb,ui.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);VkBufferImageCopy copy{};copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.imageExtent={uiWidth,uiHeight,1};vkCmdCopyImageToBuffer(cb,ui.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,read.buffer,1,&copy);ui.layout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;if(shared)scene.layout=ui.layout;checked(vkEndCommandBuffer(cb));VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cb;checked(vkQueueSubmit(queue,1,&submit,nullptr));checked(vkQueueWaitIdle(queue));void* pixels{};checked(vkMapMemory(device,read.memory,0,read.allocationSize,0,&pixels));if(!(read.memoryProperties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){VkMappedMemoryRange r{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};r.memory=read.memory;r.size=VK_WHOLE_SIZE;checked(vkInvalidateMappedMemoryRanges(device,1,&r));}const auto rgba=(const unsigned char*)pixels;size_t blue=0,redPixels=0;for(size_t i=0;i<size_t(uiWidth)*uiHeight;i++){blue+=rgba[i*4+2]>180&&rgba[i*4]<80;redPixels+=rgba[i*4]>240&&rgba[i*4+1]<10&&rgba[i*4+2]<10;}assert(redPixels==5000);if(frame||shared)assert(blue==size_t(uiWidth)*uiHeight-5000);std::printf("PASS composition frame=%u blue=%zu red=%zu native_UI_image_preserved=1 shared_target=%u\n",frame,blue,redPixels,unsigned(shared));vkUnmapMemory(device,read.memory);bs4_fsr31_port_end_frame();bs4_native_scene_present();
  }

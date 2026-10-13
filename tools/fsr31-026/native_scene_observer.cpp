@@ -14,7 +14,9 @@
 #include <mutex>
 #include <unordered_map>
 #include <vector>
+extern "C" bool bs4_fsr31_temporal_resources_ready(VkExtent2D);
 namespace {
+std::unordered_map<VkCommandBuffer,Bs4NativeUiBoundary> native_ui_boundaries;
 struct Memory { VkDeviceSize size{},offset{},length{}; const unsigned char* data{}; };
 struct Buffer { VkDeviceMemory memory{}; VkDeviceSize offset{}; };
 using Buffers=std::map<std::pair<uint32_t,uint32_t>,VkDescriptorBufferInfo>;
@@ -246,6 +248,7 @@ ViewportShift shift_geometry(VkCommandBuffer cb,uint32_t vertices,uint32_t insta
         auto& d=it->second;
         if(!d.haveCamera||!d.inside||d.depth!=d.cameraDepth||!d.viewportValid||
            (d.viewportWithCount?!setViewportCount:!setViewport))return out;
+        if(!bs4_fsr31_temporal_resources_ready(d.cameraSize))return out;
         BachataCamera::Scene camera{};
         if(!BachataCamera::Parse(d.constants.data(),sizeof(d.constants),camera)||
            !raw_matches(d,camera)||
@@ -301,10 +304,10 @@ void bs4_native_scene_end(VkCommandBuffer cb) {
     std::lock_guard lock{guard};commands[cb].inside=false;
 }
 void bs4_native_scene_reset(VkCommandBuffer cb) {
-    std::lock_guard lock{guard};commands.erase(cb);
+    std::lock_guard lock{guard};commands.erase(cb);native_ui_boundaries.erase(cb);
 }
 void bs4_native_scene_present() {
-    std::lock_guard lock{guard};commands.clear();++frame;
+    std::lock_guard lock{guard};commands.clear();native_ui_boundaries.clear();++frame;
 }
 bool bs4_native_scene_camera(VkCommandBuffer cb,VkImageView* depth,VkExtent2D* size) {
     if(!depth||!size)return false;
@@ -347,4 +350,30 @@ bool bs4_native_scene_ui_boundary(VkCommandBuffer cb) {
     if(it==commands.end())return false;
     const auto hash=layoutHashes.find(it->second.graphicsLayout);
     return hash!=layoutHashes.end()&&Vulkan::UiComposition::MovieShader(hash->second);
+}
+
+void bs4_native_scene_draw_state(VkCommandBuffer cb,const Bs4NativeRenderState& state) {
+    if(!cb||state.colorCount>1||!state.width||!state.height)return;
+    std::lock_guard lock{guard};const auto it=commands.find(cb);
+    if(it==commands.end()||!it->second.rawValid)return;
+    const auto& d=it->second;
+    const auto hash=layoutHashes.find(d.graphicsLayout);
+    if(hash==layoutHashes.end()||!Vulkan::UiComposition::MovieShader(hash->second))return;
+    // The native scheduler can reuse an existing rendering instance. This
+    // callback is ordered after BindResources on its worker, so shader/raw
+    // viewport identity is current even without a Vulkan BeginRendering.
+    if(!state.colorCount&&!state.depthEnabled&&!state.stencilEnabled)return;
+    Bs4NativeUiBoundary boundary{};boundary.frame=frame;
+    boundary.color=state.colorCount?reinterpret_cast<VkImageView>(state.colors[0].view):VK_NULL_HANDLE;
+    boundary.depth=(state.depthEnabled||state.stencilEnabled)?
+        reinterpret_cast<VkImageView>(state.depth):VK_NULL_HANDLE;
+    boundary.guestExtent={state.width,state.height};
+    std::copy(d.raw.begin(),d.raw.end(),boundary.rawViewport);
+    native_ui_boundaries.emplace(cb,boundary);
+}
+
+bool bs4_native_scene_ui_state(VkCommandBuffer cb,Bs4NativeUiBoundary& out) {
+    std::lock_guard lock{guard};const auto it=native_ui_boundaries.find(cb);
+    if(it==native_ui_boundaries.end()||it->second.frame!=frame)return false;
+    out=it->second;return true;
 }

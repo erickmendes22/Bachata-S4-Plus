@@ -10,6 +10,8 @@ extern "C" uint64_t bs4_fsr31_generic_render(const FfxVkPortableDeviceInfo* info
     VkCommandBuffer cmd,VkImageView input,VkExtent2D inputSize,
     VkExtent2D outputSize,int preset,int hdr,int pre_ui,VkImageView forced_depth);
 extern "C" VkImage bs4_fsr31_output_image(VkImageView);
+extern "C" int bs4_fsr31_generic_prepare(const FfxVkPortableDeviceInfo*,VkCommandBuffer,
+    VkImageView,VkExtent2D,VkExtent2D,int,VkImageView);
 #include <cstdint>
 #include <cmath>
 #include <cstdio>
@@ -35,6 +37,25 @@ std::atomic<VkPhysicalDevice> fsr31_tracked_physical{VK_NULL_HANDLE};
 bool valid = false;
 }
 #define BS4_PUBLIC extern "C" __attribute__((visibility("default")))
+extern "C" int bs4_fsr31_owner_requested();
+namespace {
+void native_draw_worker(const void* payload,uint64_t command) {
+    Bs4NativeRenderState state{};std::memcpy(&state,payload,sizeof(state));
+    bs4_native_scene_draw_state(reinterpret_cast<VkCommandBuffer>(command),state);
+}
+}
+BS4_PUBLIC void bs4_fsr31_native_begin(void* scheduler,const void* render_state,
+                                      uintptr_t native_base) {
+    if(!scheduler||!render_state||!bs4_fsr31_owner_requested())return;
+    const char* input=std::getenv("BACHATA_FSR31_INPUT");
+    if(!input||std::strcmp(input,"port"))return;
+    Bs4NativeRenderState state{};std::memcpy(&state,render_state,sizeof(state));
+    // Addresses are pinned by hook_fsr_draw025.py's input SHA256. Native
+    // allocator/flush preserve the existing worker's chunk/ordering protocol.
+    bs4_native_enqueue_draw(scheduler,state,
+        reinterpret_cast<Bs4NativeAllocate>(native_base+0x12f55a4),
+        reinterpret_cast<Bs4NativeFlush>(native_base+0x12f56bc),native_draw_worker);
+}
 BS4_PUBLIC int bs4_fsr31_abi() { return 0x00030104; }
 BS4_PUBLIC int bs4_fsr31_create(const FfxVkPortableDeviceInfo* dev,
                                const FfxVkPortableUpscaleCreateInfo* ci) {
@@ -213,6 +234,17 @@ BS4_PUBLIC int bs4_fsr31_pre_ui_dispatch(
           output_extent.width,output_extent.height,preset);
     }
     return 1;
+}
+
+BS4_PUBLIC int bs4_fsr31_pre_ui_prepare(VkCommandBuffer command,VkImageView color,
+    VkImageView depth,VkExtent2D render,VkExtent2D output) {
+    FfxVkPortableDeviceInfo info{};int preset=-1;
+    {
+        std::lock_guard lock{guard};if(!device_attached)return 0;info=acquired_device;
+        if(const auto* mode=std::getenv("BACHATA_FSR31_MODE"))
+            if(mode[0]>='0'&&mode[0]<='4'&&mode[1]==0)preset=mode[0]-'0';
+    }
+    return preset>=0?bs4_fsr31_generic_prepare(&info,command,color,render,output,preset,depth):0;
 }
 
 BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice device,
