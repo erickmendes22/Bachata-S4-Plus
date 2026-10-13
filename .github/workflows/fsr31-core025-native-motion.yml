@@ -1,0 +1,28 @@
+name: Port FSR3 core025 motion-history regression
+on:
+  push:
+    branches: [feature/fsr31-core025-native-motion]
+    paths:
+      - 'tools/port-fsr31/**'
+      - '.github/workflows/fsr31-core025-native-motion.yml'
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  motion_history:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile exact Port object-motion CPU history
+        run: |
+          set -euxo pipefail
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -Itools/port-fsr31 \
+            tools/port-fsr31/tests/test_motion_history.cpp \
+            -o /tmp/bs4_port_motion_history
+          /tmp/bs4_port_motion_history
+      - name: Check no optical-flow substitution or shader-private placeholders
+        run: |
+          set -euxo pipefail
+          grep -Fq 'History history(32);' tools/port-fsr31/tests/test_motion_history.cpp
+          grep -Fq 'BufferRole ClassifyBuffer' tools/port-fsr31/gpu/shadps4/video_core/renderer_vulkan/motion_history.h
+          grep -Fq 'ObjectMotion::PrepareDraw' tools/port-fsr31/gpu/shadps4/video_core/renderer_vulkan/vk_object_motion.cpp
+          echo 'PORT CPU OBJECT HISTORY PASSED. NOT A GPU INTEGRATION OR APK.'
