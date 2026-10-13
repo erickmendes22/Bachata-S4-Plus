@@ -41,7 +41,9 @@ one('''    scheduler.Record([barrier](vk::CommandBuffer cmdbuf) {''',
     '''    { const auto cmdbuf=scheduler.CommandBuffer();''')
 # All three lambda wrappers end with the same "});" after pipelineBarrier2;
 # only replace these explicit sites, leaving other lambdas untouched.
-s,n=re.subn(r'(?m)^    \}\);
+s,n=re.subn(r'(?m)^    \}\);(?=\n)', '    }', s)
+if n != 3:
+    raise RuntimeError(f"Expected three scheduler closures, found {n}")
 if "BbSettings" in s or "BbStats" in s or "BbToggle" in s or "scheduler.Record" in s:
     raise RuntimeError("Port dependency remains unadapted")
 p.write_text(s)
