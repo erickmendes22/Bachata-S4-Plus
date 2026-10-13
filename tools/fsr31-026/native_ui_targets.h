@@ -12,5 +12,23 @@ bool bs4_native_ui_output(VkCommandBuffer,Bs4FsrCaptureImage&);
 // format and component mapping. Unrelated views are unchanged.
 VkImageView bs4_native_ui_sampled_view(VkCommandBuffer,VkImageView);
 bool bs4_native_ui_rendering(VkCommandBuffer,const VkRenderingInfo*,VkRenderingInfo&,
-                             VkRenderingAttachmentInfo&,VkRenderingAttachmentInfo&);
+                             VkRenderingAttachmentInfo&,VkRenderingAttachmentInfo&,
+                             VkRenderingAttachmentInfo&);
+// Independent depth/stencil attachment copies are required: Vulkan permits
+// different load/store/clear semantics even when both refer to one image.
+inline void bs4_native_ui_rebind_depth_stencil(const VkRenderingInfo& source,
+    VkRenderingInfo& target, VkRenderingAttachmentInfo& depth,
+    VkRenderingAttachmentInfo& stencil, VkImageView targetView) {
+    if (source.pDepthAttachment) {
+        depth = *source.pDepthAttachment;
+        depth.imageView = targetView;
+        target.pDepthAttachment = &depth;
+    }
+    if (source.pStencilAttachment) {
+        stencil = *source.pStencilAttachment;
+        stencil.imageView = targetView;
+        target.pStencilAttachment = &stencil;
+    }
+}
+
 bool bs4_native_ui_barrier(VkCommandBuffer,const VkImageMemoryBarrier2&,VkImageMemoryBarrier2&);
