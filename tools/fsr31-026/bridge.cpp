@@ -332,7 +332,13 @@ bool fsr31_requested() {
         const auto pos=line.find("/shadps4-arm64-025");
         if(pos==std::string::npos)continue;
         const auto end=pos+sizeof("/shadps4-arm64-025")-1;
-        if(end==line.size()||line[end]==' ')return true;
+        if(end==line.size()||line[end]==' ') {
+            // Select real Port inputs before native Vulkan dispatch tables are
+            // populated. The Android launcher already supplies the user mode.
+            if(!std::getenv("BACHATA_FSR31_INPUT"))
+                setenv("BACHATA_FSR31_INPUT","port",0);
+            return true;
+        }
     }
     return false;
 }

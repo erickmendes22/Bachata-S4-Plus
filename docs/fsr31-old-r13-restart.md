@@ -71,3 +71,27 @@ already needs that usage. It is now added at allocation, rather than silencing
 validation. The test restores the output layout after readback and runs 12
 frames to exercise output-slot reuse. This proves an invalid Vulkan usage;
 it does not prove that this was the device's DLRegularHeap crash cause.
+
+## Complete composition test (38401776893)
+
+The old-R13 path now captures native constants before BeginRendering. Known
+movie VS identity is obtained from the graphics pipeline layout supplied by
+native BindResources before the rendering instance starts. The pinned Port
+movie hash list is copied unchanged. No pass is ended/reopened by the SDK.
+The native viewport WithCount family is preserved when applying/restoring
+jitter. A proven reduced scene's render area is corrected only when native
+camera and actual attachment sizes agree; unsupported areas are untouched.
+
+The real SDK test passes 11 dispatches at 640x360 -> 1280x720 and 11 at
+1280x720 -> 1280x720 temporal AA. The complete composition test runs eight
+frames through the native descriptor camera observer, R13 scene boundary,
+real camera shader and AMD dispatch, then the original guest UI image. Its
+first frame warms history. All seven subsequent frames retain 2,068,600 blue
+scene pixels and 5,000 red HUD pixels in the 1920x1080 original UI attachment.
+No Vulkan validation errors occur. GPU clears represent scene/HUD draws;
+these tests do not execute Bloodborne or reproduce the Adreno/FEX heap fault.
+
+The updated SDK selects Port inputs by default only for current core025 and
+an enabled Android-forwarded mode, before native Vulkan tables are resolved.
+An explicit input override is preserved. Other core routes stay unchanged.
+No DEX changes are needed for the existing preset UI/environment bridge.
