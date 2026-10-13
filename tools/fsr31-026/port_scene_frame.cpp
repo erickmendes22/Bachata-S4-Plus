@@ -13,6 +13,7 @@ struct Record {
 std::mutex guard;
 Record current{},previous{};
 bool frame_open=false;
+bool committed=false;
 bool finite_shift(float v) {return std::isfinite(v)&&std::abs(v)<=1.f;}
 }
 extern "C" __attribute__((visibility("default")))
@@ -32,15 +33,20 @@ int bs4_fsr31_port_scene(const Bs4PortSceneFrame* f) {
     std::lock_guard lock{guard};
     if(current.valid&&f->frameId<current.frame)return 0;
     if(current.valid&&f->frameId==current.frame) {
-        // Port commits a frame camera once. A second unrelated G-buffer
-        // cannot silently replace the camera tied to the selected depth.
-        return frame_open&&current.scene==f->sceneId&&current.depth==f->depth&&
-               current.command==f->command ? 1:0;
+        if(!frame_open)return 0;
+        if(committed)return current.scene==f->sceneId&&current.depth==f->depth&&
+                            current.command==f->command&&current.x==f->jitterX&&
+                            current.y==f->jitterY?1:0;
+        // Like the Port, select the G-buffer whose depth the upcoming motion
+        // pass uses. History advances once per displayed frame, not per pass.
+        current={c,f->frameId,f->sceneId,f->command,f->depth,
+                 f->jitterX,f->jitterY,true};
+        return 1;
     }
     previous=current;
     current={c,f->frameId,f->sceneId,f->command,f->depth,
              f->jitterX,f->jitterY,true};
-    frame_open=true;
+    frame_open=true;committed=false;
     return 1;
 }
 bool bs4_fsr31_port_camera(VkCommandBuffer cb,VkImageView depth,
@@ -61,13 +67,14 @@ bool bs4_fsr31_port_camera(VkCommandBuffer cb,VkImageView depth,
     out.verticalFov=2.f*std::atan(1.f/std::abs(current.camera.projection[1]));
     out.frameId=current.frame;
     out.reset=!coherent;
+    committed=true;
     return true;
 }
 extern "C" __attribute__((visibility("default")))
 void bs4_fsr31_port_invalidate_after_gpu_drain() {
-    std::lock_guard lock{guard};current={};previous={};frame_open=false;
+    std::lock_guard lock{guard};current={};previous={};frame_open=false;committed=false;
 }
 
 void bs4_fsr31_port_end_frame() {
-    std::lock_guard lock{guard};frame_open=false;
+    std::lock_guard lock{guard};frame_open=false;committed=false;
 }

@@ -13,5 +13,6 @@
   "portRevision": "d58769c8ae2f36b4f22db864b68e9bffc21a04d2",
   "sdkRevision": "c64f093404125e960813f95f1996c14780f0dd69",
   "releaseReady": false,
-  "nativeProducerConnected": false
+  "nativeProducerConnected": true,
+  "deviceValidationPassed": false
 }

@@ -35,12 +35,27 @@ It records only at the old R13 boundary outside a rendering instance.
 
 ## Not complete / no APK release
 
-The native renderer producer is NOT connected yet. An exported API alone is not
-an implementation in the running application. The current core's internal scene
-state must call it with verified camera/depth/viewport/jitter data and a frame
-boundary. No inference from Vulkan viewport size can replace raw Gnm signs.
-Actual applied jitter, object motion, reactive masking and proper native HUD
-routing remain integration work. R13's original heuristic pre-UI boundary and
+The producer is now connected to native uniform descriptors and the core025
+120-byte graphics PushData. Its first four floats are accepted ONLY when their
+viewport offsets/scales agree with the actual recorded viewport. This is a
+runtime check of the field interpretation, not a sign guessed from image size.
+The native executable resolves vkCmdPushConstants at table+0x360 and records the
+120-byte block at 0x1277b68..0x1277b78 and 0x1278a40..0x1278a58 (hash locked).
+
+The observer never replaces guest descriptors or writes mapped buffers. It
+selects a >=5 MRT/depth G-buffer and verifies the 864-byte camera signature.
+Mapped range lengths are checked, including VK_WHOLE_SIZE allocation bounds.
+History advances at the current core025 Presenter hook; reused CBs are reset.
+
+A Port Halton viewport shift is applied to supported scene geometry only, when
+the actual viewport matches the camera render dimensions and uses its depth.
+The original unshifted viewport is restored immediately after every draw, so
+native state caching stays valid. That recorded shift is passed to FSR; it is
+never claimed applied when the geometry was not shifted. First-frame warmup
+is unshifted. Unsupported indirect geometry remains unshifted.
+
+Object motion, reactive masking and proper native HUD routing remain integration
+work. The observer has not been validated against new device logs yet. R13's original heuristic pre-UI boundary and
 composition also need game validation before a release.
 
 CPU contract tests and an ARM64 build do not demonstrate functional FSR on the

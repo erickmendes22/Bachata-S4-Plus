@@ -44,7 +44,7 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
             git cmake ninja-build python3-mako python3-setuptools pkg-config \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            libvulkan-dev:arm64 libvulkan-dev:amd64 libvulkan1:arm64 libx11-dev:arm64 glslang-tools \
+            libvulkan-dev:arm64 libvulkan-dev:amd64 libvulkan1:arm64 libx11-dev:arm64 glslang-tools mesa-vulkan-drivers vulkan-validationlayers:amd64 \
             libstdc++6:arm64
       - name: Check out exact portable FSR implementation from Android Bloodborne port
         run: |
@@ -84,7 +84,8 @@ jobs:
             tools/fsr31-026/bridge.cpp
             tools/fsr31-026/vulkan_capture.cpp
             tools/fsr31-026/temporal_generic.cpp
-            tools/fsr31-026/port_scene_frame.cpp)
+            tools/fsr31-026/port_scene_frame.cpp
+            tools/fsr31-026/native_scene_observer.cpp)
           target_compile_features(bachata_fsr31 PRIVATE cxx_std_17)
           target_include_directories(bachata_fsr31 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/generated")
           target_compile_definitions(bachata_fsr31 PRIVATE _GNU_SOURCE=1)
@@ -118,8 +119,19 @@ jobs:
           PY_SHADER
           g++ -std=c++17 -pthread -I/usr/include tools/fsr31-026/port_scene_frame.cpp tools/fsr31-026/tests/port_scene_frame_test.cpp -o /tmp/port-scene-test
           /tmp/port-scene-test
+          g++ -std=c++17 -pthread -I/usr/include tools/fsr31-026/native_scene_observer.cpp tools/fsr31-026/port_scene_frame.cpp tools/fsr31-026/tests/native_scene_observer_test.cpp -o /tmp/native-observer-test
+          /tmp/native-observer-test
           cmake -S . -B build -GNinja -DCMAKE_TOOLCHAIN_FILE=fsr-aarch64.ini -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target bachata_fsr31 -j 6
+      - name: Validate actual Port motion and AMD dispatch on software Vulkan
+        run: |
+          set -euxo pipefail
+          cmake -S . -B build-host -GNinja -DCMAKE_BUILD_TYPE=Release -DVulkan_LIBRARY=/usr/lib/x86_64-linux-gnu/libvulkan.so
+          cmake --build build-host --target bachata_fsr31 -j 6
+          g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include tools/fsr31-026/tests/port_scene_gpu_test.cpp -Lbuild-host -lbachata_fsr31 -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/shadps4-arm64-025
+          export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name '*lvp*.json' | head -n1)"
+          test -n "$VK_ICD_FILENAMES"
+          /tmp/shadps4-arm64-025 | tee port-scene-gpu.txt
       - name: Validate ARM64 and exports
         run: |
           set -euxo pipefail
@@ -137,5 +149,6 @@ jobs:
             sha256.txt
             needed.txt
             symbols.txt
+            port-scene-gpu.txt
           if-no-files-found: error
           retention-days: 7

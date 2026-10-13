@@ -2,6 +2,8 @@
 // Capture real Vulkan image descriptions from the renderer. No guest shader
 // hashes, no Mesa/Turnip private memory-layout reads.
 #include "vulkan_capture.h"
+#include "native_scene_observer.h"
+#include <cstdlib>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -107,6 +109,10 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     if (!cmd || !info || !info->colorAttachmentCount ||
         !info->pColorAttachments || !info->pColorAttachments[0].imageView)
         return false;
+    const bool port=std::getenv("BACHATA_FSR31_INPUT")&&
+        std::strcmp(std::getenv("BACHATA_FSR31_INPUT"),"port")==0;
+    VkImageView camera_depth{};VkExtent2D camera_size{};
+    const bool camera_ready=port&&bs4_native_scene_camera(cmd,&camera_depth,&camera_size);
     const uint32_t w=info->renderArea.extent.width;
     const uint32_t h=info->renderArea.extent.height;
     const auto view=info->pColorAttachments[0].imageView;
@@ -122,16 +128,18 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
         // Support 640x360, 960x540, 1152x648; 1280x720 does not need
         // temporal upscale if the requested presentation is also 720p.
         if (w>=600 && w<1280 && h>=320 && h<720) {
+            if(port&&(!camera_ready||camera_size.width!=w||camera_size.height!=h))return false;
             const auto v=views.find(view);
             if (v!=views.end()) {
                 const auto i=images.find(v->second.image);
                 if (i!=images.end() &&
                     (i->second.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) &&
+                    (!port||i->second.format==VK_FORMAT_R8G8B8A8_UNORM) &&
                     i->second.size.width>=w && i->second.size.width<=w+32 &&
                     i->second.size.height>=h && i->second.size.height<=h+32) {
                     stage.color=view;
-                    stage.depth=info->pDepthAttachment?
-                        info->pDepthAttachment->imageView:VK_NULL_HANDLE;
+                    stage.depth=port?camera_depth:(info->pDepthAttachment?
+                        info->pDepthAttachment->imageView:VK_NULL_HANDLE);
                     stage.extent={w,h};
                     stage.inside=true;
                     stage.ready=false;
@@ -324,20 +332,20 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_begin_command(
         VkCommandBuffer cb,const VkCommandBufferBeginInfo* info) {
     if (!original_begin_command) return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_begin_command(cb,info);
-    if(status==VK_SUCCESS){std::lock_guard lock{mutex};command_scenes.erase(cb);}
+    if(status==VK_SUCCESS){bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);}
     return status;
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_reset_command(
         VkCommandBuffer cb,VkCommandBufferResetFlags flags) {
     if(!original_reset_command)return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_reset_command(cb,flags);
-    if(status==VK_SUCCESS){std::lock_guard lock{mutex};command_scenes.erase(cb);}
+    if(status==VK_SUCCESS){bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);}
     return status;
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_free_commands(
         VkDevice device,VkCommandPool pool,uint32_t count,const VkCommandBuffer* cb) {
     if(cb&&count){std::lock_guard lock{mutex};
-        for(uint32_t i=0;i<count;++i)command_scenes.erase(cb[i]);}
+        for(uint32_t i=0;i<count;++i){command_scenes.erase(cb[i]);bs4_native_scene_reset(cb[i]);}}
     if(original_free_commands)original_free_commands(device,pool,count,cb);
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image(
@@ -379,6 +387,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering(
     VkRenderingInfo modified{};
     std::vector<VkRenderingAttachmentInfo> overrides;
     const bool composite=first_pre_ui_color(cb,info,modified,overrides);
+    bs4_native_scene_begin(cb,info);
     record_rendering(info);
     if(original_begin_rendering)
         original_begin_rendering(cb,composite?&modified:info);
@@ -386,6 +395,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering(
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_end_rendering(VkCommandBuffer cb) {
     if(original_end_rendering) original_end_rendering(cb);
     scene_rendering_ended(cb);
+    bs4_native_scene_end(cb);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_barrier2(
     VkCommandBuffer cb,const VkDependencyInfo* dep) {
@@ -399,6 +409,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering_khr(
     VkRenderingInfo modified{};
     std::vector<VkRenderingAttachmentInfo> overrides;
     const bool composite=first_pre_ui_color(cb,info,modified,overrides);
+    bs4_native_scene_begin(cb,info);
     record_rendering(info);
     if(original_begin_rendering_khr)
         original_begin_rendering_khr(cb,composite?&modified:info);
@@ -406,6 +417,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering_khr(
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_end_rendering_khr(VkCommandBuffer cb) {
     if(original_end_rendering_khr) original_end_rendering_khr(cb);
     scene_rendering_ended(cb);
+    bs4_native_scene_end(cb);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_barrier2_khr(
     VkCommandBuffer cb,const VkDependencyInfo* dep) {
@@ -436,7 +448,7 @@ extern "C" PFN_vkVoidFunction bs4_fsr31_wrap_vulkan_proc(
     BS4_WRAP_GIPA(original_end_rendering_khr,"vkCmdEndRenderingKHR",&bs4_cap_end_rendering_khr)
     BS4_WRAP_GIPA(original_barrier2_khr,"vkCmdPipelineBarrier2KHR",&bs4_cap_barrier2_khr)
     #undef BS4_WRAP_GIPA
-    return proc;
+    return bs4_native_scene_wrap(name,proc);
 }
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
     VkDevice device,const char* name) {
@@ -463,5 +475,5 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
     BS4_WRAP(original_end_rendering_khr,"vkCmdEndRenderingKHR",&bs4_cap_end_rendering_khr)
     BS4_WRAP(original_barrier2_khr,"vkCmdPipelineBarrier2KHR",&bs4_cap_barrier2_khr)
     #undef BS4_WRAP
-    return proc;
+    return bs4_native_scene_wrap(name,proc);
 }
