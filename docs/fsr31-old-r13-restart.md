@@ -61,3 +61,13 @@ composition also need game validation before a release.
 CPU contract tests and an ARM64 build do not demonstrate functional FSR on the
 phone or prove that the R23 heap crash is gone. No APK is produced from this
 checkpoint, and the baseline runtime must not be renamed as a new version.
+
+## First GPU validation caught an inherited R13 bug
+
+Run 38397303759 executes the camera shader and real AMD dispatch. Vulkan
+validation rejects copying/blitting the R13 output because its creation usage
+omits TRANSFER_SRC (VUID 01212 / srcImage-00186). The old pre-UI composition
+already needs that usage. It is now added at allocation, rather than silencing
+validation. The test restores the output layout after readback and runs 12
+frames to exercise output-slot reuse. This proves an invalid Vulkan usage;
+it does not prove that this was the device's DLRegularHeap crash cause.

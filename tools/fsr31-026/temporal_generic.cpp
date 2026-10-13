@@ -205,7 +205,7 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
     const VkImageUsageFlags sampled=VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT|
                                     VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     const VkImageUsageFlags storage=VK_IMAGE_USAGE_STORAGE_BIT|VK_IMAGE_USAGE_SAMPLED_BIT|
-                                    VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+                                    VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     frames.resize(4);
     for(auto& f:frames) {
         if(!alloc(f.scene,color_format,render,sampled,VK_IMAGE_ASPECT_COLOR_BIT) ||
