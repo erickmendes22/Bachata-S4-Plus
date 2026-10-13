@@ -86,7 +86,7 @@ int main(){
  bs4_native_scene_draw_state(cb,native);assert(bs4_native_scene_ui_state(cb,boundary));
  assert(boundary.color==handle<VkImageView>(11)&&boundary.guestExtent.width==640&&boundary.rawViewport[3]==-180);
  native.colors[0].view=12;bs4_native_scene_draw_state(cb,native);
- assert(bs4_native_scene_ui_state(cb,boundary)&&boundary.color==handle<VkImageView>(11)); // first UI boundary owns this frame
+ assert(bs4_native_scene_ui_state(cb,boundary)&&boundary.color==handle<VkImageView>(12)); // most recent UI draw must own its target
  bs4_native_scene_reset(cb);assert(!bs4_native_scene_ui_state(cb,boundary));
  c(cb,layout,VK_SHADER_STAGE_VERTEX_BIT,0,120,raw.data());
  native.colorCount=0;native.stencilEnabled=1;native.depth=13;
