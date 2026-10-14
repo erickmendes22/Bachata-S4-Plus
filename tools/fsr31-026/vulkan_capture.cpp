@@ -96,7 +96,7 @@ void present_trace_end(VkCommandBuffer cb) {
         layout=it->second.layout;
         present_last_color[image]=it->second.serial;
         static unsigned shown=0;
-        if(shown++<128)std::fprintf(stderr,
+        if(shown++<4)std::fprintf(stderr,
             "[BS4_FSR31] POST_UI_COLOR_PASS_END pass=%llu image=%p view=%p cb=%p\n",
             (unsigned long long)it->second.serial,reinterpret_cast<void*>(image),
             reinterpret_cast<void*>(it->second.view),reinterpret_cast<void*>(cb));
