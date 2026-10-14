@@ -188,6 +188,18 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     {
         std::lock_guard lock{mutex};
         auto& stage=command_scenes[cmd];
+        // The guest may reuse the submitted low-resolution image for another
+        // render pass before its later UI CB starts. A successful submit
+        // proves ordering, not that the contents still belong to that scene.
+        // Retire that candidate as soon as any other CB begins writing it.
+        if(submitted_owner&&submitted_owner!=cmd&&
+           submitted_scene.color==view) {
+            submitted_scene={};submitted_owner={};
+            static bool warned=false;
+            if(!warned){warned=true;std::fprintf(stderr,
+                "[BS4_FSR31] SUBMITTED_LDR_INVALIDATED_REWRITTEN view=%p command=%p\\n",
+                reinterpret_cast<void*>(view),reinterpret_cast<void*>(cmd));}
+        }
         // Never activate on menu frames that did not contain a 3D scene.
         // Support 640x360, 960x540, 1152x648; 1280x720 does not need
         // temporal upscale if the requested presentation is also 720p.
