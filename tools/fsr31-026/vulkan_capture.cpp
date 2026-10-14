@@ -121,7 +121,7 @@ void mirrored_ui_barriers(VkCommandBuffer cb,const VkDependencyInfo* dep,PFN_vkC
     if(mirrored.empty())return;
     VkDependencyInfo info{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};info.dependencyFlags=dep->dependencyFlags;
     info.imageMemoryBarrierCount=mirrored.size();info.pImageMemoryBarriers=mirrored.data();
-    original(cb,&info);update_layout(info.imageMemoryBarrierCount,info.pImageMemoryBarriers);
+    original(cb,&info);update_layout(cb,info.imageMemoryBarrierCount,info.pImageMemoryBarriers);
 }
 void record_rendering(const VkRenderingInfo* info) {
     if (!info || !info->pDepthAttachment ||
