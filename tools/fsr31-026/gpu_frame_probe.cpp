@@ -8,7 +8,7 @@
 namespace {
 constexpr uint32_t side=8,tiles=9,pixels=side*side*tiles;
 constexpr VkDeviceSize stride=pixels*8,total=stride*8;
-unsigned reports=0;
+unsigned reports=0,wsi_reports=0;
 void transition(VkCommandBuffer cb,VkImage image,VkImageLayout from,VkImageLayout to,VkImageAspectFlags aspects){
     if(from==to)return;
     VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
@@ -111,8 +111,13 @@ void bs4_probe_resolve(Bs4GpuFrameProbe& p,VkDevice dev){
         unusual|=s[i].cyan>pixels/10||s[i].invalid;
         saturated|=(i<4||i==6||i==7)&&s[i].r>.98&&s[i].g>.98&&s[i].b<.75;
     }
-    if(reports>=96||(!unusual&&p.frame>=4&&p.frame%256&&(!saturated||p.frame%16)))return;
-    reports++;
+    const bool wsi=bool(p.stages&(1u<<7));
+    if(wsi) {
+        if(wsi_reports++>=160)return;
+    } else {
+        if(reports>=96||(!unusual&&p.frame>=4&&p.frame%256&&(!saturated||p.frame%16)))return;
+        reports++;
+    }
     std::fprintf(stderr,"[BS4_FSR31] GPU_FRAME_PROBE dispatch=%llu camera=%llu stages=0x%x samples=%u history_reset=%u",
         (unsigned long long)p.frame,(unsigned long long)p.cameraFrame,p.stages,pixels,unsigned(p.historyReset));
     const char* names[]={"native","clone","fsr","ui","motion","depth","post_hud","swapchain"};
