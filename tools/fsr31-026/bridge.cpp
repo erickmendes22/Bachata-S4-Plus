@@ -53,10 +53,14 @@ BS4_PUBLIC void bs4_fsr31_native_begin(void* scheduler,const void* render_state,
     if(!input||std::strcmp(input,"port"))return;
     Bs4NativeRenderState state{};std::memcpy(&state,render_state,sizeof(state));
     // GBuffer/MRT and attachment-free passes cannot contain a native HUD draw.
-    // Do not add a queue operation for those passes: n032 queued one operation
-    // for EVERY BeginRendering and caused a severe GPU worker backlog.
+    // Small offscreen post-processes (e.g. 320x180) are not our
+    // 640x360 camera or 720p/1080p native HUD and must not enqueue work.
+    // Keep mask-only passes at eligible extents: Scaleform can begin with stencil.
     if(state.colorCount>1||
-       (!state.colorCount&&!state.depthEnabled&&!state.stencilEnabled))return;
+       (!state.colorCount&&!state.depthEnabled&&!state.stencilEnabled)||
+       state.width<640||state.height<360||
+       state.width>1920||state.height>1080||
+       uint64_t(state.width)*9!=uint64_t(state.height)*16)return;
     static std::atomic<uint64_t> eligible{0};
     const auto n=eligible.fetch_add(1,std::memory_order_relaxed)+1;
     if(n==1||n==4096)std::fprintf(stderr,
