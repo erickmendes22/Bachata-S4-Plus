@@ -35,6 +35,12 @@ struct Frame {
     Surface motion;
     Surface output;
     VkDescriptorSet descriptor{};
+    // A ring slot remains owned by a command buffer until it is submitted
+    // and the GPU completion fence signals. Never rewrite its descriptors,
+    // scene, motion or output while the GPU can still reference them.
+    VkFence completion{};
+    VkCommandBuffer recordedBy{};
+    bool recorded{},submitted{};
 };
 std::mutex mutex;
 VkDevice device{};
@@ -146,7 +152,8 @@ void free_all() {
     if(sampler)vkDestroySampler(device,sampler,nullptr);
     flow_pipeline={};pipeline_layout={};desc_layout={};
     descriptors={};sampler={};
-    for(auto& f:frames){free_surface(f.scene);free_surface(f.depth);
+    for(auto& f:frames){if(f.completion)vkDestroyFence(device,f.completion,nullptr);
+        free_surface(f.scene);free_surface(f.depth);
         free_surface(f.motion);free_surface(f.output);}
     frames.clear();free_surface(previous);
     has_previous=false;frame_id=0;cursor=0;
@@ -215,6 +222,9 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
                                     VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     frames.resize(4);
     for(auto& f:frames) {
+        VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        if(!result(vkCreateFence(device,&fenceInfo,nullptr,&f.completion),
+                   "FSR completion fence"))return false;
         if(!alloc(f.scene,color_format,render,sampled,VK_IMAGE_ASPECT_COLOR_BIT) ||
            !alloc(f.depth,depth_format,render,sampled,VK_IMAGE_ASPECT_DEPTH_BIT) ||
            !alloc(f.motion,VK_FORMAT_R16G16_SFLOAT,render,storage,VK_IMAGE_ASPECT_COLOR_BIT) ||
@@ -405,7 +415,27 @@ static uint64_t generic_render_impl(
     // Preparation performs resource validation/allocation only. It must not
     // advance the ring/history or record commands into an active render pass.
     if(prepare_only)return 1;
-    Frame& f=frames[cursor++%frames.size()];
+    // Select a frame only if never recorded or fully completed on the GPU.
+    // vkGetFenceStatus is nonblocking: a busy ring skips FSR rather than
+    // corrupting in-flight resources or blocking the emulation thread.
+    Frame* available=nullptr;
+    for(size_t i=0;i<frames.size();++i) {
+        Frame& candidate=frames[(cursor+i)%frames.size()];
+        if(candidate.recorded)continue;
+        if(candidate.submitted) {
+            const VkResult done=vkGetFenceStatus(device,candidate.completion);
+            if(done!=VK_SUCCESS)continue;
+            if(!result(vkResetFences(device,1,&candidate.completion),
+                       "FSR completion fence reset"))continue;
+            candidate.submitted=false;
+        }
+        available=&candidate;cursor=(cursor+i+1)%frames.size();break;
+    }
+    if(!available){
+        report_once(19,"temporal slot busy: preserve original scene rather than overwrite in-flight GPU resources");
+        return 0;
+    }
+    Frame& f=*available;
     transit(cb,f.scene,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     barrier(cb,color.image,VK_IMAGE_ASPECT_COLOR_BIT,color.layout,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -511,6 +541,7 @@ static uint64_t generic_render_impl(
     transit(cb,previous,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     transit(cb,f.scene,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
+    f.recordedBy=cb;f.recorded=true;
     has_previous=true;
     if(frame_id==1)
         std::fprintf(stderr,"[BS4_FSR31] real FSR3.1 dispatch recorded (%ux%u->%ux%u)\n",
@@ -541,4 +572,37 @@ bs4_fsr31_output_image(VkImageView view) {
     for (const auto& frame:frames)
         if (frame.output.view == view) return frame.output.image;
     return VK_NULL_HANDLE;
+}
+
+// Called by the real Vulkan submit interception, after successful submission.
+// A separate zero-command submit uses the ORIGINAL queue function and signals
+// the completion fence only after all previously submitted GPU work on queue.
+// No scheduler/core recompilation, no own GPU queue, no present-time waits.
+extern "C" void bs4_fsr31_temporal_submitted(VkQueue queue,VkCommandBuffer cb,
+                                             PFN_vkQueueSubmit original,
+                                             PFN_vkQueueSubmit2 original2) {
+    if(!queue||!cb||(!original&&!original2))return;
+    std::lock_guard lock{mutex};
+    for(auto& f:frames) {
+        if(!f.recorded||f.recordedBy!=cb)continue;
+        VkResult status=VK_ERROR_INITIALIZATION_FAILED;
+        if(original)status=original(queue,0,nullptr,f.completion);
+        else status=original2(queue,0,nullptr,f.completion);
+        if(status==VK_SUCCESS){
+            f.recorded=false;f.submitted=true;f.recordedBy={};
+        } else {
+            // Never recycle the slot without proof that its pending GPU
+            // commands have completed. A failed completion marker retains it.
+            static bool warned=false;
+            if(!warned){warned=true;
+                std::fprintf(stderr,"[BS4_FSR31] completion fence submit failed=%d\\n",int(status));}
+        }
+    }
+}
+extern "C" void bs4_fsr31_temporal_reset_recording(VkCommandBuffer cb) {
+    if(!cb)return;
+    std::lock_guard lock{mutex};
+    for(auto& f:frames)if(f.recorded&&f.recordedBy==cb){
+        f.recorded=false;f.recordedBy={};
+    }
 }
