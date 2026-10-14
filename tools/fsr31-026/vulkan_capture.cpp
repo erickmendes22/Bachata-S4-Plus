@@ -104,7 +104,7 @@ void update_layout(VkCommandBuffer cb,uint32_t count, const VkImageMemoryBarrier
         // The old code retired only the global cross-CB candidate, then
         // observe_submission resurrected the unchanged local ScenePass.
         const auto local=command_scenes.find(cb);
-        const VkAccessFlags2 writes=VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT|
+        const VkAccessFlags2 writes=VK_ACCESS_2_SHADER_WRITE_BIT|VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT|
             VK_ACCESS_2_TRANSFER_WRITE_BIT|VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT|
             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         const bool broadWrite=(barriers[i].dstAccessMask&VK_ACCESS_2_MEMORY_WRITE_BIT)&&
@@ -131,13 +131,12 @@ void update_layout(VkCommandBuffer cb,uint32_t count, const VkImageMemoryBarrier
         // Compute/transfer passes can overwrite a previously submitted LDR
         // image without starting any render pass. Retire stale cross-CB
         // candidates before temporal dispatch (n040 guarded color passes only).
-        if(submitted_owner && submitted_scene.color &&
-           (barriers[i].dstAccessMask &
-             (VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT |
-              VK_ACCESS_2_TRANSFER_WRITE_BIT |
-              VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT))) {
+        if(!bs4_native_compute_in_sdk()&&submitted_owner&&submitted_scene.color&&
+           ((barriers[i].dstAccessMask&writes)||broadWrite)) {
             const auto v=views.find(submitted_scene.color);
-            if(v!=views.end() && v->second.image==barriers[i].image) {
+            const auto d=views.find(submitted_scene.depth);
+            if((v!=views.end() && v->second.image==barriers[i].image)||
+               (d!=views.end() && d->second.image==barriers[i].image)) {
                 submitted_scene={};submitted_owner={};
                 static bool logged=false;
                 if(!logged){logged=true;std::fprintf(stderr,
