@@ -1,7 +1,7 @@
 name: Validate FSR SDK hooks for existing R27 core025 (no core build)
 on:
   push:
-    branches: [feature/r27-fsr31-existing025]
+    branches: [feature/r27-fsr31-existing025, fix/n036-temporal-consistency]
     paths:
       - 'tools/fsr31-026/**'
       - '.github/workflows/fsr31-r27-sdk.yml'
@@ -92,6 +92,7 @@ jobs:
             tools/fsr31-026/vulkan_capture.cpp
             tools/fsr31-026/temporal_generic.cpp
             tools/fsr31-026/port_scene_frame.cpp
+            tools/fsr31-026/native_compute_state.cpp
             tools/fsr31-026/native_draw_handoff.cpp
             tools/fsr31-026/native_scene_observer.cpp
             tools/fsr31-026/native_ui_targets.cpp)
@@ -131,6 +132,8 @@ jobs:
           PY_SHADER
           g++ -std=c++17 -Wall -Wextra -Werror -I/usr/include tools/fsr31-026/tests/native_depth_stencil_attachment_test.cpp -o /tmp/r27-depth-stencil-test
           /tmp/r27-depth-stencil-test
+          g++ -std=c++17 -Wall -Wextra -Werror -pthread tools/fsr31-026/native_compute_state.cpp tools/fsr31-026/tests/native_compute_state_test.cpp -o /tmp/native-compute-state-test
+          /tmp/native-compute-state-test
           python3 tools/fsr31-026/tests/scene_transition_regression.py
           g++ -std=c++17 -pthread -I/usr/include tools/fsr31-026/port_scene_frame.cpp tools/fsr31-026/tests/port_scene_frame_test.cpp -o /tmp/port-scene-test
           /tmp/port-scene-test
@@ -153,6 +156,8 @@ jobs:
           /tmp/bs4-fsr-sdk-smoke | tee port-scene-gpu.txt
           /tmp/bs4-fsr-sdk-smoke quality-1x | tee -a port-scene-gpu.txt
           /tmp/bs4-fsr-sdk-smoke depth-stencil | tee -a port-scene-gpu.txt
+          glslangValidator -V --target-env vulkan1.2 -S comp -o /tmp/native-compute-probe.spv tools/fsr31-026/tests/native_compute_probe.comp
+          /tmp/bs4-fsr-sdk-smoke compute-state | tee native-compute-restoration-gpu.txt
           g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include tools/fsr31-026/tests/r13_composition_gpu_test.cpp -Lbuild-host -lbachata_fsr31 -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/bs4-fsr-sdk-smoke
           /tmp/bs4-fsr-sdk-smoke | tee r13-composition-gpu.txt
           /tmp/bs4-fsr-sdk-smoke shared-target | tee shared-target-preservation-gpu.txt
@@ -178,6 +183,7 @@ jobs:
             needed.txt
             symbols.txt
             port-scene-gpu.txt
+            native-compute-restoration-gpu.txt
             r13-composition-gpu.txt
             shared-target-preservation-gpu.txt
             native-run-scaled-ui-gpu.txt

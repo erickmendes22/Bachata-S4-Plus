@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Executes the actual bridge, cropped scene/depth copies, camera shader and
 // AMD FSR 3.1 dispatch on a software Vulkan device; this is not a device test.
+#include <fstream>
 #define FFX_VK_PORTABLE_ONLY
 #define main sdk_smoke_main
 #include "tests/fsr3_vk_backend_smoke.cpp"
@@ -24,6 +25,7 @@ static void layout(VkCommandBuffer cb,VkImage image,VkImageAspectFlags aspect,Vk
 int main(int argc,char** argv){
  setenv("BS4_FSR31_TEST_OWNER","025",1);
  const bool quality=argc>1&&std::strcmp(argv[1],"quality-1x")==0;
+ const bool computeProbe=argc>1&&std::strcmp(argv[1],"compute-state")==0;
  const bool stencil=argc>1&&std::strcmp(argv[1],"depth-stencil")==0;
  const uint32_t width=quality?1280:640,height=quality?720:360;
  const VkImageAspectFlags depthAspects=VK_IMAGE_ASPECT_DEPTH_BIT|(stencil?VK_IMAGE_ASPECT_STENCIL_BIT:0);
@@ -44,6 +46,33 @@ int main(int argc,char** argv){
  };
  allocate(color,VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_ASPECT_COLOR_BIT,cv);allocate(depth,stencil?VK_FORMAT_D32_SFLOAT_S8_UINT:VK_FORMAT_D32_SFLOAT,VK_IMAGE_ASPECT_DEPTH_BIT,dv);
  VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};pci.queueFamilyIndex=choice.queueFamily;pci.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;VkCommandPool pool{};check(vkCreateCommandPool(device,&pci,nullptr,&pool));VkCommandBufferAllocateInfo cai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};cai.commandPool=pool;cai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;cai.commandBufferCount=1;VkCommandBuffer cb{};check(vkAllocateCommandBuffers(device,&cai,&cb));ReadbackBuffer read{};assert(createReadbackBuffer(choice.device,device,1280*720*8,&read));
+ VkBuffer probeBuffer{};VkDeviceMemory probeMemory{};VkDescriptorSet probeSet{};
+ VkPipelineLayout probeLayout{};VkPipeline probePipeline{};
+ auto nativeBind=(PFN_vkCmdBindPipeline)vkGetDeviceProcAddr(device,"vkCmdBindPipeline");
+ auto nativeSets=(PFN_vkCmdBindDescriptorSets)vkGetDeviceProcAddr(device,"vkCmdBindDescriptorSets");
+ auto nativeConstants=(PFN_vkCmdPushConstants)vkGetDeviceProcAddr(device,"vkCmdPushConstants");
+ if(computeProbe){
+  VkBufferCreateInfo bc{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};bc.size=4;bc.usage=VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+  check(vkCreateBuffer(device,&bc,nullptr,&probeBuffer));VkMemoryRequirements req{};vkGetBufferMemoryRequirements(device,probeBuffer,&req);
+  VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};ai.allocationSize=req.size;
+  ai.memoryTypeIndex=findMemoryType(choice.device,req.memoryTypeBits,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  check(vkAllocateMemory(device,&ai,nullptr,&probeMemory));check(vkBindBufferMemory(device,probeBuffer,probeMemory,0));
+  VkDescriptorSetLayoutBinding binding{0,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr};
+  VkDescriptorSetLayoutCreateInfo sl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};sl.bindingCount=1;sl.pBindings=&binding;
+  VkDescriptorSetLayout layout{};check(vkCreateDescriptorSetLayout(device,&sl,nullptr,&layout));
+  VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1};VkDescriptorPoolCreateInfo dp{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};dp.maxSets=1;dp.poolSizeCount=1;dp.pPoolSizes=&size;
+  VkDescriptorPool descriptors{};check(vkCreateDescriptorPool(device,&dp,nullptr,&descriptors));
+  VkDescriptorSetAllocateInfo sa{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};sa.descriptorPool=descriptors;sa.descriptorSetCount=1;sa.pSetLayouts=&layout;
+  check(vkAllocateDescriptorSets(device,&sa,&probeSet));VkDescriptorBufferInfo buffer{probeBuffer,0,4};VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};write.dstSet=probeSet;write.descriptorCount=1;write.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;write.pBufferInfo=&buffer;
+  vkUpdateDescriptorSets(device,1,&write,0,nullptr);
+  VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT,0,4};VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};pl.setLayoutCount=1;pl.pSetLayouts=&layout;pl.pushConstantRangeCount=1;pl.pPushConstantRanges=&range;
+  check(vkCreatePipelineLayout(device,&pl,nullptr,&probeLayout));
+  std::ifstream input("/tmp/native-compute-probe.spv",std::ios::binary|std::ios::ate);assert(input);
+  const auto bytes=input.tellg();std::vector<uint32_t> words((size_t(bytes)+3)/4);input.seekg(0);input.read(reinterpret_cast<char*>(words.data()),bytes);
+  VkShaderModuleCreateInfo sm{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};sm.codeSize=size_t(bytes);sm.pCode=words.data();VkShaderModule module{};check(vkCreateShaderModule(device,&sm,nullptr,&module));
+  VkComputePipelineCreateInfo cp{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};cp.stage={VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};cp.stage.stage=VK_SHADER_STAGE_COMPUTE_BIT;cp.stage.module=module;cp.stage.pName="main";cp.layout=probeLayout;
+  check(vkCreateComputePipelines(device,VK_NULL_HANDLE,1,&cp,nullptr,&probePipeline));vkDestroyShaderModule(device,module,nullptr);
+ }
  VkImageLayout sourceLayout=VK_IMAGE_LAYOUT_UNDEFINED;
  for(unsigned frame=0;frame<12;frame++){
   check(vkResetCommandBuffer(cb,0));VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};check(vkBeginCommandBuffer(cb,&bi));
@@ -55,10 +84,22 @@ int main(int argc,char** argv){
   camera[52]=2;camera[57]=3;camera[62]=1.0001f;camera[63]=-.1f;
   Bs4PortSceneFrame handoff{sizeof(handoff),1,frame+1,7,cb,dv,5,{1920,1080},camera.data(),sizeof(camera),1,-1,0,0};assert(bs4_fsr31_port_scene(&handoff));
   FfxVkPortableDeviceInfo owned{};owned.structSize=sizeof(owned);owned.instance=instance;owned.physicalDevice=choice.device;owned.device=device;owned.queue=queue;owned.queueFamilyIndex=choice.queueFamily;owned.getDeviceProcAddr=vkGetDeviceProcAddr;owned.synchronization2Enabled=VK_TRUE;owned.shaderStorageImageWriteWithoutFormatEnabled=VK_TRUE;
+  const uint32_t expectedProbe=0x12340000u+frame;
+  if(computeProbe){nativeBind(cb,VK_PIPELINE_BIND_POINT_COMPUTE,probePipeline);nativeSets(cb,VK_PIPELINE_BIND_POINT_COMPUTE,probeLayout,0,1,&probeSet,0,nullptr);nativeConstants(cb,probeLayout,VK_SHADER_STAGE_COMPUTE_BIT,0,4,&expectedProbe);}
   const auto result=bs4_fsr31_generic_render(&owned,cb,cv,{width,height},{1280,720},4,0,1,dv);
   if(!frame){assert(!result);check(vkEndCommandBuffer(cb));VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cb;check(vkQueueSubmit(queue,1,&submit,nullptr));check(vkQueueWaitIdle(queue));sourceLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;bs4_fsr31_port_end_frame();continue;}
-  assert(result);const auto view=reinterpret_cast<VkImageView>(result);VkImage out=bs4_fsr31_output_image(view);assert(out);
+  assert(result);
+  if(computeProbe){
+   // Emulate the native cache: dispatch again WITHOUT rebinding the native
+   // pipeline, sets or constants after the SDK's AMD compute passes.
+   vkCmdDispatch(cb,1,1,1);VkMemoryBarrier2 memory{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+   memory.srcStageMask=VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;memory.srcAccessMask=VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+   memory.dstStageMask=VK_PIPELINE_STAGE_2_HOST_BIT;memory.dstAccessMask=VK_ACCESS_2_HOST_READ_BIT;
+   VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};dep.memoryBarrierCount=1;dep.pMemoryBarriers=&memory;vkCmdPipelineBarrier2(cb,&dep);
+  }
+  const auto view=reinterpret_cast<VkImageView>(result);VkImage out=bs4_fsr31_output_image(view);assert(out);
   layout(cb,out,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);VkBufferImageCopy copy{};copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.imageExtent={1280,720,1};vkCmdCopyImageToBuffer(cb,out,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,read.buffer,1,&copy);layout(cb,out,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);check(vkEndCommandBuffer(cb));VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cb;check(vkQueueSubmit(queue,1,&submit,nullptr));check(vkQueueWaitIdle(queue));
+  if(computeProbe){void* value{};check(vkMapMemory(device,probeMemory,0,4,0,&value));assert(*static_cast<uint32_t*>(value)==expectedProbe);vkUnmapMemory(device,probeMemory);std::printf("PASS cached native compute after AMD frame=%u value=%08x\n",frame,expectedProbe);}
   void* mapped{};check(vkMapMemory(device,read.memory,0,read.allocationSize,0,&mapped));if(!(read.memoryProperties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){VkMappedMemoryRange mr{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};mr.memory=read.memory;mr.size=VK_WHOLE_SIZE;check(vkInvalidateMappedMemoryRanges(device,1,&mr));}auto half=(const uint16_t*)mapped;size_t blue=0;for(size_t i=0;i<1280*720;i++)blue+=(half[i*4+2]>0x3a66&&half[i*4+2]<0x3d00&&half[i*4]<0x34cd);assert(blue>1280*720*99/100);std::printf("PASS frame=%u real FSR3.1 camera dispatch blue_pixels=%zu/921600; upper-left scene/depth crop preserved\n",frame,blue);vkUnmapMemory(device,read.memory);sourceLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;bs4_fsr31_port_end_frame();
  }
  assert(validationErrors==0);std::puts("PASS: zero Vulkan validation errors; actual R13-based camera shader + AMD FSR dispatch");

@@ -310,10 +310,12 @@ void VKAPI_CALL indexed_hook(VkCommandBuffer cb,uint32_t n,uint32_t i,uint32_t f
     drawIndexed(cb,n,i,first,vertex,base);restore(cb,shift);
 }
 void VKAPI_CALL indirect_hook(VkCommandBuffer cb,VkBuffer b,VkDeviceSize off,uint32_t n,uint32_t stride) {
-    observe_draw(cb);drawIndirect(cb,b,off,n,stride);
+    observe_draw(cb);const auto shift=shift_geometry(cb,UINT32_MAX,2);
+    drawIndirect(cb,b,off,n,stride);restore(cb,shift);
 }
 void VKAPI_CALL indexed_indirect_hook(VkCommandBuffer cb,VkBuffer b,VkDeviceSize off,uint32_t n,uint32_t stride) {
-    observe_draw(cb);drawIndexedIndirect(cb,b,off,n,stride);
+    observe_draw(cb);const auto shift=shift_geometry(cb,UINT32_MAX,2);
+    drawIndexedIndirect(cb,b,off,n,stride);restore(cb,shift);
 }
 }
 void bs4_native_scene_begin(VkCommandBuffer cb,const VkRenderingInfo* info) {

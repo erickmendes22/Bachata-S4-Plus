@@ -7,6 +7,7 @@
 #include "flow_spv.h"
 #include "camera_motion_spv.h"
 #include "port_scene_frame.h"
+#include "native_compute_state.h"
 #include <cstdlib>
 #include <vulkan/vulkan.h>
 #include <algorithm>
@@ -292,6 +293,7 @@ static uint64_t generic_render_impl(
         report_once(14, "source already >= presentation size; no forced downsample");
         return 0;
     }
+    if(!bs4_native_compute_can_restore(cb)){report_once(19,"native compute state cannot be restored exactly");return 0;}
     // Explicit opt-in while the native producer is integrated. This is not
     // enabled in a release APK until the R13 renderer supplies the contract.
     Bs4PortCameraDispatch camera{};
@@ -405,6 +407,9 @@ static uint64_t generic_render_impl(
     // Preparation performs resource validation/allocation only. It must not
     // advance the ring/history or record commands into an active render pass.
     if(prepare_only)return 1;
+    struct RestoreNativeCompute {VkCommandBuffer command;
+        explicit RestoreNativeCompute(VkCommandBuffer cb):command(cb){bs4_native_compute_enter_sdk();}
+        ~RestoreNativeCompute(){bs4_native_compute_restore(command);bs4_native_compute_leave_sdk();}} restore_native{cb};
     Frame& f=frames[cursor++%frames.size()];
     transit(cb,f.scene,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     barrier(cb,color.image,VK_IMAGE_ASPECT_COLOR_BIT,color.layout,
@@ -473,7 +478,7 @@ static uint64_t generic_render_impl(
     info.renderSize={internal.width,internal.height};
     info.outputSize={output_extent.width,output_extent.height};
     info.motionVectorScale={1,1};
-    info.jitterOffset=want_port?FfxVkPortableFloat2{camera.motion.jitter[0],camera.motion.jitter[1]}:
+    info.jitterOffset=want_port?FfxVkPortableFloat2{-camera.motion.jitter[0],-camera.motion.jitter[1]}:
                               FfxVkPortableFloat2{0,0};
     const auto now=std::chrono::steady_clock::now();
     float dt=16.6667f;

@@ -3,6 +3,7 @@
 // hashes, no Mesa/Turnip private memory-layout reads.
 #include "vulkan_capture.h"
 #include "native_scene_observer.h"
+#include "native_compute_state.h"
 #include "port_scene_frame.h"
 #include "native_ui_targets.h"
 extern "C" int bs4_fsr31_owner_requested();
@@ -656,7 +657,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_begin_command(
         VkCommandBuffer cb,const VkCommandBufferBeginInfo* info) {
     if (!original_begin_command) return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_begin_command(cb,info);
-    if(status==VK_SUCCESS){bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);
+    if(status==VK_SUCCESS){bs4_native_compute_reset(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);
         if(submitted_owner==cb){submitted_owner=VK_NULL_HANDLE;submitted_scene={};}}
     return status;
 }
@@ -664,14 +665,14 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_reset_command(
         VkCommandBuffer cb,VkCommandBufferResetFlags flags) {
     if(!original_reset_command)return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_reset_command(cb,flags);
-    if(status==VK_SUCCESS){bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);
+    if(status==VK_SUCCESS){bs4_native_compute_reset(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);
         if(submitted_owner==cb){submitted_owner=VK_NULL_HANDLE;submitted_scene={};}}
     return status;
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_free_commands(
         VkDevice device,VkCommandPool pool,uint32_t count,const VkCommandBuffer* cb) {
     if(cb&&count){
-        for(uint32_t i=0;i<count;++i){bs4_native_ui_reset(cb[i]);bs4_native_scene_reset(cb[i]);}
+        for(uint32_t i=0;i<count;++i){bs4_native_compute_reset(cb[i]);bs4_native_ui_reset(cb[i]);bs4_native_scene_reset(cb[i]);}
         std::lock_guard lock{mutex};
         for(uint32_t i=0;i<count;++i){
             command_scenes.erase(cb[i]);
@@ -813,7 +814,7 @@ extern "C" PFN_vkVoidFunction bs4_fsr31_wrap_vulkan_proc(
     BS4_WRAP_GIPA(original_end_rendering_khr,"vkCmdEndRenderingKHR",&bs4_cap_end_rendering_khr)
     BS4_WRAP_GIPA(original_barrier2_khr,"vkCmdPipelineBarrier2KHR",&bs4_cap_barrier2_khr)
     #undef BS4_WRAP_GIPA
-    return bs4_native_scene_wrap(name,proc);
+    return bs4_native_compute_wrap(name,bs4_native_scene_wrap(name,proc));
 }
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
     VkDevice device,const char* name) {
@@ -845,5 +846,5 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
     BS4_WRAP(original_end_rendering_khr,"vkCmdEndRenderingKHR",&bs4_cap_end_rendering_khr)
     BS4_WRAP(original_barrier2_khr,"vkCmdPipelineBarrier2KHR",&bs4_cap_barrier2_khr)
     #undef BS4_WRAP
-    return bs4_native_scene_wrap(name,proc);
+    return bs4_native_compute_wrap(name,bs4_native_scene_wrap(name,proc));
 }
