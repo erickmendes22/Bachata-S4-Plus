@@ -100,7 +100,7 @@ void bs4_probe_resolve(Bs4GpuFrameProbe& p,VkDevice dev){
     Summary s[8]{};bool unusual=false,saturated=false;
     for(unsigned i=0;i<8;i++)if(p.stages&(1u<<i)){
         const auto* data=static_cast<const unsigned char*>(p.mapped)+stride*i;
-        if(i<4||i==6||i==7s[i]=summarize(data,i==1,i==7&&(p.formats[7]==VK_FORMAT_B8G8R8A8_UNORM||p.formats[7]==VK_FORMAT_B8G8R8A8_SRGB));
+        if(i<4||i==6||i==7)s[i]=summarize(data,i==1,i==7&&(p.formats[7]==VK_FORMAT_B8G8R8A8_UNORM||p.formats[7]==VK_FORMAT_B8G8R8A8_SRGB));
         else for(unsigned n=0;n<pixels;n++){
             float x{},y{};
             if(i==4){uint16_t h[2]{};std::memcpy(h,data+n*4,4);x=half(h[0]);y=half(h[1]);}
