@@ -56,7 +56,7 @@ VkSampler sampler{};
 std::vector<Frame> frames;
 Surface previous;
 size_t cursor=0;
-bool has_previous=false;
+bool has_previous=false,abandoned_history=false;
 bool port_inputs=false;
 std::atomic<uint64_t> ready_port_extent{0};
 uint64_t frame_id=0;
@@ -157,7 +157,7 @@ void free_all() {
         free_surface(f.scene);free_surface(f.depth);
         free_surface(f.motion);free_surface(f.output);}
     frames.clear();free_surface(previous);
-    has_previous=false;frame_id=0;cursor=0;
+    has_previous=false;abandoned_history=false;frame_id=0;cursor=0;
 }
 bool build_compute(){
     VkDescriptorSetLayoutBinding bindings[3]{};
@@ -408,7 +408,7 @@ static uint64_t generic_render_impl(
     if(!depth.size.width||!depth.size.height){report_once(11,"depth extent invalid");return 0;}
     if (!want_port && (internal.width!=depth.size.width || internal.height!=depth.size.height) &&
         !depth_can_blit){report_once(12,"scaled depth blit unsupported by GPU");return 0;}
-    if(!fsr || port_inputs!=want_port || config.maxRenderSize.width!=internal.width ||
+    if(abandoned_history || !fsr || port_inputs!=want_port || config.maxRenderSize.width!=internal.width ||
        config.maxRenderSize.height!=internal.height ||
        config.maxOutputSize.width!=output_extent.width ||
        config.maxOutputSize.height!=output_extent.height ||
@@ -613,6 +613,6 @@ extern "C" void bs4_fsr31_temporal_reset_recording(VkCommandBuffer cb) {
     if(!cb)return;
     std::lock_guard lock{mutex};
     for(auto& f:frames)if(f.recorded&&f.recordedBy==cb){
-        f.recorded=false;f.recordedBy={};
+        f.recorded=false;f.recordedBy={};abandoned_history=true;
     }
 }

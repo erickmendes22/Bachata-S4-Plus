@@ -154,6 +154,7 @@ jobs:
           export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name '*lvp*.json' | head -n1)"
           test -n "$VK_ICD_FILENAMES"
           /tmp/bs4-fsr-sdk-smoke | tee port-scene-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke abandon-recording | tee abandoned-recording-gpu.txt
           /tmp/bs4-fsr-sdk-smoke quality-1x | tee -a port-scene-gpu.txt
           /tmp/bs4-fsr-sdk-smoke depth-stencil | tee -a port-scene-gpu.txt
           g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include tools/fsr31-026/tests/r13_composition_gpu_test.cpp -Lbuild-host -lbachata_fsr31 -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/bs4-fsr-sdk-smoke
@@ -191,6 +192,7 @@ jobs:
             shared-target-preservation-gpu.txt
             native-run-scaled-ui-gpu.txt
             automatic-native-ui-gpu.txt
+            abandoned-recording-gpu.txt
             same-cb-overwrite-gpu.txt
             separate-command-buffers-gpu.txt
             overwritten-scene-gpu.txt
