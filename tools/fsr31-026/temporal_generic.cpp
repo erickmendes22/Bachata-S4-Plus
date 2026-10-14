@@ -300,11 +300,11 @@ static uint64_t generic_render_impl(
         return 0;
     }
     Bs4FsrCaptureImage color{},depth{};
-    if(!bs4_fsr31_capture_image(input,&color)){report_once(4,"Vulkan color image view not captured");return 0;}
+    if(!bs4_fsr31_capture_image_at(cb,input,&color)){report_once(4,"Vulkan color image view not captured");return 0;}
     if (pre_ui) {
         // Depth must originate in the same completed Vulkan render pass as
         // the selected reduced scene, not merely the globally newest image.
-        if (!scene_depth_view || !bs4_fsr31_capture_image(scene_depth_view,&depth) ||
+        if (!scene_depth_view || !bs4_fsr31_capture_image_at(cb,scene_depth_view,&depth) ||
             !(depth.aspects & VK_IMAGE_ASPECT_DEPTH_BIT)) {
             report_once(5,"pre-UI matching scene depth image not available");
             return 0;
