@@ -46,6 +46,8 @@ struct RenderTargetTrace {
 std::unordered_map<VkCommandBuffer, RenderTargetTrace> active_color_pass;
 std::unordered_map<VkImage, uint64_t> last_color_write;
 uint64_t trace_pass_counter{};
+std::unordered_map<VkSwapchainKHR,std::vector<VkImage>> tracked_swapchain_images;
+uint64_t present_trace_counter{};
 void trace_color_begin(VkCommandBuffer cb,const VkRenderingInfo* info) {
     if(!cb||!info||!info->colorAttachmentCount||!info->pColorAttachments)return;
     const auto view=info->pColorAttachments[0].imageView;
@@ -109,6 +111,9 @@ PFN_vkResetCommandBuffer original_reset_command{};
 PFN_vkFreeCommandBuffers original_free_commands{};
 PFN_vkQueueSubmit original_queue_submit{};
 PFN_vkQueueSubmit2 original_queue_submit2{};
+PFN_vkGetSwapchainImagesKHR original_get_swapchain_images{};
+PFN_vkQueuePresentKHR original_queue_present{};
+PFN_vkDestroySwapchainKHR original_destroy_swapchain{};
 PFN_vkCreateImage original_create_image{};
 PFN_vkDestroyImage original_destroy_image{};
 PFN_vkCreateImageView original_create_image_view{};
@@ -803,6 +808,54 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_queue_submit2(VkQueue q,uint32
     }
     return result;
 }
+
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_get_swapchain_images(
+        VkDevice device,VkSwapchainKHR swap,uint32_t* count,VkImage* out) {
+    if(!original_get_swapchain_images)return VK_ERROR_INITIALIZATION_FAILED;
+    const auto result=original_get_swapchain_images(device,swap,count,out);
+    if(out&&count) {
+        std::lock_guard lock{mutex};
+        if(result==VK_SUCCESS)tracked_swapchain_images[swap].assign(out,out+*count);
+        else tracked_swapchain_images.erase(swap);
+    }
+    return result;
+}
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_destroy_swapchain(
+        VkDevice device,VkSwapchainKHR swap,const VkAllocationCallbacks* alloc) {
+    {std::lock_guard lock{mutex};tracked_swapchain_images.erase(swap);}
+    if(original_destroy_swapchain)original_destroy_swapchain(device,swap,alloc);
+}
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_queue_present(
+        VkQueue queue,const VkPresentInfoKHR* info) {
+    if(!original_queue_present)return VK_ERROR_INITIALIZATION_FAILED;
+    struct Snapshot {VkSwapchainKHR swap;uint32_t index;VkImage image;uint64_t pass;bool mapped;};
+    std::vector<Snapshot> snapshots;
+    uint64_t seq{};
+    {
+        std::lock_guard lock{mutex};
+        seq=++present_trace_counter;
+        if(info&&info->pSwapchains&&info->pImageIndices)
+            for(uint32_t n=0;n<info->swapchainCount;++n) {
+                const auto swap=info->pSwapchains[n],index=info->pImageIndices[n];
+                const auto it=tracked_swapchain_images.find(swap);
+                const bool mapped=it!=tracked_swapchain_images.end()&&index<it->second.size();
+                const VkImage image=mapped?it->second[index]:VK_NULL_HANDLE;
+                const auto pass=last_color_write.find(image);
+                snapshots.push_back({swap,index,image,pass==last_color_write.end()?0:pass->second,mapped});
+            }
+    }
+    const auto result=original_queue_present(queue,info);
+    if(seq<=48)for(size_t n=0;n<snapshots.size();++n) {
+        const auto& p=snapshots[n];
+        const auto outcome=info&&info->pResults?info->pResults[n]:result;
+        std::fprintf(stderr,
+          "[BS4_FSR31] WSI_PRESENT seq=%llu swap=%p index=%u image=%p mapped=%u last_color_pass=%llu result=%d\n",
+          static_cast<unsigned long long>(seq),reinterpret_cast<void*>(p.swap),p.index,
+          reinterpret_cast<void*>(p.image),p.mapped?1u:0u,
+          static_cast<unsigned long long>(p.pass),static_cast<int>(outcome));
+    }
+    return result;
+}
 extern "C" void bs4_fsr31_capture_present() {
     std::lock_guard lock{mutex};
     submitted_scene={};submitted_owner={};submitted_queue={};multiple_queues=false;
@@ -971,6 +1024,9 @@ extern "C" PFN_vkVoidFunction bs4_fsr31_wrap_vulkan_proc(
     BS4_WRAP_GIPA(original_queue_submit,"vkQueueSubmit",&bs4_cap_queue_submit)
     BS4_WRAP_GIPA(original_queue_submit2,"vkQueueSubmit2",&bs4_cap_queue_submit2)
     BS4_WRAP_GIPA(original_queue_submit2,"vkQueueSubmit2KHR",&bs4_cap_queue_submit2)
+    BS4_WRAP_GIPA(original_get_swapchain_images,"vkGetSwapchainImagesKHR",&bs4_cap_get_swapchain_images)
+    BS4_WRAP_GIPA(original_queue_present,"vkQueuePresentKHR",&bs4_cap_queue_present)
+    BS4_WRAP_GIPA(original_destroy_swapchain,"vkDestroySwapchainKHR",&bs4_cap_destroy_swapchain)
     BS4_WRAP_GIPA(original_end_rendering_khr,"vkCmdEndRenderingKHR",&bs4_cap_end_rendering_khr)
     BS4_WRAP_GIPA(original_barrier2_khr,"vkCmdPipelineBarrier2KHR",&bs4_cap_barrier2_khr)
     #undef BS4_WRAP_GIPA
@@ -1003,6 +1059,9 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
     BS4_WRAP(original_queue_submit,"vkQueueSubmit",&bs4_cap_queue_submit)
     BS4_WRAP(original_queue_submit2,"vkQueueSubmit2",&bs4_cap_queue_submit2)
     BS4_WRAP(original_queue_submit2,"vkQueueSubmit2KHR",&bs4_cap_queue_submit2)
+    BS4_WRAP(original_get_swapchain_images,"vkGetSwapchainImagesKHR",&bs4_cap_get_swapchain_images)
+    BS4_WRAP(original_queue_present,"vkQueuePresentKHR",&bs4_cap_queue_present)
+    BS4_WRAP(original_destroy_swapchain,"vkDestroySwapchainKHR",&bs4_cap_destroy_swapchain)
     BS4_WRAP(original_end_rendering_khr,"vkCmdEndRenderingKHR",&bs4_cap_end_rendering_khr)
     BS4_WRAP(original_barrier2_khr,"vkCmdPipelineBarrier2KHR",&bs4_cap_barrier2_khr)
     #undef BS4_WRAP
