@@ -32,6 +32,7 @@ FfxVkPortableUpscaleCreateInfo current{};
 FfxVkPortableDeviceInfo acquired_device{};
 bool device_attached = false;
 uint32_t created_graphics_family=UINT32_MAX;
+std::atomic<bool> single_graphics_queue{false};
 bool created_synchronization2=false;
 std::atomic<VkInstance> fsr31_tracked_instance{VK_NULL_HANDLE};
 std::atomic<VkPhysicalDevice> fsr31_tracked_physical{VK_NULL_HANDLE};
@@ -52,6 +53,11 @@ BS4_PUBLIC void bs4_fsr31_native_begin(void* scheduler,const void* render_state,
     if(!scheduler||!render_state||!bs4_fsr31_owner_requested())return;
     const char* input=std::getenv("BACHATA_FSR31_INPUT");
     if(!input||std::strcmp(input,"port"))return;
+    // Native scheduler insertion is opt-in: it caused n032-n035 queue
+    // regressions, so normal gameplay uses the Vulkan pre-UI boundary.
+    // Existing GPU harness sets NATIVE_UI=1 explicitly for legacy tests.
+    const char* native=std::getenv("BACHATA_FSR31_NATIVE_UI");
+    if(!native||std::strcmp(native,"1"))return;
     // No native worker operation before an actual verified 3D LDR scene.
     // This keeps menu/streaming passes from adding unbounded callbacks to
     // the renderer's queue when no temporal composition is possible.
@@ -381,6 +387,9 @@ BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice 
         int(features.shaderStorageImageWriteWithoutFormat));
     return 0;
 }
+BS4_PUBLIC int bs4_fsr31_single_graphics_queue() {
+    return single_graphics_queue.load(std::memory_order_acquire)?1:0;
+}
 BS4_PUBLIC int bs4_fsr31_attachment_ready() {
     std::lock_guard<std::mutex> lock(guard);
     return device_attached ? 1 : 0;
@@ -503,6 +512,7 @@ VKAPI_ATTR VkResult VKAPI_CALL fsr31_create_device(
     fsr31_storage_feature_enabled.store(result == VK_SUCCESS);
     if(result==VK_SUCCESS&&output&&*output) {
         uint32_t count=0;vkGetPhysicalDeviceQueueFamilyProperties(physical,&count,nullptr);
+        uint32_t gfxQueues=0;
         if(count&&count<=128) {
             std::vector<VkQueueFamilyProperties> properties(count);
             vkGetPhysicalDeviceQueueFamilyProperties(physical,&count,properties.data());
@@ -512,10 +522,12 @@ VKAPI_ATTR VkResult VKAPI_CALL fsr31_create_device(
                    (properties[q.queueFamilyIndex].queueFlags &
                     (VK_QUEUE_GRAPHICS_BIT|VK_QUEUE_COMPUTE_BIT)) ==
                     (VK_QUEUE_GRAPHICS_BIT|VK_QUEUE_COMPUTE_BIT)) {
-                    created_graphics_family=q.queueFamilyIndex;break;
+                    created_graphics_family=q.queueFamilyIndex;
+                    gfxQueues+=q.queueCount;
                 }
             }
         }
+        single_graphics_queue.store(gfxQueues==1,std::memory_order_release);
         auto* head=static_cast<const VkBaseInStructure*>(ci.pNext);
         for(unsigned n=0;head&&n<64;++n,head=head->pNext) {
             if(head->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES)
