@@ -159,6 +159,7 @@ jobs:
           /tmp/bs4-fsr-sdk-smoke run-scaled-ui | tee native-run-scaled-ui-gpu.txt
           /tmp/bs4-fsr-sdk-smoke owned-ui | tee automatic-native-ui-gpu.txt
           /tmp/bs4-fsr-sdk-smoke cross-cb | tee separate-command-buffers-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke cross-cb-rewrite | tee overwritten-scene-gpu.txt
       - name: Validate ARM64 and exports
         run: |
           set -euxo pipefail
@@ -183,5 +184,6 @@ jobs:
             native-run-scaled-ui-gpu.txt
             automatic-native-ui-gpu.txt
             separate-command-buffers-gpu.txt
+            overwritten-scene-gpu.txt
           if-no-files-found: error
           retention-days: 7
