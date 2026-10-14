@@ -46,6 +46,8 @@ struct ScenePass {
     bool khr = false;
 };
 std::unordered_map<VkCommandBuffer, ScenePass> command_scenes;
+// Vulkan command recording does not update device state until queue submission.
+std::unordered_map<VkCommandBuffer,std::unordered_map<VkImage,VkImageLayout>> recorded_layouts;
 // A cross-command scene is never used at mere render-pass completion.
 // It must have passed through a successful queue submit first.
 ScenePass submitted_scene{};
@@ -92,7 +94,7 @@ void update_layout(VkCommandBuffer cb,uint32_t count, const VkImageMemoryBarrier
     std::lock_guard lock{mutex};
     for (uint32_t i = 0; i < count; ++i) {
         auto it = images.find(barriers[i].image);
-        if (it != images.end()) it->second.layout = barriers[i].newLayout;
+        if (it != images.end()) recorded_layouts[cb][barriers[i].image] = barriers[i].newLayout;
         // Compute/transfer passes can overwrite a previously submitted LDR
         // image without starting any render pass. Retire stale cross-CB
         // candidates before temporal dispatch (n040 guarded color passes only).
@@ -123,7 +125,7 @@ void mirrored_ui_barriers(VkCommandBuffer cb,const VkDependencyInfo* dep,PFN_vkC
     info.imageMemoryBarrierCount=mirrored.size();info.pImageMemoryBarriers=mirrored.data();
     original(cb,&info);update_layout(cb,info.imageMemoryBarrierCount,info.pImageMemoryBarriers);
 }
-void record_rendering(const VkRenderingInfo* info) {
+void record_rendering(VkCommandBuffer cb,const VkRenderingInfo* info) {
     if (!info || !info->pDepthAttachment ||
         !info->pDepthAttachment->imageView) return;
     const auto view = info->pDepthAttachment->imageView;
@@ -138,7 +140,7 @@ void record_rendering(const VkRenderingInfo* info) {
     if (img->second.size.width < extent.width ||
         img->second.size.height < extent.height) return;
     img->second.last_depth_use = ++depth_counter;
-    img->second.layout = info->pDepthAttachment->imageLayout;
+    recorded_layouts[cb][iv->second.image] = info->pDepthAttachment->imageLayout;
 }
 
 // A native pass must fit its actual attachments. Reduce only a proven scene:
@@ -301,7 +303,10 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
             !(dst_i->second.usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
             return false;
         dst=dst_v->second.image;
-        dst_previous_layout=dst_i->second.layout;
+        const auto cb_l=recorded_layouts.find(cmd);
+        const auto own=cb_l==recorded_layouts.end()?nullptr:&cb_l->second;
+        const auto layout=own?own->find(dst):std::unordered_map<VkImage,VkImageLayout>::const_iterator{};
+        dst_previous_layout=(own&&layout!=own->end())?layout->second:dst_i->second.layout;
         dst_w=dst_i->second.size.width;
         dst_h=dst_i->second.size.height;
         completed=eligible;
@@ -380,7 +385,7 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     {
         std::lock_guard lock{mutex};
         const auto current=images.find(dst);
-        if(current!=images.end())current->second.layout=ui_layout;
+        if(current!=images.end())recorded_layouts[cmd][dst]=ui_layout;
     }
     // The background is now populated. Preserve it when the game's UI
     // starts drawing; otherwise a CLEAR loadOp would erase the FSR result.
@@ -554,9 +559,9 @@ extern "C" int bs4_fsr31_run_scaled_ui(VkCommandBuffer cb,VkImageView uiColor,Vk
     }
     begin(cb,&info);
     {
-        std::lock_guard lock{mutex};command_scenes.erase(cb);
-        const auto c=images.find(target.image);if(c!=images.end())c->second.layout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        const auto d=images.find(depthTarget.image);if(d!=images.end())d->second.layout=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);
+        const auto c=images.find(target.image);if(c!=images.end())recorded_layouts[cb][target.image]=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        const auto d=images.find(depthTarget.image);if(d!=images.end())recorded_layouts[cb][depthTarget.image]=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     }
     // Record the actual dispatch *and* the VkImage passed to the HUD blit.
     // A preset, device attach or low-resolution camera is not FSR proof.
@@ -636,6 +641,17 @@ extern "C" int bs4_fsr31_capture_depth(VkExtent2D expected, Bs4FsrCaptureImage* 
 static void observe_submission(VkQueue queue,uint32_t count,const VkSubmitInfo* infos) {
     if(!queue||!infos||!bs4_fsr31_single_graphics_queue())return;
     std::lock_guard lock{mutex};
+    // Mirror the command buffers in their actual queue-submit order, not
+    // their (possibly concurrent/out-of-order) recording order.
+    for(uint32_t i=0;i<count;++i)for(uint32_t n=0;n<infos[i].commandBufferCount;++n) {
+        const auto cmd=infos[i].pCommandBuffers[n];
+        const auto changes=recorded_layouts.find(cmd);
+        if(changes!=recorded_layouts.end())
+            for(const auto& [image,layout]:changes->second) {
+                auto img=images.find(image);
+                if(img!=images.end())img->second.layout=layout;
+            }
+    }
     if(submitted_queue&&submitted_queue!=queue){multiple_queues=true;submitted_scene={};submitted_owner={};return;}
     submitted_queue=queue;
     if(multiple_queues)return;
@@ -654,6 +670,15 @@ static void observe_submission(VkQueue queue,uint32_t count,const VkSubmitInfo* 
 static void observe_submission2(VkQueue queue,uint32_t count,const VkSubmitInfo2* infos) {
     if(!queue||!infos||!bs4_fsr31_single_graphics_queue())return;
     std::lock_guard lock{mutex};
+    for(uint32_t i=0;i<count;++i)for(uint32_t n=0;n<infos[i].commandBufferInfoCount;++n) {
+        const auto cmd=infos[i].pCommandBufferInfos[n].commandBuffer;
+        const auto changes=recorded_layouts.find(cmd);
+        if(changes!=recorded_layouts.end())
+            for(const auto& [image,layout]:changes->second) {
+                auto img=images.find(image);
+                if(img!=images.end())img->second.layout=layout;
+            }
+    }
     if(submitted_queue&&submitted_queue!=queue){multiple_queues=true;submitted_scene={};submitted_owner={};return;}
     submitted_queue=queue;
     if(multiple_queues)return;
@@ -691,7 +716,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_begin_command(
         VkCommandBuffer cb,const VkCommandBufferBeginInfo* info) {
     if (!original_begin_command) return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_begin_command(cb,info);
-    if(status==VK_SUCCESS){bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);
+    if(status==VK_SUCCESS){bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);
         if(submitted_owner==cb){submitted_owner=VK_NULL_HANDLE;submitted_scene={};}}
     return status;
 }
@@ -699,7 +724,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_reset_command(
         VkCommandBuffer cb,VkCommandBufferResetFlags flags) {
     if(!original_reset_command)return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_reset_command(cb,flags);
-    if(status==VK_SUCCESS){bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);
+    if(status==VK_SUCCESS){bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);
         if(submitted_owner==cb){submitted_owner=VK_NULL_HANDLE;submitted_scene={};}}
     return status;
 }
@@ -710,6 +735,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_free_commands(
         std::lock_guard lock{mutex};
         for(uint32_t i=0;i<count;++i){
             command_scenes.erase(cb[i]);
+            recorded_layouts.erase(cb[i]);
             if(submitted_owner==cb[i]){submitted_owner={};submitted_scene={};}
         }}
     if(original_free_commands)original_free_commands(device,pool,count,cb);
@@ -734,6 +760,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_destroy_image(
             if(v!=views.end()&&v->second.image==img){submitted_owner={};submitted_scene={};}
         }
         images.erase(img);
+        for(auto& [cb,layouts]:recorded_layouts)layouts.erase(img);
     }
     if(original_destroy_image) original_destroy_image(dev,img,ac);
 }
@@ -758,7 +785,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering(
     VkCommandBuffer cb,const VkRenderingInfo* info) {
     VkRenderingInfo redirected{};VkRenderingAttachmentInfo redirectedColor{},redirectedDepth{},redirectedStencil{};
     if(bs4_native_ui_rendering(cb,info,redirected,redirectedColor,redirectedDepth,redirectedStencil)) {
-        record_rendering(&redirected);
+        record_rendering(cb,&redirected);
         if(original_begin_rendering)original_begin_rendering(cb,&redirected);return;
     }
     // Dispatch BEFORE recording the UI depth attachment; otherwise generic
@@ -770,7 +797,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering(
     std::vector<VkRenderingAttachmentInfo> overrides;
     const bool composite=first_pre_ui_color(cb,info,modified,overrides);
     bs4_native_scene_begin(cb,info);
-    record_rendering(info);
+    record_rendering(cb,info);
     if(original_begin_rendering)
         original_begin_rendering(cb,composite?&modified:info);
 }
@@ -789,7 +816,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering_khr(
     VkCommandBuffer cb,const VkRenderingInfo* info) {
     VkRenderingInfo redirected{};VkRenderingAttachmentInfo redirectedColor{},redirectedDepth{},redirectedStencil{};
     if(bs4_native_ui_rendering(cb,info,redirected,redirectedColor,redirectedDepth,redirectedStencil)) {
-        record_rendering(&redirected);
+        record_rendering(cb,&redirected);
         if(original_begin_rendering_khr)original_begin_rendering_khr(cb,&redirected);return;
     }
     // Dispatch BEFORE recording the UI depth attachment; otherwise generic
@@ -805,7 +832,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering_khr(
         if(it!=command_scenes.end()&&it->second.inside)it->second.khr=true;
     }
     bs4_native_scene_begin(cb,info);
-    record_rendering(info);
+    record_rendering(cb,info);
     if(original_begin_rendering_khr)
         original_begin_rendering_khr(cb,composite?&modified:info);
 }
