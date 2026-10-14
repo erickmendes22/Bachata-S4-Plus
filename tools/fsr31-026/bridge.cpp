@@ -33,7 +33,7 @@ FfxVkPortableDeviceInfo acquired_device{};
 bool device_attached = false;
 uint32_t created_graphics_family=UINT32_MAX;
 std::atomic<bool> single_graphics_queue{false};
-bool created_synchronization2=false;
+bool created_synchronization2=false,created_float16=false,created_subgroup_control=false,created_full_subgroups=false;
 std::atomic<VkInstance> fsr31_tracked_instance{VK_NULL_HANDLE};
 std::atomic<VkPhysicalDevice> fsr31_tracked_physical{VK_NULL_HANDLE};
 bool valid = false;
@@ -369,6 +369,9 @@ BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice 
     info.queue = graphics_queue;
     info.queueFamilyIndex = family;
     info.synchronization2Enabled = created_synchronization2 ? VK_TRUE : VK_FALSE;
+    info.shaderFloat16Enabled=created_float16?VK_TRUE:VK_FALSE;
+    info.subgroupSizeControlEnabled=created_subgroup_control?VK_TRUE:VK_FALSE;
+    info.computeFullSubgroupsEnabled=created_full_subgroups?VK_TRUE:VK_FALSE;
     VkPhysicalDeviceFeatures features{};
     vkGetPhysicalDeviceFeatures(physical, &features);
     // The BACHATA Vulkan device may not enable this optional capability.
@@ -378,6 +381,8 @@ BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice 
     info.shaderStorageImageWriteWithoutFormatEnabled =
         fsr31_storage_feature_enabled.load() ? VK_TRUE : VK_FALSE;
     acquired_device = info;
+    std::fprintf(stderr,"[BS4_FSR31] device capabilities enabled fp16=%u subgroup_control=%u full_subgroups=%u\n",
+        unsigned(info.shaderFloat16Enabled),unsigned(info.subgroupSizeControlEnabled),unsigned(info.computeFullSubgroupsEnabled));
     device_attached = true;
     VkPhysicalDeviceProperties props{};
     vkGetPhysicalDeviceProperties(physical, &props);
@@ -533,11 +538,22 @@ VKAPI_ATTR VkResult VKAPI_CALL fsr31_create_device(
             }
         }
         single_graphics_queue.store(gfxQueues==1,std::memory_order_release);
+        created_float16=false;created_subgroup_control=false;created_full_subgroups=false;created_synchronization2=false;
         auto* head=static_cast<const VkBaseInStructure*>(ci.pNext);
         for(unsigned n=0;head&&n<64;++n,head=head->pNext) {
-            if(head->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES)
-                created_synchronization2=
-                    reinterpret_cast<const VkPhysicalDeviceVulkan13Features*>(head)->synchronization2;
+            if(head->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES)
+                created_float16=reinterpret_cast<const VkPhysicalDeviceVulkan12Features*>(head)->shaderFloat16;
+            if(head->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES)
+                created_float16=reinterpret_cast<const VkPhysicalDeviceShaderFloat16Int8Features*>(head)->shaderFloat16;
+            if(head->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES){
+                const auto* features=reinterpret_cast<const VkPhysicalDeviceVulkan13Features*>(head);
+                created_synchronization2=features->synchronization2;
+                created_subgroup_control=features->subgroupSizeControl;created_full_subgroups=features->computeFullSubgroups;
+            }
+            if(head->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES){
+                const auto* features=reinterpret_cast<const VkPhysicalDeviceSubgroupSizeControlFeatures*>(head);
+                created_subgroup_control=features->subgroupSizeControl;created_full_subgroups=features->computeFullSubgroups;
+            }
             if(head->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES)
                 created_synchronization2=
                     reinterpret_cast<const VkPhysicalDeviceSynchronization2Features*>(head)->synchronization2;

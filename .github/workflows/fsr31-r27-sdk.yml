@@ -164,6 +164,8 @@ jobs:
           /tmp/bs4-fsr-sdk-smoke 2>&1 | tee r13-composition-gpu.txt
           grep -q "GPU_FRAME_PROBE.*stages=0x3f.*native={cyan:0.*clone={cyan:0.*fsr={cyan:0.*ui={cyan:0.*gpu_completed=1" r13-composition-gpu.txt
           /tmp/bs4-fsr-sdk-smoke patterned-scene 2>&1 | tee patterned-scene-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke fp16-patterned 2>&1 | tee fp16-patterned-gpu.txt
+          grep -q 'device capabilities enabled fp16=1' fp16-patterned-gpu.txt
           /tmp/bs4-fsr-sdk-smoke shared-target | tee shared-target-preservation-gpu.txt
           /tmp/bs4-fsr-sdk-smoke run-scaled-ui | tee native-run-scaled-ui-gpu.txt
           /tmp/bs4-fsr-sdk-smoke owned-ui | tee automatic-native-ui-gpu.txt
@@ -203,6 +205,7 @@ jobs:
             port-scene-gpu.txt
             r13-composition-gpu.txt
             patterned-scene-gpu.txt
+            fp16-patterned-gpu.txt
             shared-target-preservation-gpu.txt
             native-run-scaled-ui-gpu.txt
             automatic-native-ui-gpu.txt
