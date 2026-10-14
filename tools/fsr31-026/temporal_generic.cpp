@@ -7,6 +7,7 @@
 #include "flow_spv.h"
 #include "camera_motion_spv.h"
 #include "port_scene_frame.h"
+#include "native_compute_state.h"
 #include <cstdlib>
 #include <vulkan/vulkan.h>
 #include <algorithm>
@@ -438,6 +439,12 @@ static uint64_t generic_render_impl(
         report_once(19,"temporal slot busy: preserve original scene rather than overwrite in-flight GPU resources");
         return 0;
     }
+    if(!bs4_native_compute_can_restore(cb)){report_once(22,"unsupported native compute state; keep original rendering");return 0;}
+    struct RestoreNativeCompute {
+        VkCommandBuffer cb;
+        explicit RestoreNativeCompute(VkCommandBuffer c):cb(c){bs4_native_compute_enter_sdk();}
+        ~RestoreNativeCompute(){bs4_native_compute_restore(cb);bs4_native_compute_leave_sdk();}
+    } restore{cb};
     Frame& f=*available;
     transit(cb,f.scene,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     barrier(cb,color.image,VK_IMAGE_ASPECT_COLOR_BIT,color.layout,

@@ -1,7 +1,7 @@
 name: Validate FSR SDK hooks for existing R27 core025 (no core build)
 on:
   push:
-    branches: [feature/r27-fsr31-existing025]
+    branches: [feature/r27-fsr31-existing025, fix/n042-cyan-input]
     paths:
       - 'tools/fsr31-026/**'
       - '.github/workflows/fsr31-r27-sdk.yml'
@@ -92,6 +92,7 @@ jobs:
             tools/fsr31-026/vulkan_capture.cpp
             tools/fsr31-026/temporal_generic.cpp
             tools/fsr31-026/port_scene_frame.cpp
+            tools/fsr31-026/native_compute_state.cpp
             tools/fsr31-026/native_draw_handoff.cpp
             tools/fsr31-026/native_scene_observer.cpp
             tools/fsr31-026/native_ui_targets.cpp)
@@ -131,6 +132,8 @@ jobs:
           PY_SHADER
           g++ -std=c++17 -Wall -Wextra -Werror -I/usr/include tools/fsr31-026/tests/native_depth_stencil_attachment_test.cpp -o /tmp/r27-depth-stencil-test
           /tmp/r27-depth-stencil-test
+          g++ -std=c++17 -Wall -Wextra -Werror -pthread tools/fsr31-026/native_compute_state.cpp tools/fsr31-026/tests/native_compute_state_test.cpp -o /tmp/native-compute-test
+          /tmp/native-compute-test
           python3 tools/fsr31-026/tests/scene_transition_regression.py
           g++ -std=c++17 -pthread -I/usr/include tools/fsr31-026/port_scene_frame.cpp tools/fsr31-026/tests/port_scene_frame_test.cpp -o /tmp/port-scene-test
           /tmp/port-scene-test
@@ -159,6 +162,11 @@ jobs:
           /tmp/bs4-fsr-sdk-smoke run-scaled-ui | tee native-run-scaled-ui-gpu.txt
           /tmp/bs4-fsr-sdk-smoke owned-ui | tee automatic-native-ui-gpu.txt
           /tmp/bs4-fsr-sdk-smoke cross-cb | tee separate-command-buffers-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke same-cb-overwrite | tee same-cb-overwrite-gpu.txt
+          if BS4_TEST_KEEP_REWRITTEN_LOCAL_SCENE=1 /tmp/bs4-fsr-sdk-smoke same-cb-overwrite > /tmp/stale-local.txt 2>&1; then
+            echo 'Old local-candidate behavior unexpectedly passed'; exit 1
+          fi
+          grep 'REPRODUCED stale local scene' /tmp/stale-local.txt | tee -a same-cb-overwrite-gpu.txt
           /tmp/bs4-fsr-sdk-smoke cross-cb-rewrite | tee overwritten-scene-gpu.txt
       - name: Validate ARM64 and exports
         run: |
@@ -183,6 +191,7 @@ jobs:
             shared-target-preservation-gpu.txt
             native-run-scaled-ui-gpu.txt
             automatic-native-ui-gpu.txt
+            same-cb-overwrite-gpu.txt
             separate-command-buffers-gpu.txt
             overwritten-scene-gpu.txt
           if-no-files-found: error
