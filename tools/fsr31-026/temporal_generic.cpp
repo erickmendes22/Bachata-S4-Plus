@@ -218,7 +218,7 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
         if(!alloc(f.scene,color_format,render,sampled,VK_IMAGE_ASPECT_COLOR_BIT) ||
            !alloc(f.depth,depth_format,render,sampled,VK_IMAGE_ASPECT_DEPTH_BIT) ||
            !alloc(f.motion,VK_FORMAT_R16G16_SFLOAT,render,storage,VK_IMAGE_ASPECT_COLOR_BIT) ||
-           !alloc(f.output,VK_FORMAT_R16G16B16A16_SFLOAT,output,storage,VK_IMAGE_ASPECT_COLOR_BIT))
+           !alloc(f.output,VK_FORMAT_R8G8B8A8_UNORM,output,storage,VK_IMAGE_ASPECT_COLOR_BIT))
             return false;
         VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         ai.descriptorPool=descriptors;ai.descriptorSetCount=1;ai.pSetLayouts=&desc_layout;
