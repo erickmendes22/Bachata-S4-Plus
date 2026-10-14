@@ -208,6 +208,15 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
                     stage.extent={w,h};
                     stage.inside=true;
                     stage.ready=false;
+                    static bool firstLdr=false;
+                    if(!firstLdr) {
+                        firstLdr=true;
+                        std::fprintf(stderr,
+                            "[BS4_FSR31] FIRST_LDR_SCENE_CAPTURE scene=%ux%u "
+                            "source=%p depth=%p command=%p\\n",
+                            w,h,reinterpret_cast<void*>(stage.color),
+                            reinterpret_cast<void*>(stage.depth),reinterpret_cast<void*>(cmd));
+                    }
                 }
             }
             return false;
