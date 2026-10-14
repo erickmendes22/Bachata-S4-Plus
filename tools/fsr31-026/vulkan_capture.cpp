@@ -285,6 +285,23 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
                 "[BS4_FSR31] SUBMITTED_LDR_INVALIDATED_REWRITTEN view=%p command=%p\\n",
                 reinterpret_cast<void*>(view),reinterpret_cast<void*>(cmd));}
         }
+        // A subsequent rendering instance can write an existing attachment
+        // without any layout transition. In particular, a partial pass using
+        // LOAD leaves the old layout intact: the barrier observer cannot prove
+        // that the previously completed scene still owns these pixels.
+        if(stage.ready&&write_view!=views.end()) {
+            const auto old=views.find(stage.color);
+            if(old!=views.end()&&old->second.image==write_view->second.image) {
+#ifdef BS4_FSR31_TEST_HARNESS
+                if(!std::getenv("BS4_TEST_KEEP_PARTIAL_SCENE"))
+#endif
+                stage={};
+                static bool logged=false;
+                if(!logged){logged=true;std::fprintf(stderr,
+                    "[BS4_FSR31] LOCAL_SCENE_REUSED_ATTACHMENT area=%ux%u offset=%d,%d\n",
+                    w,h,info->renderArea.offset.x,info->renderArea.offset.y);}
+            }
+        }
         // Never activate on menu frames that did not contain a 3D scene.
         // Support 640x360, 960x540, 1152x648; 1280x720 does not need
         // temporal upscale if the requested presentation is also 720p.
@@ -301,6 +318,24 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
             // scene contents into a later HUD pass.
             stage={};
             if(port&&info->colorAttachmentCount!=1)return false;
+            // EndRendering makes a scene readable only if its color was
+            // stored. DONT_CARE/NONE permit tile-based GPUs to discard it.
+            // Copying those undefined contents later is not a valid FSR input.
+            // The blit below reads mip 0/layer 0 from origin zero, so reject
+            // partial/offset, layered and resolved passes rather than silently
+            // describing them as a complete camera frame.
+            if(info->renderArea.offset.x||info->renderArea.offset.y||
+               info->viewMask||info->layerCount!=1||
+               info->pColorAttachments[0].storeOp!=VK_ATTACHMENT_STORE_OP_STORE||
+               info->pColorAttachments[0].resolveMode||
+               info->pColorAttachments[0].resolveImageView) {
+                static bool logged=false;
+                if(!logged){logged=true;std::fprintf(stderr,
+                    "[BS4_FSR31] LDR_REJECTED_UNSTORED_OR_PARTIAL store=%d offset=%d,%d layers=%u resolve=%u\n",
+                    int(info->pColorAttachments[0].storeOp),info->renderArea.offset.x,
+                    info->renderArea.offset.y,info->layerCount,unsigned(info->pColorAttachments[0].resolveMode));}
+                return false;
+            }
             if(port&&(!camera_ready||camera_size.width!=w||camera_size.height!=h))return false;
             const auto v=views.find(view);
             // Match the Bloodborne Port's OnColorTarget rule: an LDR target

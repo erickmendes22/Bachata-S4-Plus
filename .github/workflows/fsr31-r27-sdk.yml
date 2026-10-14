@@ -165,6 +165,12 @@ jobs:
           /tmp/bs4-fsr-sdk-smoke cross-cb | tee separate-command-buffers-gpu.txt
           /tmp/bs4-fsr-sdk-smoke depth-access | tee depth-access-gpu.txt
           /tmp/bs4-fsr-sdk-smoke depth-clear | tee depth-clear-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke partial-same-layout | tee partial-same-layout-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke discarded-color | tee discarded-color-gpu.txt
+          if BS4_TEST_KEEP_PARTIAL_SCENE=1 /tmp/bs4-fsr-sdk-smoke partial-same-layout > /tmp/stale-partial.txt 2>&1; then
+            echo 'Old partial-pass behavior unexpectedly passed'; exit 1
+          fi
+          grep 'REPRODUCED stale partial scene' /tmp/stale-partial.txt | tee -a partial-same-layout-gpu.txt
           /tmp/bs4-fsr-sdk-smoke same-cb-overwrite | tee same-cb-overwrite-gpu.txt
           if BS4_TEST_KEEP_REWRITTEN_LOCAL_SCENE=1 /tmp/bs4-fsr-sdk-smoke same-cb-overwrite > /tmp/stale-local.txt 2>&1; then
             echo 'Old local-candidate behavior unexpectedly passed'; exit 1
@@ -197,6 +203,8 @@ jobs:
             abandoned-recording-gpu.txt
             depth-access-gpu.txt
             depth-clear-gpu.txt
+            partial-same-layout-gpu.txt
+            discarded-color-gpu.txt
             same-cb-overwrite-gpu.txt
             separate-command-buffers-gpu.txt
             overwritten-scene-gpu.txt
