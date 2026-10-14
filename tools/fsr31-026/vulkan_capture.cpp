@@ -939,7 +939,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_present(VkQueue q,const VkPres
       }
     }
     VkResult result=original_present(q,p);
-    if(seq<=48)for(size_t i=0;i<hits.size();++i){
+    if(seq<=8192)for(size_t i=0;i<hits.size();++i){
       const auto& t=hits[i];
       std::fprintf(stderr,"[BS4_FSR31] WSI_PRESENT seq=%llu image=%p index=%u mapped=%d last_color_pass=%llu result=%d\\n",
           (unsigned long long)seq,reinterpret_cast<void*>(t.image),t.index,int(t.mapped),
