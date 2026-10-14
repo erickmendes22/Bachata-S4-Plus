@@ -258,9 +258,30 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
             if(port&&info->colorAttachmentCount!=1)return false;
             if(port&&(!camera_ready||camera_size.width!=w||camera_size.height!=h))return false;
             const auto v=views.find(view);
+            // Match the Bloodborne Port's OnColorTarget rule: an LDR target
+            // must belong to the G-buffer camera's depth allocation. A
+            // visually similar RGBA8 intermediate is not necessarily the
+            // finished tonemapped scene (normal buffers can look cyan/white).
+            bool camera_attachment_match=!port;
+            if(port&&camera_depth) {
+                const auto depthView=views.find(camera_depth);
+                if(depthView!=views.end()) {
+                    const auto depthImage=images.find(depthView->second.image);
+                    const auto colorImage=v!=views.end()?images.find(v->second.image):images.end();
+                    if(depthImage!=images.end()&&colorImage!=images.end()) {
+                        const auto& d=depthImage->second.size;
+                        const auto& c=colorImage->second.size;
+                        camera_attachment_match=(d.width==c.width&&d.height==c.height);
+                        static bool loggedComparison=false;
+                        if(!loggedComparison){loggedComparison=true;std::fprintf(stderr,
+                            "[BS4_FSR31] LDR_CAMERA_BACKING_MATCH color=%ux%u depth=%ux%u match=%d\\n",
+                            c.width,c.height,d.width,d.height,int(camera_attachment_match));}
+                    }
+                }
+            }
             if (v!=views.end()) {
                 const auto i=images.find(v->second.image);
-                if (i!=images.end() &&
+                if (i!=images.end() &&camera_attachment_match&&
                     (i->second.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) &&
                     (!port||i->second.format==VK_FORMAT_R8G8B8A8_UNORM) &&
                     i->second.size.width>=w && i->second.size.width<=w+32 &&
