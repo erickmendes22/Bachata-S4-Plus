@@ -39,6 +39,7 @@ bool valid = false;
 }
 #define BS4_PUBLIC extern "C" __attribute__((visibility("default")))
 extern "C" int bs4_fsr31_owner_requested();
+extern "C" int bs4_fsr31_any_scene_ready();
 namespace {
 void native_draw_worker(const void* payload,uint64_t command) {
     Bs4NativeRenderState state{};std::memcpy(&state,payload,sizeof(state));
@@ -51,6 +52,10 @@ BS4_PUBLIC void bs4_fsr31_native_begin(void* scheduler,const void* render_state,
     if(!scheduler||!render_state||!bs4_fsr31_owner_requested())return;
     const char* input=std::getenv("BACHATA_FSR31_INPUT");
     if(!input||std::strcmp(input,"port"))return;
+    // No native worker operation before an actual verified 3D LDR scene.
+    // This keeps menu/streaming passes from adding unbounded callbacks to
+    // the renderer's queue when no temporal composition is possible.
+    if(!bs4_fsr31_any_scene_ready())return;
     Bs4NativeRenderState state{};std::memcpy(&state,render_state,sizeof(state));
     // GBuffer/MRT and attachment-free passes cannot contain a native HUD draw.
     // Small offscreen post-processes (e.g. 320x180) are not our
