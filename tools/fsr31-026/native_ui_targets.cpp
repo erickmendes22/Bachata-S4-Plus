@@ -62,7 +62,7 @@ int bs4_native_ui_draw(VkCommandBuffer cb,const Bs4NativeRenderState& state) {
     {std::lock_guard lock{mutex};const auto it=scopes.find(cb);if(it!=scopes.end())active=it->second;}
     if(active.source) {
         Bs4FsrCaptureImage bound{};
-        const bool same=state.colorCount==1&&bs4_fsr31_capture_image(reinterpret_cast<VkImageView>(state.colors[0].view),&bound)&&bound.image==active.source;
+        const bool same=state.colorCount==1&&bs4_fsr31_capture_image_at(cb,reinterpret_cast<VkImageView>(state.colors[0].view),&bound)&&bound.image==active.source;
         // Always restore native values on other targets, including a draw for
         // which native dynamic-state caching emitted no new Vulkan commands.
         bs4_native_scene_apply_ui_scale(cb,active.guest,{1280,720},same,hardware);
@@ -76,11 +76,11 @@ int bs4_native_ui_draw(VkCommandBuffer cb,const Bs4NativeRenderState& state) {
        !bs4_native_scene_ui_state(cb,boundary)||
        state.colorCount!=1||!boundary.color||
        boundary.color!=reinterpret_cast<VkImageView>(state.colors[0].view)||
-       !bs4_fsr31_capture_image(color,&source)||source.format!=VK_FORMAT_R8G8B8A8_UNORM||
+       !bs4_fsr31_capture_image_at(cb,color,&source)||source.format!=VK_FORMAT_R8G8B8A8_UNORM||
        !bs4_native_scene_can_ui_scale(cb,extent,{1280,720},hardware))return 0;
     VkFormat depthFormat=VK_FORMAT_UNDEFINED;
     if(boundary.depth) {
-        if(!bs4_fsr31_capture_image(boundary.depth,&nativeDepth))return 0;
+        if(!bs4_fsr31_capture_image_at(cb,boundary.depth,&nativeDepth))return 0;
         depthFormat=nativeDepth.format;
     }
     // Allocate before changing the rendering instance. Lifetimes follow the
@@ -114,14 +114,14 @@ void bs4_native_ui_release(VkImage image) {
 }
 bool bs4_native_ui_output(VkCommandBuffer cb,Bs4FsrCaptureImage& out) {
     VkImageView view{};{std::lock_guard lock{mutex};const auto it=scopes.find(cb);if(it==scopes.end())return false;view=it->second.color;}
-    return bs4_fsr31_capture_image(view,&out);
+    return bs4_fsr31_capture_image_at(cb,view,&out);
 }
 
 VkImageView bs4_native_ui_sampled_view(VkCommandBuffer cb,VkImageView view) {
     Scope scope{};{std::lock_guard lock{mutex};const auto it=scopes.find(cb);if(it==scopes.end())return view;scope=it->second;}
     Bs4FsrCaptureImage source{},output{};VkImageViewCreateInfo ci{};
-    if(!bs4_fsr31_capture_image(view,&source)||source.image!=scope.source||
-       !bs4_fsr31_capture_image(scope.color,&output)||!bs4_fsr31_capture_view(view,&ci)||
+    if(!bs4_fsr31_capture_image_at(cb,view,&source)||source.image!=scope.source||
+       !bs4_fsr31_capture_image_at(cb,scope.color,&output)||!bs4_fsr31_capture_view(view,&ci)||
        ci.pNext||ci.viewType!=VK_IMAGE_VIEW_TYPE_2D||ci.subresourceRange.aspectMask!=VK_IMAGE_ASPECT_COLOR_BIT||
        ci.subresourceRange.baseMipLevel||ci.subresourceRange.levelCount!=1||
        ci.subresourceRange.baseArrayLayer||ci.subresourceRange.layerCount!=1||
@@ -142,7 +142,7 @@ bool bs4_native_ui_barrier(VkCommandBuffer cb,const VkImageMemoryBarrier2& origi
        original.subresourceRange.baseMipLevel||original.subresourceRange.baseArrayLayer||
        original.subresourceRange.levelCount!=1||original.subresourceRange.layerCount!=1||
        original.srcQueueFamilyIndex!=VK_QUEUE_FAMILY_IGNORED||original.dstQueueFamilyIndex!=VK_QUEUE_FAMILY_IGNORED||
-       !bs4_fsr31_capture_image(scope.color,&output))return false;
+       !bs4_fsr31_capture_image_at(cb,scope.color,&output))return false;
     mirrored=original;mirrored.image=output.image;mirrored.oldLayout=output.layout;return true;
 }
 bool bs4_native_ui_rendering(VkCommandBuffer cb,const VkRenderingInfo* original,VkRenderingInfo& info,
@@ -153,7 +153,7 @@ bool bs4_native_ui_rendering(VkCommandBuffer cb,const VkRenderingInfo* original,
     if(!original||original->pNext||original->viewMask||original->layerCount!=1||
        original->renderArea.offset.x||original->renderArea.offset.y||original->colorAttachmentCount!=1||
        !original->pColorAttachments||original->pColorAttachments[0].resolveMode||
-       !bs4_fsr31_capture_image(original->pColorAttachments[0].imageView,&source)||source.image!=scope.source)return false;
+       !bs4_fsr31_capture_image_at(cb,original->pColorAttachments[0].imageView,&source)||source.image!=scope.source)return false;
     if((original->pDepthAttachment||original->pStencilAttachment)&&!scope.depth)return false;
     info=*original;info.renderArea.extent={1280,720};color=original->pColorAttachments[0];
     color.imageView=scope.color;info.pColorAttachments=&color;
