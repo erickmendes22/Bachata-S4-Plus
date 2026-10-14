@@ -414,8 +414,13 @@ bool fsr31_requested() {
         return true;
     }
 #endif
-    // FSR implementation comes from OLD R13; the owner is current core025.
-    // Preserve R27 020/024 routing and do not interpose their Vulkan calls.
+    // Core selection is process-scoped. Once the real core025 mapping is
+    // verified, avoid reopening and rescanning /proc/self/maps on every
+    // intercepted Vulkan call/native callback (thousands per frame on n032).
+    // Negative results stay uncached while the executable is still loading.
+    static std::atomic<bool> confirmed025{false};
+    if(confirmed025.load(std::memory_order_acquire))return true;
+    // Preserve R27 020/024 routing: only cache a positive exact owner match.
     std::ifstream maps("/proc/self/maps");std::string line;
     while(std::getline(maps,line)) {
         const auto pos=line.find("/shadps4-arm64-025");
@@ -426,6 +431,7 @@ bool fsr31_requested() {
             // populated. The Android launcher already supplies the user mode.
             if(!std::getenv("BACHATA_FSR31_INPUT"))
                 setenv("BACHATA_FSR31_INPUT","port",0);
+            confirmed025.store(true,std::memory_order_release);
             return true;
         }
     }
