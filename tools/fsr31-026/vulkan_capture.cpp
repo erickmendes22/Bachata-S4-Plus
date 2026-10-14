@@ -37,6 +37,43 @@ std::unordered_map<VkImage, Image> images;
 std::unordered_map<VkImageView, View> views;
 
 uint64_t depth_counter{};
+struct RenderTargetTrace {
+    VkImage image{};
+    VkImageView view{};
+    VkExtent2D area{};
+    uint64_t pass{};
+};
+std::unordered_map<VkCommandBuffer, RenderTargetTrace> active_color_pass;
+std::unordered_map<VkImage, uint64_t> last_color_write;
+uint64_t trace_pass_counter{};
+void trace_color_begin(VkCommandBuffer cb,const VkRenderingInfo* info) {
+    if(!cb||!info||!info->colorAttachmentCount||!info->pColorAttachments)return;
+    const auto view=info->pColorAttachments[0].imageView;
+    std::lock_guard lock{mutex};
+    const auto it=views.find(view);
+    if(it==views.end())return;
+    active_color_pass[cb]={it->second.image,view,info->renderArea.extent,++trace_pass_counter};
+}
+void trace_color_end(VkCommandBuffer cb) {
+    std::lock_guard lock{mutex};
+    const auto it=active_color_pass.find(cb);
+    if(it==active_color_pass.end())return;
+    const auto t=it->second;
+    last_color_write[t.image]=t.pass;
+    if(t.area.width>=1280&&t.area.height>=720) {
+        static unsigned shown=0;
+        if(shown<12) {
+            ++shown;
+            std::fprintf(stderr,
+                "[BS4_FSR31] POST_UI_COLOR_PASS_END pass=%llu image=%p view=%p cb=%p area=%ux%u\\n",
+                static_cast<unsigned long long>(t.pass),
+                reinterpret_cast<void*>(t.image),reinterpret_cast<void*>(t.view),
+                reinterpret_cast<void*>(cb),t.area.width,t.area.height);
+        }
+    }
+    active_color_pass.erase(it);
+}
+
 struct ScenePass {
     VkImageView color = VK_NULL_HANDLE;
     VkImageView depth = VK_NULL_HANDLE;
@@ -609,7 +646,7 @@ extern "C" int bs4_fsr31_run_scaled_ui(VkCommandBuffer cb,VkImageView uiColor,Vk
     }
     begin(cb,&info);
     {
-        std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);
+        std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);active_color_pass.erase(cb);
         const auto c=images.find(target.image);if(c!=images.end())recorded_layouts[cb][target.image]=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         const auto d=images.find(depthTarget.image);if(d!=images.end())recorded_layouts[cb][depthTarget.image]=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     }
@@ -774,7 +811,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_begin_command(
         VkCommandBuffer cb,const VkCommandBufferBeginInfo* info) {
     if (!original_begin_command) return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_begin_command(cb,info);
-    if(status==VK_SUCCESS){bs4_fsr31_temporal_reset_recording(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);
+    if(status==VK_SUCCESS){bs4_fsr31_temporal_reset_recording(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);active_color_pass.erase(cb);
         if(submitted_owner==cb){submitted_owner=VK_NULL_HANDLE;submitted_scene={};}}
     return status;
 }
@@ -782,7 +819,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_reset_command(
         VkCommandBuffer cb,VkCommandBufferResetFlags flags) {
     if(!original_reset_command)return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_reset_command(cb,flags);
-    if(status==VK_SUCCESS){bs4_fsr31_temporal_reset_recording(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);
+    if(status==VK_SUCCESS){bs4_fsr31_temporal_reset_recording(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);active_color_pass.erase(cb);
         if(submitted_owner==cb){submitted_owner=VK_NULL_HANDLE;submitted_scene={};}}
     return status;
 }
@@ -792,7 +829,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_free_commands(
         for(uint32_t i=0;i<count;++i){bs4_fsr31_temporal_reset_recording(cb[i]);bs4_native_ui_reset(cb[i]);bs4_native_scene_reset(cb[i]);}
         std::lock_guard lock{mutex};
         for(uint32_t i=0;i<count;++i){
-            command_scenes.erase(cb[i]);
+            command_scenes.erase(cb[i]);active_color_pass.erase(cb[i]);
             recorded_layouts.erase(cb[i]);
             if(submitted_owner==cb[i]){submitted_owner={};submitted_scene={};}
         }}
@@ -817,7 +854,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_destroy_image(
             const auto v=views.find(submitted_scene.color);
             if(v!=views.end()&&v->second.image==img){submitted_owner={};submitted_scene={};}
         }
-        images.erase(img);
+        images.erase(img);last_color_write.erase(img);
         for(auto& [cb,layouts]:recorded_layouts)layouts.erase(img);
     }
     if(original_destroy_image) original_destroy_image(dev,img,ac);
@@ -857,10 +894,12 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering(
     bs4_native_scene_begin(cb,info);
     record_rendering(cb,info);
     if(original_begin_rendering)
-        original_begin_rendering(cb,composite?&modified:info);
+        original_begin_rendering(cb,composite?&modified:info); 
+    trace_color_begin(cb,composite?&modified:info);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_end_rendering(VkCommandBuffer cb) {
     if(original_end_rendering) original_end_rendering(cb);
+    trace_color_end(cb);
     scene_rendering_ended(cb);
     bs4_native_scene_end(cb);
 }
@@ -892,10 +931,12 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering_khr(
     bs4_native_scene_begin(cb,info);
     record_rendering(cb,info);
     if(original_begin_rendering_khr)
-        original_begin_rendering_khr(cb,composite?&modified:info);
+        original_begin_rendering_khr(cb,composite?&modified:info); 
+    trace_color_begin(cb,composite?&modified:info);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_end_rendering_khr(VkCommandBuffer cb) {
     if(original_end_rendering_khr) original_end_rendering_khr(cb);
+    trace_color_end(cb);
     scene_rendering_ended(cb);
     bs4_native_scene_end(cb);
 }
