@@ -155,6 +155,10 @@ jobs:
           g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include tools/fsr31-026/tests/port_scene_gpu_test.cpp -Lbuild-host -lbachata_fsr31 -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/bs4-fsr-sdk-smoke
           export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name '*lvp*.json' | head -n1)"
           test -n "$VK_ICD_FILENAMES"
+          g++ -std=c++17 -O2 -pthread tools/fsr31-026/wsi_gpu_probe.cpp tools/fsr31-026/gpu_frame_probe.cpp tools/fsr31-026/tests/wsi_probe_gpu_test.cpp -lvulkan -o /tmp/bs4-wsi-probe-test
+          /tmp/bs4-wsi-probe-test 2>&1 | tee wsi-cyan-gpu.txt
+          grep -q 'WSI_FENCED_PROBE_COMPLETE' wsi-cyan-gpu.txt
+          grep -q 'swapchain={cyan:576' wsi-cyan-gpu.txt
           /tmp/bs4-fsr-sdk-smoke | tee port-scene-gpu.txt
           /tmp/bs4-fsr-sdk-smoke abandon-recording | tee abandoned-recording-gpu.txt
           /tmp/bs4-fsr-sdk-smoke skip-temporal 2>&1 | tee skipped-temporal-gpu.txt
@@ -209,6 +213,7 @@ jobs:
             needed.txt
             symbols.txt
             port-scene-gpu.txt
+            wsi-cyan-gpu.txt
             r13-composition-gpu.txt
             patterned-scene-gpu.txt
             fp16-patterned-gpu.txt
