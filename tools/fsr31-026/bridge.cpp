@@ -41,6 +41,7 @@ bool valid = false;
 #define BS4_PUBLIC extern "C" __attribute__((visibility("default")))
 extern "C" int bs4_fsr31_owner_requested();
 extern "C" int bs4_fsr31_any_scene_ready();
+extern "C" void bs4_fsr31_capture_present();
 namespace {
 void native_draw_worker(const void* payload,uint64_t command) {
     Bs4NativeRenderState state{};std::memcpy(&state,payload,sizeof(state));
@@ -158,7 +159,9 @@ BS4_PUBLIC int bs4_fsr31_supply_temporal_frame(
 BS4_PUBLIC uint64_t bs4_fsr31_try_render(
     uint64_t fsrPassObject, uint64_t commandBuffer, uint64_t inputView,
     uint64_t renderExtent, uint64_t outputExtent, uint64_t settings, uint64_t hdr) {
-    struct EndPortFrame { ~EndPortFrame(){ bs4_fsr31_port_end_frame(); bs4_native_scene_present(); } } end_port_frame;
+    struct EndPortFrame { ~EndPortFrame(){
+        bs4_fsr31_port_end_frame();bs4_fsr31_capture_present();bs4_native_scene_present();
+    } } end_port_frame;
     (void)fsrPassObject;
     (void)inputView;
     (void)renderExtent;
