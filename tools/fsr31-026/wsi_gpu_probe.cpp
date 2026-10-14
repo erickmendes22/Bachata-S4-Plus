@@ -35,7 +35,7 @@ void mark_submitted(VkQueue queue, VkCommandBuffer cb,
     VkFenceCreateInfo ci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
     if(vkCreateFence(slot.device,&ci,nullptr,&slot.completion)!=VK_SUCCESS) {
         ++capture_failures;
-        std::fprintf(stderr,"[BS4_FSR31] WSI_PROBE_FENCE_CREATE_FAILED cb=%p\\n",
+        std::fprintf(stderr,"[BS4_FSR31] WSI_PROBE_FENCE_CREATE_FAILED cb=%p\n",
             reinterpret_cast<void*>(cb));
         return;
     }
@@ -51,7 +51,7 @@ void mark_submitted(VkQueue queue, VkCommandBuffer cb,
         slot.submitted=true;
     } else {
         ++capture_failures;
-        std::fprintf(stderr,"[BS4_FSR31] WSI_PROBE_FENCE_SUBMIT_FAILED code=%d cb=%p\\n",
+        std::fprintf(stderr,"[BS4_FSR31] WSI_PROBE_FENCE_SUBMIT_FAILED code=%d cb=%p\n",
             int(result),reinterpret_cast<void*>(cb));
         vkDestroyFence(slot.device,slot.completion,nullptr);
         slot.completion=VK_NULL_HANDLE;
@@ -92,7 +92,7 @@ extern "C" void bs4_wsi_probe_write(VkDevice device,VkPhysicalDevice physical,
     slot.image=image;
     static unsigned shown=0;
     if(shown++<24)std::fprintf(stderr,
-        "[BS4_FSR31] WSI_GPU_SAMPLE_RECORDED image=%p cb=%p format=%d\\n",
+        "[BS4_FSR31] WSI_GPU_SAMPLE_RECORDED image=%p cb=%p format=%d\n",
         reinterpret_cast<void*>(image),reinterpret_cast<void*>(cb),int(format));
 }
 
