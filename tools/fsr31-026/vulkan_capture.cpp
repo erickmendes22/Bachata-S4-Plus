@@ -55,6 +55,9 @@ VkCommandBuffer submitted_owner{};
 VkQueue submitted_queue{};
 bool multiple_queues=false;
 extern "C" int bs4_fsr31_single_graphics_queue();
+extern "C" void bs4_fsr31_temporal_submitted(VkQueue,VkCommandBuffer,
+    PFN_vkQueueSubmit,PFN_vkQueueSubmit2);
+extern "C" void bs4_fsr31_temporal_reset_recording(VkCommandBuffer);
 bool pre_ui_dispatch_logged=false;
 bool pre_ui_eligible_logged=false;
 using PreUiDispatch=int (*)(VkCommandBuffer,VkImageView,VkExtent2D,VkExtent2D,VkImage*);
@@ -724,14 +727,22 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_queue_submit(VkQueue q,uint32_
        const VkSubmitInfo* infos,VkFence fence) {
     if(!original_queue_submit)return VK_ERROR_INITIALIZATION_FAILED;
     const VkResult result=original_queue_submit(q,count,infos,fence);
-    if(result==VK_SUCCESS)observe_submission(q,count,infos);
+    if(result==VK_SUCCESS) {
+        observe_submission(q,count,infos);
+        if(infos)for(uint32_t i=0;i<count;++i)for(uint32_t n=0;n<infos[i].commandBufferCount;++n)
+            bs4_fsr31_temporal_submitted(q,infos[i].pCommandBuffers[n],original_queue_submit,nullptr);
+    }
     return result;
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_queue_submit2(VkQueue q,uint32_t count,
        const VkSubmitInfo2* infos,VkFence fence) {
     if(!original_queue_submit2)return VK_ERROR_INITIALIZATION_FAILED;
     const VkResult result=original_queue_submit2(q,count,infos,fence);
-    if(result==VK_SUCCESS)observe_submission2(q,count,infos);
+    if(result==VK_SUCCESS) {
+        observe_submission2(q,count,infos);
+        if(infos)for(uint32_t i=0;i<count;++i)for(uint32_t n=0;n<infos[i].commandBufferInfoCount;++n)
+            bs4_fsr31_temporal_submitted(q,infos[i].pCommandBufferInfos[n].commandBuffer,nullptr,original_queue_submit2);
+    }
     return result;
 }
 extern "C" void bs4_fsr31_capture_present() {
@@ -742,7 +753,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_begin_command(
         VkCommandBuffer cb,const VkCommandBufferBeginInfo* info) {
     if (!original_begin_command) return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_begin_command(cb,info);
-    if(status==VK_SUCCESS){bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);
+    if(status==VK_SUCCESS){bs4_fsr31_temporal_reset_recording(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);
         if(submitted_owner==cb){submitted_owner=VK_NULL_HANDLE;submitted_scene={};}}
     return status;
 }
@@ -750,14 +761,14 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_reset_command(
         VkCommandBuffer cb,VkCommandBufferResetFlags flags) {
     if(!original_reset_command)return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_reset_command(cb,flags);
-    if(status==VK_SUCCESS){bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);
+    if(status==VK_SUCCESS){bs4_fsr31_temporal_reset_recording(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);
         if(submitted_owner==cb){submitted_owner=VK_NULL_HANDLE;submitted_scene={};}}
     return status;
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_free_commands(
         VkDevice device,VkCommandPool pool,uint32_t count,const VkCommandBuffer* cb) {
     if(cb&&count){
-        for(uint32_t i=0;i<count;++i){bs4_native_ui_reset(cb[i]);bs4_native_scene_reset(cb[i]);}
+        for(uint32_t i=0;i<count;++i){bs4_fsr31_temporal_reset_recording(cb[i]);bs4_native_ui_reset(cb[i]);bs4_native_scene_reset(cb[i]);}
         std::lock_guard lock{mutex};
         for(uint32_t i=0;i<count;++i){
             command_scenes.erase(cb[i]);
