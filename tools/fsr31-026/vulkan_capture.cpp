@@ -38,7 +38,7 @@ std::unordered_map<VkImage, Image> images;
 std::unordered_map<VkImageView, View> views;
 
 uint64_t depth_counter{};
-struct PresentTrace {VkImage image{};VkImageView view{};uint64_t serial{};};
+struct PresentTrace {VkImage image{};VkImageView view{};uint64_t serial{};VkImageLayout layout{};};
 std::unordered_map<VkSwapchainKHR,std::vector<VkImage>> present_swap_images;
 struct SwapchainDiagnostics {
     VkFormat format=VK_FORMAT_UNDEFINED;
@@ -56,7 +56,7 @@ void present_trace_begin(VkCommandBuffer cb,const VkRenderingInfo* info) {
     if(!info||!info->colorAttachmentCount||!info->pColorAttachments)return;
     std::lock_guard lock{mutex};
     auto v=views.find(info->pColorAttachments[0].imageView);
-    if(v!=views.end())present_active_color[cb]={v->second.image,info->pColorAttachments[0].imageView,++present_serial};
+    if(v!=views.end())present_active_color[cb]={v->second.image,info->pColorAttachments[0].imageView,++present_serial,info->pColorAttachments[0].imageLayout};
 }
 extern "C" void bs4_wsi_probe_write(VkDevice,VkPhysicalDevice,VkCommandBuffer,VkImage,VkImageLayout,VkExtent2D,VkFormat);
 extern "C" void bs4_wsi_probe_submitted1(VkQueue,uint32_t,const VkSubmitInfo*,PFN_vkQueueSubmit);
@@ -87,11 +87,13 @@ void observe_wsi_write(VkCommandBuffer cb,VkImage image,VkImageLayout layout) {
 }
 void present_trace_end(VkCommandBuffer cb) {
     VkImage image=VK_NULL_HANDLE;
+    VkImageLayout layout=VK_IMAGE_LAYOUT_UNDEFINED;
     {
         std::lock_guard lock{mutex};
         const auto it=present_active_color.find(cb);
         if(it==present_active_color.end())return;
         image=it->second.image;
+        layout=it->second.layout;
         present_last_color[image]=it->second.serial;
         static unsigned shown=0;
         if(shown++<128)std::fprintf(stderr,
@@ -100,7 +102,7 @@ void present_trace_end(VkCommandBuffer cb) {
             reinterpret_cast<void*>(it->second.view),reinterpret_cast<void*>(cb));
         present_active_color.erase(it);
     }
-    observe_wsi_write(cb,image,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    observe_wsi_write(cb,image,layout);
 }
 
 struct ScenePass {
@@ -1239,6 +1241,8 @@ extern "C" PFN_vkVoidFunction bs4_fsr31_wrap_vulkan_proc(
     BS4_WRAP_GIPA(original_blit_image,"vkCmdBlitImage",&bs4_cap_blit_image)
     BS4_WRAP_GIPA(original_copy_image2,"vkCmdCopyImage2",&bs4_cap_copy_image2)
     BS4_WRAP_GIPA(original_blit_image2,"vkCmdBlitImage2",&bs4_cap_blit_image2)
+    BS4_WRAP_GIPA(original_copy_image2,"vkCmdCopyImage2KHR",&bs4_cap_copy_image2)
+    BS4_WRAP_GIPA(original_blit_image2,"vkCmdBlitImage2KHR",&bs4_cap_blit_image2)
     BS4_WRAP_GIPA(original_swap_create,"vkCreateSwapchainKHR",&bs4_cap_swap_create)
     BS4_WRAP_GIPA(original_swap_images,"vkGetSwapchainImagesKHR",&bs4_cap_swap_images)
     BS4_WRAP_GIPA(original_present,"vkQueuePresentKHR",&bs4_cap_present)
@@ -1280,6 +1284,8 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
     BS4_WRAP(original_blit_image,"vkCmdBlitImage",&bs4_cap_blit_image)
     BS4_WRAP(original_copy_image2,"vkCmdCopyImage2",&bs4_cap_copy_image2)
     BS4_WRAP(original_blit_image2,"vkCmdBlitImage2",&bs4_cap_blit_image2)
+    BS4_WRAP(original_copy_image2,"vkCmdCopyImage2KHR",&bs4_cap_copy_image2)
+    BS4_WRAP(original_blit_image2,"vkCmdBlitImage2KHR",&bs4_cap_blit_image2)
     BS4_WRAP(original_swap_create,"vkCreateSwapchainKHR",&bs4_cap_swap_create)
     BS4_WRAP(original_swap_images,"vkGetSwapchainImagesKHR",&bs4_cap_swap_images)
     BS4_WRAP(original_present,"vkQueuePresentKHR",&bs4_cap_present)
