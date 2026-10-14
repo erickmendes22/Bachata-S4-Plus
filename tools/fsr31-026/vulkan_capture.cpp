@@ -45,6 +45,13 @@ struct ScenePass {
     bool khr = false;
 };
 std::unordered_map<VkCommandBuffer, ScenePass> command_scenes;
+// A cross-command scene is never used at mere render-pass completion.
+// It must have passed through a successful queue submit first.
+ScenePass submitted_scene{};
+VkCommandBuffer submitted_owner{};
+VkQueue submitted_queue{};
+bool multiple_queues=false;
+extern "C" int bs4_fsr31_single_graphics_queue();
 bool pre_ui_dispatch_logged=false;
 bool pre_ui_eligible_logged=false;
 using PreUiDispatch=int (*)(VkCommandBuffer,VkImageView,VkExtent2D,VkExtent2D,VkImage*);
@@ -57,6 +64,8 @@ extern "C" VkPhysicalDevice bs4_fsr31_physical_device();
 PFN_vkBeginCommandBuffer original_begin_command{};
 PFN_vkResetCommandBuffer original_reset_command{};
 PFN_vkFreeCommandBuffers original_free_commands{};
+PFN_vkQueueSubmit original_queue_submit{};
+PFN_vkQueueSubmit2 original_queue_submit2{};
 PFN_vkCreateImage original_create_image{};
 PFN_vkDestroyImage original_destroy_image{};
 PFN_vkCreateImageView original_create_image_view{};
@@ -225,8 +234,25 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
         // 3D scene on the SAME command buffer. Cross-CB ordering is unknown:
         // never issue Vulkan commands based on unproven inter-CB ordering.
         if(port&&!bs4_native_scene_ui_boundary(cmd))return false;
-        if(w<1280||h<700||!stage.ready||!stage.color||
-           !stage.depth||stage.color==view)
+        if(w<1280||h<700)return false;
+        // A scene on a different CB is eligible only after real submission
+        // to the one verified graphics queue. A merely recorded/ended source
+        // is NOT synchronized with this UI command buffer.
+        if((!stage.ready||!stage.color||!stage.depth||stage.color==view)&&
+           submitted_owner&&submitted_owner!=cmd&&submitted_scene.ready&&
+           submitted_scene.color&&submitted_scene.depth&&!multiple_queues&&
+           bs4_fsr31_single_graphics_queue()) {
+            stage=submitted_scene;
+            static bool loggedCross=false;
+            if(!loggedCross) {
+                loggedCross=true;
+                std::fprintf(stderr,
+                    "[BS4_FSR31] FIRST_SUBMITTED_CROSS_CB scene_cmd=%p ui_cmd=%p queue=%p\\n",
+                    reinterpret_cast<void*>(submitted_owner),reinterpret_cast<void*>(cmd),
+                    reinterpret_cast<void*>(submitted_queue));
+            }
+        }
+        if(!stage.ready||!stage.color||!stage.depth||stage.color==view)
             return false;
         const auto dst_v=views.find(view);
         if(dst_v==views.end())return false;
@@ -558,18 +584,75 @@ extern "C" int bs4_fsr31_capture_depth(VkExtent2D expected, Bs4FsrCaptureImage* 
     return best ? 1 : 0;
 }
 
+// Record queue ordering without altering any VkSubmitInfo or GPU command.
+static void observe_submission(VkQueue queue,uint32_t count,const VkSubmitInfo* infos) {
+    if(!queue||!infos||!bs4_fsr31_single_graphics_queue())return;
+    std::lock_guard lock{mutex};
+    if(submitted_queue&&submitted_queue!=queue){multiple_queues=true;submitted_scene={};submitted_owner={};return;}
+    submitted_queue=queue;
+    if(multiple_queues)return;
+    for(uint32_t i=0;i<count;++i)for(uint32_t n=0;n<infos[i].commandBufferCount;++n) {
+        const auto cmd=infos[i].pCommandBuffers[n];
+        const auto it=command_scenes.find(cmd);
+        if(it!=command_scenes.end()&&it->second.ready&&it->second.color&&it->second.depth) {
+            submitted_scene=it->second;submitted_owner=cmd;
+            static bool logged=false;if(!logged){logged=true;std::fprintf(stderr,
+                "[BS4_FSR31] FIRST_SUBMITTED_LDR_SCENE source=%p command=%p queue=%p\\n",
+                reinterpret_cast<void*>(submitted_scene.color),
+                reinterpret_cast<void*>(cmd),reinterpret_cast<void*>(queue));}
+        }
+    }
+}
+static void observe_submission2(VkQueue queue,uint32_t count,const VkSubmitInfo2* infos) {
+    if(!queue||!infos||!bs4_fsr31_single_graphics_queue())return;
+    std::lock_guard lock{mutex};
+    if(submitted_queue&&submitted_queue!=queue){multiple_queues=true;submitted_scene={};submitted_owner={};return;}
+    submitted_queue=queue;
+    if(multiple_queues)return;
+    for(uint32_t i=0;i<count;++i)for(uint32_t n=0;n<infos[i].commandBufferInfoCount;++n) {
+        const auto cmd=infos[i].pCommandBufferInfos[n].commandBuffer;
+        const auto it=command_scenes.find(cmd);
+        if(it!=command_scenes.end()&&it->second.ready&&it->second.color&&it->second.depth) {
+            submitted_scene=it->second;submitted_owner=cmd;
+            static bool logged=false;if(!logged){logged=true;std::fprintf(stderr,
+                "[BS4_FSR31] FIRST_SUBMITTED_LDR_SCENE source=%p command=%p queue=%p\\n",
+                reinterpret_cast<void*>(submitted_scene.color),
+                reinterpret_cast<void*>(cmd),reinterpret_cast<void*>(queue));}
+        }
+    }
+}
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_queue_submit(VkQueue q,uint32_t count,
+       const VkSubmitInfo* infos,VkFence fence) {
+    if(!original_queue_submit)return VK_ERROR_INITIALIZATION_FAILED;
+    const VkResult result=original_queue_submit(q,count,infos,fence);
+    if(result==VK_SUCCESS)observe_submission(q,count,infos);
+    return result;
+}
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_queue_submit2(VkQueue q,uint32_t count,
+       const VkSubmitInfo2* infos,VkFence fence) {
+    if(!original_queue_submit2)return VK_ERROR_INITIALIZATION_FAILED;
+    const VkResult result=original_queue_submit2(q,count,infos,fence);
+    if(result==VK_SUCCESS)observe_submission2(q,count,infos);
+    return result;
+}
+extern "C" void bs4_fsr31_capture_present() {
+    std::lock_guard lock{mutex};
+    submitted_scene={};submitted_owner={};submitted_queue={};multiple_queues=false;
+}
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_begin_command(
         VkCommandBuffer cb,const VkCommandBufferBeginInfo* info) {
     if (!original_begin_command) return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_begin_command(cb,info);
-    if(status==VK_SUCCESS){bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);}
+    if(status==VK_SUCCESS){bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);
+        if(submitted_owner==cb){submitted_owner=VK_NULL_HANDLE;submitted_scene={};}}
     return status;
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_reset_command(
         VkCommandBuffer cb,VkCommandBufferResetFlags flags) {
     if(!original_reset_command)return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_reset_command(cb,flags);
-    if(status==VK_SUCCESS){bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);}
+    if(status==VK_SUCCESS){bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);
+        if(submitted_owner==cb){submitted_owner=VK_NULL_HANDLE;submitted_scene={};}}
     return status;
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_free_commands(
@@ -702,6 +785,9 @@ extern "C" PFN_vkVoidFunction bs4_fsr31_wrap_vulkan_proc(
     BS4_WRAP_GIPA(original_end_rendering,"vkCmdEndRendering",&bs4_cap_end_rendering)
     BS4_WRAP_GIPA(original_barrier2,"vkCmdPipelineBarrier2",&bs4_cap_barrier2)
     BS4_WRAP_GIPA(original_begin_rendering_khr,"vkCmdBeginRenderingKHR",&bs4_cap_begin_rendering_khr)
+    BS4_WRAP_GIPA(original_queue_submit,"vkQueueSubmit",&bs4_cap_queue_submit)
+    BS4_WRAP_GIPA(original_queue_submit2,"vkQueueSubmit2",&bs4_cap_queue_submit2)
+    BS4_WRAP_GIPA(original_queue_submit2,"vkQueueSubmit2KHR",&bs4_cap_queue_submit2)
     BS4_WRAP_GIPA(original_end_rendering_khr,"vkCmdEndRenderingKHR",&bs4_cap_end_rendering_khr)
     BS4_WRAP_GIPA(original_barrier2_khr,"vkCmdPipelineBarrier2KHR",&bs4_cap_barrier2_khr)
     #undef BS4_WRAP_GIPA
@@ -731,6 +817,9 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
     BS4_WRAP(original_end_rendering,"vkCmdEndRendering",&bs4_cap_end_rendering)
     BS4_WRAP(original_barrier2,"vkCmdPipelineBarrier2",&bs4_cap_barrier2)
     BS4_WRAP(original_begin_rendering_khr,"vkCmdBeginRenderingKHR",&bs4_cap_begin_rendering_khr)
+    BS4_WRAP(original_queue_submit,"vkQueueSubmit",&bs4_cap_queue_submit)
+    BS4_WRAP(original_queue_submit2,"vkQueueSubmit2",&bs4_cap_queue_submit2)
+    BS4_WRAP(original_queue_submit2,"vkQueueSubmit2KHR",&bs4_cap_queue_submit2)
     BS4_WRAP(original_end_rendering_khr,"vkCmdEndRenderingKHR",&bs4_cap_end_rendering_khr)
     BS4_WRAP(original_barrier2_khr,"vkCmdPipelineBarrier2KHR",&bs4_cap_barrier2_khr)
     #undef BS4_WRAP
