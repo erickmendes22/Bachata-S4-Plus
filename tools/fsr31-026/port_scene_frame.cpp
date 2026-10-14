@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "port_scene_frame.h"
 #include <mutex>
+#include <algorithm>
 namespace {
 struct Record {
     BachataCamera::Scene camera{};
@@ -72,7 +73,20 @@ bool bs4_fsr31_port_camera(VkCommandBuffer cb,VkImageView depth,
        current.depth!=depth||current.camera.width!=size.width||
        current.camera.height!=size.height)
         return false;
-    const bool coherent=previous.valid&&previous.frame+1==current.frame&&
+    // The display size is not a scene identity. An abrupt camera cut at the
+    // same resolution must invalidate temporal history, as in the Port.
+    float travel2=0.f,orientationDelta=0.f;
+    for(int r=0;r<3;++r) {
+        const float t=current.camera.inverse[r*4+3]-previous.camera.inverse[r*4+3];
+        travel2+=t*t;
+        for(int c=0;c<3;++c) {
+            const int k=r*4+c;
+            orientationDelta=std::max(orientationDelta,
+                std::abs(current.camera.inverse[k]-previous.camera.inverse[k]));
+        }
+    }
+    const bool cameraCut=travel2>64.f||orientationDelta>.75f;
+    const bool coherent=previous.valid&&!cameraCut&&previous.frame+1==current.frame&&
         previous.scene==current.scene&&
         previous.camera.width==current.camera.width&&
         previous.camera.height==current.camera.height;
