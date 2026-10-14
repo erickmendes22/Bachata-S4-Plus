@@ -57,8 +57,10 @@ BS4_PUBLIC void bs4_fsr31_native_begin(void* scheduler,const void* render_state,
     // Native scheduler insertion is opt-in: it caused n032-n035 queue
     // regressions, so normal gameplay uses the Vulkan pre-UI boundary.
     // Existing GPU harness sets NATIVE_UI=1 explicitly for legacy tests.
+#ifndef BS4_FSR31_TEST_HARNESS
     const char* native=std::getenv("BACHATA_FSR31_NATIVE_UI");
     if(!native||std::strcmp(native,"1"))return;
+#endif
     // No native worker operation before an actual verified 3D LDR scene.
     // This keeps menu/streaming passes from adding unbounded callbacks to
     // the renderer's queue when no temporal composition is possible.
