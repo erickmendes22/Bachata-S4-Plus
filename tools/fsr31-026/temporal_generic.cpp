@@ -211,6 +211,9 @@ FfxVkPortableImage describe(const Surface& s,FfxVkPortableResourceState state) {
 }
 bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D output,
                   VkFormat color_format,VkFormat depth_format) {
+    // Recorded-but-unsubmitted CBs cannot be drained by vkDeviceWaitIdle.
+    // Keep their slots alive; retry the resize after actual submission.
+    for(const auto& slot:frames)if(slot.recorded)return false;
     free_all();
     config={};config.structSize=sizeof(config);
     config.maxRenderSize={render.width,render.height};
