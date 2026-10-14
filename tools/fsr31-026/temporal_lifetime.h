@@ -6,3 +6,4 @@ void bs4_temporal_submitted(VkQueue,VkCommandBuffer,PFN_vkQueueSubmit,PFN_vkQueu
 void bs4_temporal_reset_after_drain();
 void bs4_temporal_discard(VkCommandBuffer);
 bool bs4_temporal_abandoned();
+bool bs4_temporal_can_rebuild();

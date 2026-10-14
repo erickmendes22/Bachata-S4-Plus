@@ -13,15 +13,16 @@ static VkResult submit(VkQueue,uint32_t n,const VkSubmitInfo* info,VkFence f){as
 static VkResult submit2(VkQueue,uint32_t n,const VkSubmitInfo2* info,VkFence f){assert(!n&&!info&&f);submissions++;return VK_SUCCESS;}
 int main(){auto device=reinterpret_cast<VkDevice>(1);auto queue=reinterpret_cast<VkQueue>(2);auto cb=reinterpret_cast<VkCommandBuffer>(3);auto other=reinterpret_cast<VkCommandBuffer>(4);
  for(size_t i=0;i<4;i++)assert(bs4_temporal_acquire(i,device,cb));
+ assert(!bs4_temporal_can_rebuild());
  assert(!bs4_temporal_acquire(0,device,other)&&waits==0);
  bs4_temporal_submitted(queue,other,submit,nullptr);assert(submissions==0);
- bs4_temporal_submitted(queue,cb,submit,nullptr);assert(submissions==4);
+ bs4_temporal_submitted(queue,cb,submit,nullptr);assert(submissions==4&&bs4_temporal_can_rebuild());
  bs4_temporal_submitted(queue,cb,submit,nullptr);assert(submissions==4);
  assert(!bs4_temporal_acquire(0,device,other)&&waits==1);
  for(auto& entry:done)entry.second=true;
  assert(bs4_temporal_acquire(0,device,other));
  bs4_temporal_submitted(queue,other,nullptr,submit2);assert(submissions==5);
  bs4_temporal_discard(cb);assert(!bs4_temporal_abandoned());
- assert(bs4_temporal_acquire(1,device,other));bs4_temporal_discard(other);assert(bs4_temporal_abandoned());
+ assert(bs4_temporal_acquire(1,device,other));bs4_temporal_discard(other);assert(bs4_temporal_abandoned()&&bs4_temporal_can_rebuild());
  bs4_temporal_reset_after_drain();assert(done.empty()&&!bs4_temporal_abandoned());
  std::puts("PASS recorded/pending/completed slot lifecycle; Submit1/Submit2; discarded CB recovery");}

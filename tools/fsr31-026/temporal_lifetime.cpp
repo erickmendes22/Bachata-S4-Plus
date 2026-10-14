@@ -48,6 +48,11 @@ void bs4_temporal_reset_after_drain() {
 }
 void bs4_temporal_discard(VkCommandBuffer command) {
     std::lock_guard lock{guard};
-    for(auto& s:slots)if(s.owner==command&&!s.submitted)abandoned=true;
+    for(auto& s:slots)if(s.owner==command&&!s.submitted){s.owner={};abandoned=true;}
 }
 bool bs4_temporal_abandoned(){std::lock_guard lock{guard};return abandoned;}
+bool bs4_temporal_can_rebuild(){
+    std::lock_guard lock{guard};
+    for(const auto& s:slots)if(s.owner&&!s.submitted)return false;
+    return true;
+}

@@ -412,6 +412,9 @@ static uint64_t generic_render_impl(
        config.maxOutputSize.width!=output_extent.width ||
        config.maxOutputSize.height!=output_extent.height ||
        frames[0].scene.format!=VK_FORMAT_R16G16B16A16_SFLOAT ||frames[0].depth.format!=depth.format) {
+        if(!bs4_temporal_can_rebuild()){
+            report_once(21,"context rebuild deferred until recorded temporal CBs are submitted or discarded");return 0;
+        }
         port_inputs=want_port;
         if(!allocate_for(*owned,internal,output_extent,VK_FORMAT_R16G16B16A16_SFLOAT,depth.format)){report_once(13,"FSR resource or context creation failed");return 0;}
     }
