@@ -20,9 +20,11 @@ namespace {
 std::unordered_map<VkCommandBuffer,Bs4NativeUiBoundary> native_ui_boundaries;
 struct Memory { VkDeviceSize size{},offset{},length{}; const unsigned char* data{}; };
 struct Buffer { VkDeviceMemory memory{}; VkDeviceSize offset{}; };
+using Sampled=std::map<std::pair<uint32_t,uint32_t>,VkImageView>;
 using Buffers=std::map<std::pair<uint32_t,uint32_t>,VkDescriptorBufferInfo>;
 struct DrawState {
     VkImageView depth{};
+    std::array<VkImageView,8> colors{};
     VkExtent2D area{};
     uint32_t mrt{};
     std::array<float,4> raw{};
@@ -35,6 +37,7 @@ struct DrawState {
     VkRect2D scissor{};
     bool scissorValid{},scissorWithCount{};
     std::map<uint32_t,Buffers> pushes;
+    std::map<uint32_t,Sampled> sampledPushes;
     std::map<uint32_t,VkDescriptorSet> sets;
     std::array<float,216> constants{};
     VkImageView cameraDepth{};
@@ -45,9 +48,11 @@ std::mutex guard;
 std::unordered_map<VkDeviceMemory,Memory> memories;
 std::unordered_map<VkBuffer,Buffer> buffers;
 std::unordered_map<VkDescriptorSet,Buffers> descriptors;
+std::unordered_map<VkDescriptorSet,Sampled> sampledDescriptors;
 std::unordered_map<VkCommandBuffer,DrawState> commands;
 uint64_t frame=1;
-std::unordered_map<VkPipelineLayout,uint64_t> layoutHashes;
+std::unordered_map<VkPipelineLayout,uint64_t> layoutHashes, fragmentHashes;
+std::unordered_map<VkImageView,Bs4SceneWriter> sceneWriters;
 PFN_vkAllocateMemory allocate;
 PFN_vkMapMemory mapMemory;
 PFN_vkUnmapMemory unmapMemory;
@@ -144,6 +149,14 @@ void writes(Buffers& dest,const VkWriteDescriptorSet& w) {
             dest[key]=w.pBufferInfo[j];
     }
 }
+void sampled_writes(Sampled& dest,const VkWriteDescriptorSet& w) {
+    for(uint32_t n=0;n<w.descriptorCount;++n){
+        const auto key=std::make_pair(w.dstBinding,w.dstArrayElement+n);dest.erase(key);
+        if(w.pImageInfo&&(w.descriptorType==VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE||
+            w.descriptorType==VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER||
+            w.descriptorType==VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT))dest[key]=w.pImageInfo[n].imageView;
+    }
+}
 VkResult VKAPI_CALL allocate_hook(VkDevice d,const VkMemoryAllocateInfo* i,
                      const VkAllocationCallbacks* a,VkDeviceMemory* out) {
     const auto r=allocate(d,i,a,out);
@@ -184,7 +197,8 @@ void VKAPI_CALL destroy_hook(VkDevice d,VkBuffer b,const VkAllocationCallbacks* 
 void VKAPI_CALL push_hook(VkCommandBuffer cb,VkPipelineBindPoint point,VkPipelineLayout layout,
                         uint32_t set,uint32_t count,const VkWriteDescriptorSet* w) {
     if(point==VK_PIPELINE_BIND_POINT_GRAPHICS&&w){std::lock_guard lock{guard};
-        for(uint32_t n=0;n<count;n++)writes(commands[cb].pushes[set],w[n]);}
+        commands[cb].sets.erase(set);
+        for(uint32_t n=0;n<count;n++){writes(commands[cb].pushes[set],w[n]);sampled_writes(commands[cb].sampledPushes[set],w[n]);}}
     if(point==VK_PIPELINE_BIND_POINT_GRAPHICS&&w&&bs4_native_ui_sampled_view) {
         std::vector<VkWriteDescriptorSet> changed(w,w+count);
         std::vector<std::vector<VkDescriptorImageInfo>> images(count);
@@ -200,9 +214,9 @@ void VKAPI_CALL push_hook(VkCommandBuffer cb,VkPipelineBindPoint point,VkPipelin
 }
 void VKAPI_CALL update_hook(VkDevice d,uint32_t count,const VkWriteDescriptorSet* w,
                            uint32_t copies,const VkCopyDescriptorSet* c) {
-    {std::lock_guard lock{guard};if(w)for(uint32_t n=0;n<count;n++)writes(descriptors[w[n].dstSet],w[n]);
+    {std::lock_guard lock{guard};if(w)for(uint32_t n=0;n<count;n++){writes(descriptors[w[n].dstSet],w[n]);sampled_writes(sampledDescriptors[w[n].dstSet],w[n]);}
      // Unsupported descriptor-copy updates invalidate destination knowledge.
-     if(c)for(uint32_t n=0;n<copies;n++)descriptors.erase(c[n].dstSet);}
+     if(c)for(uint32_t n=0;n<copies;n++){descriptors.erase(c[n].dstSet);sampledDescriptors.erase(c[n].dstSet);}}
     updateDescriptors(d,count,w,copies,c);
 }
 void VKAPI_CALL sets_hook(VkCommandBuffer cb,VkPipelineBindPoint point,VkPipelineLayout layout,
@@ -210,7 +224,7 @@ void VKAPI_CALL sets_hook(VkCommandBuffer cb,VkPipelineBindPoint point,VkPipelin
                          uint32_t dynCount,const uint32_t* dyn) {
     if(point==VK_PIPELINE_BIND_POINT_GRAPHICS&&s){std::lock_guard lock{guard};
         auto& active=commands[cb].sets;for(uint32_t n=0;n<count;n++){
-            if(dynCount)active.erase(first+n);else active[first+n]=s[n];
+            if(dynCount)active.erase(first+n);else {active[first+n]=s[n];commands[cb].sampledPushes.erase(first+n);}
         }}
     bindSets(cb,point,layout,first,count,s,dynCount,dyn);
 }
@@ -247,9 +261,13 @@ void VKAPI_CALL scissor_count_hook(VkCommandBuffer cb,uint32_t count,const VkRec
 VkResult VKAPI_CALL name_hook(VkDevice dev,const VkDebugUtilsObjectNameInfoEXT* info) {
     if(info&&info->objectType==VK_OBJECT_TYPE_PIPELINE_LAYOUT) {
         std::lock_guard lock{guard};auto layout=(VkPipelineLayout)(uintptr_t)info->objectHandle;
-        layoutHashes.erase(layout);
+        layoutHashes.erase(layout);fragmentHashes.erase(layout);
         const char* name=info->pObjectName;
         if(name&&std::strncmp(name,"Graphics PipelineLayout ",24)==0) {
+            const char* fragment=std::strstr(name,"fs_0x");
+            if(!fragment)fragment=std::strstr(name,"ps_0x");
+            if(fragment){char* end{};const auto h=std::strtoull(fragment+5,&end,16);
+                if(end!=fragment+5&&(*end=='\0'||*end=='_'||*end==','))fragmentHashes[layout]=h;}
             const char* vertex=std::strstr(name,"vs_0x");
             if(vertex) {
                 char* end{};const auto hash=std::strtoull(vertex+5,&end,16);
@@ -260,7 +278,7 @@ VkResult VKAPI_CALL name_hook(VkDevice dev,const VkDebugUtilsObjectNameInfoEXT* 
     return objectName(dev,info);
 }
 void VKAPI_CALL layout_destroy_hook(VkDevice dev,VkPipelineLayout layout,const VkAllocationCallbacks* ac) {
-    {std::lock_guard lock{guard};layoutHashes.erase(layout);}destroyLayout(dev,layout,ac);
+    {std::lock_guard lock{guard};layoutHashes.erase(layout);fragmentHashes.erase(layout);}destroyLayout(dev,layout,ac);
 }
 float halton(uint64_t n,unsigned base) {
     float f=1.f,r=0.f;while(n){f/=base;r+=f*float(n%base);n/=base;}return r;
@@ -301,13 +319,32 @@ ViewportShift shift_geometry(VkCommandBuffer cb,uint32_t vertices,uint32_t insta
 void restore(VkCommandBuffer cb,const ViewportShift& shift) {
     if(shift.applied)native_viewport(cb,shift.original,shift.withCount);
 }
+void note_writer(VkCommandBuffer cb,uint32_t vertices,uint32_t instances) {
+    if(!instances)return;
+    std::lock_guard lock{guard};const auto it=commands.find(cb);
+    if(it==commands.end()||!it->second.inside)return;
+    const auto& d=it->second;
+    Bs4SceneWriter writer{};writer.command=cb;writer.frame=frame;writer.area=d.area;
+    writer.viewport=d.viewport;writer.vertices=vertices;writer.instances=instances;writer.colorCount=d.mrt;
+    const auto vs=layoutHashes.find(d.graphicsLayout),ps=fragmentHashes.find(d.graphicsLayout);
+    if(vs!=layoutHashes.end())writer.vertexHash=vs->second;
+    if(ps!=fragmentHashes.end())writer.fragmentHash=ps->second;
+    auto add=[&](const Sampled& bindings){for(const auto& pair:bindings)if(pair.second){
+        bool found=false;for(uint32_t n=0;n<writer.sampledCount;++n)found|=writer.sampled[n]==pair.second;
+        if(found)continue;
+        if(writer.sampledCount<8)writer.sampled[writer.sampledCount++]=pair.second;else writer.sampledOverflow=true;
+    }};
+    for(const auto& p:d.sampledPushes)add(p.second);
+    for(const auto& p:d.sets){const auto it=sampledDescriptors.find(p.second);if(it!=sampledDescriptors.end())add(it->second);}
+    for(const auto color:d.colors)if(color)sceneWriters[color]=writer;
+}
 void VKAPI_CALL draw_hook(VkCommandBuffer cb,uint32_t n,uint32_t i,uint32_t first,uint32_t base) {
     observe_draw(cb);const auto shift=shift_geometry(cb,n,i);
-    draw(cb,n,i,first,base);restore(cb,shift);
+    draw(cb,n,i,first,base);restore(cb,shift);if(n)note_writer(cb,n,i);
 }
 void VKAPI_CALL indexed_hook(VkCommandBuffer cb,uint32_t n,uint32_t i,uint32_t first,int32_t vertex,uint32_t base) {
     observe_draw(cb);const auto shift=shift_geometry(cb,n,i);
-    drawIndexed(cb,n,i,first,vertex,base);restore(cb,shift);
+    drawIndexed(cb,n,i,first,vertex,base);restore(cb,shift);if(n)note_writer(cb,n,i);
 }
 void VKAPI_CALL indirect_hook(VkCommandBuffer cb,VkBuffer b,VkDeviceSize off,uint32_t n,uint32_t stride) {
     observe_draw(cb);
@@ -317,19 +354,21 @@ void VKAPI_CALL indirect_hook(VkCommandBuffer cb,VkBuffer b,VkDeviceSize off,uin
     bool geometry=false;{std::lock_guard lock{guard};auto it=commands.find(cb);
         geometry=it!=commands.end()&&it->second.mrt>=5;}
     const auto shift=geometry&&n?shift_geometry(cb,UINT32_MAX,1):ViewportShift{};
-    drawIndirect(cb,b,off,n,stride);restore(cb,shift);
+    drawIndirect(cb,b,off,n,stride);restore(cb,shift);if(n)note_writer(cb,UINT32_MAX,n);
 }
 void VKAPI_CALL indexed_indirect_hook(VkCommandBuffer cb,VkBuffer b,VkDeviceSize off,uint32_t n,uint32_t stride) {
     observe_draw(cb);
     bool geometry=false;{std::lock_guard lock{guard};auto it=commands.find(cb);
         geometry=it!=commands.end()&&it->second.mrt>=5;}
     const auto shift=geometry&&n?shift_geometry(cb,UINT32_MAX,1):ViewportShift{};
-    drawIndexedIndirect(cb,b,off,n,stride);restore(cb,shift);
+    drawIndexedIndirect(cb,b,off,n,stride);restore(cb,shift);if(n)note_writer(cb,UINT32_MAX,n);
 }
 }
 void bs4_native_scene_begin(VkCommandBuffer cb,const VkRenderingInfo* info) {
     {
-        std::lock_guard lock{guard};auto& d=commands[cb];d.inside=info;
+        std::lock_guard lock{guard};auto& d=commands[cb];d.inside=info;d.colors={};
+        if(info&&info->pColorAttachments)for(uint32_t n=0;n<std::min<uint32_t>(8,info->colorAttachmentCount);++n)
+            d.colors[n]=info->pColorAttachments[n].imageView;
         d.depth=info&&info->pDepthAttachment?info->pDepthAttachment->imageView:VK_NULL_HANDLE;
         if(d.depth&&d.depth!=d.cameraDepth)d.haveCamera=false;
         d.mrt=info?info->colorAttachmentCount:0;d.area=info?info->renderArea.extent:VkExtent2D{};
@@ -517,4 +556,12 @@ bool bs4_native_scene_apply_ui_scale(VkCommandBuffer cb,VkExtent2D guest,VkExten
 bool bs4_native_scene_can_ui_scale(VkCommandBuffer cb,VkExtent2D guest,VkExtent2D output,
                                   VkExtent2D hardware) {
     return scale_ui(cb,guest,output,true,hardware,false);
+}
+
+bool bs4_native_scene_writer(VkImageView view,Bs4SceneWriter& out) {
+    std::lock_guard lock{guard};const auto it=sceneWriters.find(view);
+    if(it==sceneWriters.end())return false;out=it->second;return true;
+}
+void bs4_native_scene_forget_view(VkImageView view) {
+    std::lock_guard lock{guard};sceneWriters.erase(view);
 }

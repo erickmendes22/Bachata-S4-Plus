@@ -657,3 +657,10 @@ extern "C" void bs4_fsr31_probe_completed(){
     std::lock_guard lock{mutex};
     for(auto& f:frames)if(f.submitted&&vkGetFenceStatus(device,f.completion)==VK_SUCCESS)bs4_probe_resolve(f.probe,device);
 }
+
+extern "C" void bs4_fsr31_probe_post_hud(VkCommandBuffer cb,VkImage image,VkImageLayout layout,VkExtent2D size,VkFormat format){
+    std::lock_guard lock{mutex};
+    for(auto& f:frames)if(f.recorded&&f.recordedBy==cb&&f.probe.pending&&f.probe.compositeImage==image){
+        bs4_probe_image(f.probe,cb,image,layout,size,format,6);return;
+    }
+}

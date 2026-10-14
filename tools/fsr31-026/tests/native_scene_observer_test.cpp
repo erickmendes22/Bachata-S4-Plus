@@ -18,7 +18,7 @@ VkResult VKAPI_CALL allocate(VkDevice,const VkMemoryAllocateInfo*,const VkAlloca
 VkResult VKAPI_CALL map(VkDevice,VkDeviceMemory,VkDeviceSize offset,VkDeviceSize,VkMemoryMapFlags,void** out){*out=memory.data()+offset;return VK_SUCCESS;}
 void VKAPI_CALL unmap(VkDevice,VkDeviceMemory){}
 VkResult VKAPI_CALL bind(VkDevice,VkBuffer,VkDeviceMemory,VkDeviceSize){return VK_SUCCESS;}
-void VKAPI_CALL push(VkCommandBuffer,VkPipelineBindPoint,VkPipelineLayout,uint32_t,uint32_t count,const VkWriteDescriptorSet* w){assert(count==1&&w&&w->pBufferInfo);}
+void VKAPI_CALL push(VkCommandBuffer,VkPipelineBindPoint,VkPipelineLayout,uint32_t,uint32_t count,const VkWriteDescriptorSet* w){assert(count==1&&w&&(w->pBufferInfo||w->pImageInfo));}
 void VKAPI_CALL constants(VkCommandBuffer,VkPipelineLayout,VkShaderStageFlags,uint32_t offset,uint32_t size,const void*){assert(offset==0&&size==120);}
 void VKAPI_CALL viewport(VkCommandBuffer,uint32_t first,uint32_t count,const VkViewport* value){assert(first==0&&count==1);actualViewport=*value;viewportCalls++;}
 void VKAPI_CALL viewport_count(VkCommandBuffer,uint32_t count,const VkViewport* value){assert(count==1);actualViewport=*value;viewportCountCalls++;}
@@ -109,6 +109,24 @@ int main(){
  assert(!boundary.color&&boundary.depth==handle<VkImageView>(13)); // first Scaleform mask pass
  destroyed({},layout,nullptr);assert(!bs4_native_scene_ui_boundary(cb));
  bs4_native_scene_present();assert(!bs4_native_scene_ui_state(cb,boundary));
+ // Provenance must follow executed draws, not BeginRendering alone. Also
+ // distinguish the fragment shader from the fullscreen vertex shader.
+ ni.pObjectName="Graphics PipelineLayout fs_0x12345678,vs_0xabcdabcd";
+ assert(named({},&ni)==VK_SUCCESS);c(cb,layout,VK_SHADER_STAGE_VERTEX_BIT,0,120,raw.data());
+ VkRenderingAttachmentInfo colorAtt{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};colorAtt.imageView=handle<VkImageView>(71);
+ VkRenderingInfo render{VK_STRUCTURE_TYPE_RENDERING_INFO};render.renderArea.extent={640,360};render.colorAttachmentCount=1;render.pColorAttachments=&colorAtt;
+ bs4_native_scene_begin(cb,&render);Bs4SceneWriter writer{};
+ assert(!bs4_native_scene_writer(colorAtt.imageView,writer));
+ VkDescriptorImageInfo sampled{};sampled.imageView=handle<VkImageView>(72);
+ VkWriteDescriptorSet sampleWrite{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};sampleWrite.descriptorCount=1;sampleWrite.dstBinding=0;
+ sampleWrite.descriptorType=VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;sampleWrite.pImageInfo=&sampled;
+ p(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,layout,0,1,&sampleWrite);d(cb,30,1,0,0);
+ assert(bs4_native_scene_writer(colorAtt.imageView,writer)&&writer.fragmentHash==0x12345678&&writer.vertexHash==0xabcdabcd);
+ assert(writer.sampledCount==1&&writer.sampled[0]==sampled.imageView&&writer.command==cb&&writer.colorCount==1);
+ p(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,layout,0,1,&write);d(cb,30,1,0,0);
+ assert(bs4_native_scene_writer(colorAtt.imageView,writer)&&writer.sampledCount==0);
+ bs4_native_scene_forget_view(colorAtt.imageView);assert(!bs4_native_scene_writer(colorAtt.imageView,writer));
+ assert(memory==original&&forwarded==13);
  unsetenv("BACHATA_FSR31_INPUT");assert(wrap("vkCmdDraw",&draw)==&draw);
  std::cout<<"PASS native observer: forwarded draws, 864-byte camera, 120-byte raw viewport, depth pairing, finite bounds, unmap, no guest writes\n";
 }

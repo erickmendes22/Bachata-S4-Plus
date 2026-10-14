@@ -164,7 +164,7 @@ jobs:
           /tmp/bs4-fsr-sdk-smoke depth-stencil | tee -a port-scene-gpu.txt
           g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include tools/fsr31-026/tests/r13_composition_gpu_test.cpp -Lbuild-host -lbachata_fsr31 -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/bs4-fsr-sdk-smoke
           /tmp/bs4-fsr-sdk-smoke 2>&1 | tee r13-composition-gpu.txt
-          grep -q "GPU_FRAME_PROBE.*stages=0x3f.*native={cyan:0.*clone={cyan:0.*fsr={cyan:0.*ui={cyan:0.*gpu_completed=1" r13-composition-gpu.txt
+          grep -q "GPU_FRAME_PROBE.*stages=0x[37]f.*native={cyan:0.*clone={cyan:0.*fsr={cyan:0.*ui={cyan:0.*gpu_completed=1" r13-composition-gpu.txt
           /tmp/bs4-fsr-sdk-smoke patterned-scene 2>&1 | tee patterned-scene-gpu.txt
           /tmp/bs4-fsr-sdk-smoke fp16-patterned 2>&1 | tee fp16-patterned-gpu.txt
           grep -q 'device capabilities enabled fp16=1' fp16-patterned-gpu.txt
@@ -173,7 +173,8 @@ jobs:
           /tmp/bs4-fsr-sdk-smoke shared-target | tee shared-target-preservation-gpu.txt
           /tmp/bs4-fsr-sdk-smoke run-scaled-ui | tee native-run-scaled-ui-gpu.txt
           /tmp/bs4-fsr-sdk-smoke owned-ui | tee automatic-native-ui-gpu.txt
-          /tmp/bs4-fsr-sdk-smoke cross-cb | tee separate-command-buffers-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke cross-cb 2>&1 | tee separate-command-buffers-gpu.txt
+          grep -q "stages=0x7f.*post_hud={cyan:0.*red:64.*gpu_completed=1" separate-command-buffers-gpu.txt
           /tmp/bs4-fsr-sdk-smoke depth-access | tee depth-access-gpu.txt
           /tmp/bs4-fsr-sdk-smoke depth-clear | tee depth-clear-gpu.txt
           /tmp/bs4-fsr-sdk-smoke partial-same-layout | tee partial-same-layout-gpu.txt

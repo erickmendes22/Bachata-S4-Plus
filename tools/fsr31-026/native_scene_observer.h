@@ -27,3 +27,17 @@ bool bs4_native_scene_apply_ui_scale(VkCommandBuffer,VkExtent2D guest,VkExtent2D
 
 bool bs4_native_scene_can_ui_scale(VkCommandBuffer,VkExtent2D guest,VkExtent2D output,
                                   VkExtent2D hardwareViewport);
+
+// Recording provenance only: no Vulkan calls, no synthetic target identity.
+struct Bs4SceneWriter {
+    VkCommandBuffer command{};
+    uint64_t frame{},vertexHash{},fragmentHash{};
+    VkExtent2D area{};
+    VkViewport viewport{};
+    uint32_t vertices{},instances{},colorCount{};
+    VkImageView sampled[8]{};
+    uint32_t sampledCount{};
+    bool sampledOverflow{};
+};
+bool bs4_native_scene_writer(VkImageView,Bs4SceneWriter&);
+void bs4_native_scene_forget_view(VkImageView);

@@ -59,6 +59,8 @@ extern "C" int bs4_fsr31_single_graphics_queue();
 extern "C" void bs4_fsr31_temporal_submitted(VkQueue,VkCommandBuffer,
     PFN_vkQueueSubmit,PFN_vkQueueSubmit2);
 extern "C" void bs4_fsr31_temporal_reset_recording(VkCommandBuffer);
+struct PostHudTarget {VkImageView view{};VkImageLayout layout{};VkExtent2D extent{};};
+std::unordered_map<VkCommandBuffer,PostHudTarget> post_hud_targets;
 bool pre_ui_dispatch_logged=false;
 bool pre_ui_eligible_logged=false;
 using PreUiDispatch=int (*)(VkCommandBuffer,VkImageView,VkExtent2D,VkExtent2D,VkImage*);
@@ -69,6 +71,7 @@ extern "C" int bs4_fsr31_pre_ui_prepare(VkCommandBuffer,VkImageView,
 extern "C" VkPhysicalDevice bs4_fsr31_physical_device();
 extern "C" void bs4_fsr31_probe_composite(VkCommandBuffer,VkImage,VkImageLayout,VkExtent2D,VkFormat);
 extern "C" void bs4_fsr31_probe_completed();
+extern "C" void bs4_fsr31_probe_post_hud(VkCommandBuffer,VkImage,VkImageLayout,VkExtent2D,VkFormat);
 
 PFN_vkBeginCommandBuffer original_begin_command{};
 PFN_vkResetCommandBuffer original_reset_command{};
@@ -445,6 +448,34 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     // CB was successfully submitted on the sole graphics queue.
     if(accepted_origin)
         bs4_fsr31_port_authorize_submitted(accepted_origin,cmd,completed.depth);
+    Bs4SceneWriter writer{};
+    if(bs4_native_scene_writer(completed.color,writer)) {
+        static unsigned provenanceLogs=0;
+        if(provenanceLogs++<32) {
+            VkImageViewCreateInfo description{};bs4_fsr31_capture_view(completed.color,&description);
+            std::fprintf(stderr,
+                "[BS4_FSR31] SELECTED_SCENE_WRITER source=%p image=%p writer_cb=%p camera_cb=%p ui_cb=%p "
+                "frame=%llu vs=0x%llx ps=0x%llx vertices=%u instances=%u mrt=%u area=%ux%u "
+                "viewport=%g,%g,%g,%g view_fmt=%d mapping=%d,%d,%d,%d ui_same_backing=%d\n",
+                reinterpret_cast<void*>(completed.color),reinterpret_cast<void*>(description.image),
+                reinterpret_cast<void*>(writer.command),reinterpret_cast<void*>(accepted_origin?accepted_origin:cmd),
+                reinterpret_cast<void*>(cmd),(unsigned long long)writer.frame,
+                (unsigned long long)writer.vertexHash,(unsigned long long)writer.fragmentHash,
+                writer.vertices,writer.instances,writer.colorCount,writer.area.width,writer.area.height,
+                writer.viewport.x,writer.viewport.y,writer.viewport.width,writer.viewport.height,
+                int(description.format),int(description.components.r),int(description.components.g),
+                int(description.components.b),int(description.components.a),int(description.image==dst));
+            for(uint32_t n=0;n<writer.sampledCount;++n){
+                Bs4FsrCaptureImage sample{};VkImageViewCreateInfo sampledView{};
+                if(bs4_fsr31_capture_image(writer.sampled[n],&sample)&&bs4_fsr31_capture_view(writer.sampled[n],&sampledView))
+                    std::fprintf(stderr,"[BS4_FSR31] SELECTED_SCENE_INPUT source=%p binding_index=%u sampled=%p image=%p fmt=%d extent=%ux%u mapping=%d,%d,%d,%d truncated=%d\n",
+                        reinterpret_cast<void*>(completed.color),n,reinterpret_cast<void*>(writer.sampled[n]),
+                        reinterpret_cast<void*>(sample.image),int(sample.format),sample.size.width,sample.size.height,
+                        int(sampledView.components.r),int(sampledView.components.g),int(sampledView.components.b),
+                        int(sampledView.components.a),int(writer.sampledOverflow));
+            }
+        }
+    }
     VkImage upscaled=VK_NULL_HANDLE;
     if(!bs4_fsr31_pre_ui_dispatch(cmd,completed.color,completed.depth,
                                     completed.extent,upscale_extent,&upscaled)||!upscaled)
@@ -508,6 +539,7 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     }
     // The background is now populated. Preserve it when the game's UI
     // starts drawing; otherwise a CLEAR loadOp would erase the FSR result.
+    {std::lock_guard lock{mutex};post_hud_targets[cmd]={view,ui_layout,{w,h}};}
     modified=*info;
     overrides.assign(info->pColorAttachments,
                      info->pColorAttachments+info->colorAttachmentCount);
@@ -535,6 +567,14 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
             "HUD_target=%ux%u\\n",w,h);
     }
     return true;
+}
+void probe_finished_hud(VkCommandBuffer cb){
+    PostHudTarget target{};
+    {std::lock_guard lock{mutex};const auto it=post_hud_targets.find(cb);
+        if(it==post_hud_targets.end())return;target=it->second;post_hud_targets.erase(it);}
+    Bs4FsrCaptureImage image{};
+    if(bs4_fsr31_capture_image(target.view,&image))
+        bs4_fsr31_probe_post_hud(cb,image.image,target.layout,target.extent,image.format);
 }
 void scene_rendering_ended(VkCommandBuffer command) {
     std::lock_guard lock{mutex};
@@ -693,7 +733,7 @@ extern "C" int bs4_fsr31_run_scaled_ui(VkCommandBuffer cb,VkImageView uiColor,Vk
     }
     begin(cb,&info);
     {
-        std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);
+        std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);post_hud_targets.erase(cb);
         const auto c=images.find(target.image);if(c!=images.end())recorded_layouts[cb][target.image]=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         const auto d=images.find(depthTarget.image);if(d!=images.end())recorded_layouts[cb][depthTarget.image]=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     }
@@ -859,7 +899,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_begin_command(
         VkCommandBuffer cb,const VkCommandBufferBeginInfo* info) {
     if (!original_begin_command) return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_begin_command(cb,info);
-    if(status==VK_SUCCESS){bs4_native_compute_reset(cb);bs4_fsr31_temporal_reset_recording(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);
+    if(status==VK_SUCCESS){bs4_native_compute_reset(cb);bs4_fsr31_temporal_reset_recording(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);post_hud_targets.erase(cb);
         if(submitted_owner==cb){submitted_owner=VK_NULL_HANDLE;submitted_scene={};}}
     return status;
 }
@@ -867,7 +907,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_reset_command(
         VkCommandBuffer cb,VkCommandBufferResetFlags flags) {
     if(!original_reset_command)return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_reset_command(cb,flags);
-    if(status==VK_SUCCESS){bs4_native_compute_reset(cb);bs4_fsr31_temporal_reset_recording(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);
+    if(status==VK_SUCCESS){bs4_native_compute_reset(cb);bs4_fsr31_temporal_reset_recording(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);post_hud_targets.erase(cb);
         if(submitted_owner==cb){submitted_owner=VK_NULL_HANDLE;submitted_scene={};}}
     return status;
 }
@@ -877,7 +917,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_free_commands(
         for(uint32_t i=0;i<count;++i){bs4_native_compute_reset(cb[i]);bs4_fsr31_temporal_reset_recording(cb[i]);bs4_native_ui_reset(cb[i]);bs4_native_scene_reset(cb[i]);}
         std::lock_guard lock{mutex};
         for(uint32_t i=0;i<count;++i){
-            command_scenes.erase(cb[i]);
+            command_scenes.erase(cb[i]);post_hud_targets.erase(cb[i]);
             recorded_layouts.erase(cb[i]);
             if(submitted_owner==cb[i]){submitted_owner={};submitted_scene={};}
         }}
@@ -920,7 +960,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image_view(
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_destroy_image_view(
     VkDevice dev,VkImageView view,const VkAllocationCallbacks* ac) {
-    bs4_native_ui_release_view(view);
+    bs4_native_ui_release_view(view);bs4_native_scene_forget_view(view);
     {std::lock_guard lock{mutex}; views.erase(view);}
     if(original_destroy_image_view) original_destroy_image_view(dev,view,ac);
 }
@@ -946,6 +986,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering(
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_end_rendering(VkCommandBuffer cb) {
     if(original_end_rendering) original_end_rendering(cb);
+    probe_finished_hud(cb);
     scene_rendering_ended(cb);
     bs4_native_scene_end(cb);
 }
@@ -981,6 +1022,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering_khr(
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_end_rendering_khr(VkCommandBuffer cb) {
     if(original_end_rendering_khr) original_end_rendering_khr(cb);
+    probe_finished_hud(cb);
     scene_rendering_ended(cb);
     bs4_native_scene_end(cb);
 }
