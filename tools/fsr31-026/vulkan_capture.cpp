@@ -57,18 +57,44 @@ void present_trace_begin(VkCommandBuffer cb,const VkRenderingInfo* info) {
     auto v=views.find(info->pColorAttachments[0].imageView);
     if(v!=views.end())present_active_color[cb]={v->second.image,info->pColorAttachments[0].imageView,++present_serial};
 }
+extern "C" void bs4_fsr31_probe_wsi(VkCommandBuffer,VkImage,VkImageLayout,VkExtent2D,VkFormat);
+void observe_wsi_write(VkCommandBuffer cb,VkImage image,VkImageLayout layout) {
+    SwapchainDiagnostics meta{};bool found=false;
+    {
+        std::lock_guard lock{mutex};
+        for(const auto& entry:present_swap_images){
+            if(std::find(entry.second.begin(),entry.second.end(),image)!=entry.second.end()){
+                const auto it=present_swap_metadata.find(entry.first);
+                if(it!=present_swap_metadata.end()){meta=it->second;found=true;}
+                break;
+            }
+        }
+    }
+    if(!found)return;
+    const bool readable=(meta.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)!=0;
+    static std::atomic<unsigned> shown{0};
+    if(shown.fetch_add(1)<48)std::fprintf(stderr,
+        "[BS4_FSR31] WSI_WRITE image=%p cb=%p layout=%d format=%d transfer_src=%d\\n",
+        reinterpret_cast<void*>(image),reinterpret_cast<void*>(cb),
+        int(layout),int(meta.format),int(readable));
+    if(readable)bs4_fsr31_probe_wsi(cb,image,layout,meta.extent,meta.format);
+}
 void present_trace_end(VkCommandBuffer cb) {
-    std::lock_guard lock{mutex};
-    auto it=present_active_color.find(cb);
-    if(it==present_active_color.end())return;
-    present_last_color[it->second.image]=it->second.serial;
-    static unsigned shown=0;
-    if(shown++<128)std::fprintf(stderr,
-        "[BS4_FSR31] POST_UI_COLOR_PASS_END pass=%llu image=%p view=%p cb=%p\\n",
-        (unsigned long long)it->second.serial,
-        reinterpret_cast<void*>(it->second.image),
-        reinterpret_cast<void*>(it->second.view),reinterpret_cast<void*>(cb));
-    present_active_color.erase(it);
+    VkImage image=VK_NULL_HANDLE;
+    {
+        std::lock_guard lock{mutex};
+        const auto it=present_active_color.find(cb);
+        if(it==present_active_color.end())return;
+        image=it->second.image;
+        present_last_color[image]=it->second.serial;
+        static unsigned shown=0;
+        if(shown++<128)std::fprintf(stderr,
+            "[BS4_FSR31] POST_UI_COLOR_PASS_END pass=%llu image=%p view=%p cb=%p\\n",
+            (unsigned long long)it->second.serial,reinterpret_cast<void*>(image),
+            reinterpret_cast<void*>(it->second.view),reinterpret_cast<void*>(cb));
+        present_active_color.erase(it);
+    }
+    observe_wsi_write(cb,image,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 }
 
 struct ScenePass {
@@ -116,6 +142,10 @@ PFN_vkGetSwapchainImagesKHR original_swap_images{};
 PFN_vkCreateSwapchainKHR original_swap_create{};
 PFN_vkQueuePresentKHR original_present{};
 PFN_vkDestroySwapchainKHR original_swap_destroy{};
+PFN_vkCmdCopyImage original_copy_image{};
+PFN_vkCmdBlitImage original_blit_image{};
+PFN_vkCmdCopyImage2 original_copy_image2{};
+PFN_vkCmdBlitImage2 original_blit_image2{};
 PFN_vkCreateImage original_create_image{};
 PFN_vkDestroyImage original_destroy_image{};
 PFN_vkCreateImageView original_create_image_view{};
@@ -929,6 +959,29 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_queue_submit2(VkQueue q,uint32
 }
 
 // Observe the actual WSI allocation without mutating Vulkan's swapchain flags.
+
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_copy_image(
+        VkCommandBuffer cb,VkImage src,VkImageLayout srcLayout,VkImage dst,
+        VkImageLayout dstLayout,uint32_t count,const VkImageCopy* regions) {
+    if(original_copy_image)original_copy_image(cb,src,srcLayout,dst,dstLayout,count,regions);
+    observe_wsi_write(cb,dst,dstLayout);
+}
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_blit_image(
+        VkCommandBuffer cb,VkImage src,VkImageLayout srcLayout,VkImage dst,
+        VkImageLayout dstLayout,uint32_t count,const VkImageBlit* regions,VkFilter filter) {
+    if(original_blit_image)original_blit_image(cb,src,srcLayout,dst,dstLayout,count,regions,filter);
+    observe_wsi_write(cb,dst,dstLayout);
+}
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_copy_image2(
+        VkCommandBuffer cb,const VkCopyImageInfo2* info) {
+    if(original_copy_image2)original_copy_image2(cb,info);
+    if(info)observe_wsi_write(cb,info->dstImage,info->dstImageLayout);
+}
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_blit_image2(
+        VkCommandBuffer cb,const VkBlitImageInfo2* info) {
+    if(original_blit_image2)original_blit_image2(cb,info);
+    if(info)observe_wsi_write(cb,info->dstImage,info->dstImageLayout);
+}
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_swap_create(
         VkDevice device,const VkSwapchainCreateInfoKHR* info,
         const VkAllocationCallbacks* alloc,VkSwapchainKHR* out) {
@@ -1160,6 +1213,10 @@ extern "C" PFN_vkVoidFunction bs4_fsr31_wrap_vulkan_proc(
     BS4_WRAP_GIPA(original_queue_submit,"vkQueueSubmit",&bs4_cap_queue_submit)
     BS4_WRAP_GIPA(original_queue_submit2,"vkQueueSubmit2",&bs4_cap_queue_submit2)
     BS4_WRAP_GIPA(original_queue_submit2,"vkQueueSubmit2KHR",&bs4_cap_queue_submit2)
+    BS4_WRAP_GIPA(original_copy_image,"vkCmdCopyImage",&bs4_cap_copy_image)
+    BS4_WRAP_GIPA(original_blit_image,"vkCmdBlitImage",&bs4_cap_blit_image)
+    BS4_WRAP_GIPA(original_copy_image2,"vkCmdCopyImage2",&bs4_cap_copy_image2)
+    BS4_WRAP_GIPA(original_blit_image2,"vkCmdBlitImage2",&bs4_cap_blit_image2)
     BS4_WRAP_GIPA(original_swap_create,"vkCreateSwapchainKHR",&bs4_cap_swap_create)
     BS4_WRAP_GIPA(original_swap_images,"vkGetSwapchainImagesKHR",&bs4_cap_swap_images)
     BS4_WRAP_GIPA(original_present,"vkQueuePresentKHR",&bs4_cap_present)
@@ -1197,6 +1254,10 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
     BS4_WRAP(original_queue_submit,"vkQueueSubmit",&bs4_cap_queue_submit)
     BS4_WRAP(original_queue_submit2,"vkQueueSubmit2",&bs4_cap_queue_submit2)
     BS4_WRAP(original_queue_submit2,"vkQueueSubmit2KHR",&bs4_cap_queue_submit2)
+    BS4_WRAP(original_copy_image,"vkCmdCopyImage",&bs4_cap_copy_image)
+    BS4_WRAP(original_blit_image,"vkCmdBlitImage",&bs4_cap_blit_image)
+    BS4_WRAP(original_copy_image2,"vkCmdCopyImage2",&bs4_cap_copy_image2)
+    BS4_WRAP(original_blit_image2,"vkCmdBlitImage2",&bs4_cap_blit_image2)
     BS4_WRAP(original_swap_create,"vkCreateSwapchainKHR",&bs4_cap_swap_create)
     BS4_WRAP(original_swap_images,"vkGetSwapchainImagesKHR",&bs4_cap_swap_images)
     BS4_WRAP(original_present,"vkQueuePresentKHR",&bs4_cap_present)
