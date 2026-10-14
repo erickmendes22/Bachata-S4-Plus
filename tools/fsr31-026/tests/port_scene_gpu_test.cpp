@@ -77,6 +77,7 @@ int main(int argc,char** argv){
  }
  auto trackedSubmit=(PFN_vkQueueSubmit)vkGetDeviceProcAddr(device,"vkQueueSubmit");
  std::array<VkCommandBuffer,12> batch{};if(queued){cai.commandBufferCount=batch.size();check(vkAllocateCommandBuffers(device,&cai,batch.data()));}
+ unsigned queuedBatchStart=1,queuedBatches=0;
  VkImageLayout sourceLayout=VK_IMAGE_LAYOUT_UNDEFINED;
  for(unsigned frame=0;frame<12;frame++){
   if(queued)cb=batch[frame];
@@ -93,7 +94,7 @@ int main(int argc,char** argv){
   if(computeProbe){nativeBind(cb,VK_PIPELINE_BIND_POINT_COMPUTE,probePipeline);nativeSets(cb,VK_PIPELINE_BIND_POINT_COMPUTE,probeLayout,0,1,&probeSet,0,nullptr);nativeConstants(cb,probeLayout,VK_SHADER_STAGE_ALL,0,4,&expectedProbe);}
   const auto result=bs4_fsr31_generic_render(&owned,cb,cv,{width,height},{1280,720},4,0,1,dv);
   if(!frame){assert(!result);check(vkEndCommandBuffer(cb));VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cb;check(trackedSubmit(queue,1,&submit,nullptr));check(vkQueueWaitIdle(queue));sourceLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;bs4_fsr31_port_end_frame();continue;}
-  if(queued&&frame==5){
+  if(queued&&(frame==5||frame==10)){
    if(result){
     std::fputs("UNSAFE: fifth recorded temporal dispatch reused an unsubmitted slot\n",stderr);
     check(vkEndCommandBuffer(cb));VkSubmitInfo unsafe{VK_STRUCTURE_TYPE_SUBMIT_INFO};unsafe.commandBufferCount=5;unsafe.pCommandBuffers=batch.data()+1;
@@ -102,9 +103,9 @@ int main(int argc,char** argv){
     return 42;
    }
    check(vkEndCommandBuffer(cb));
-   VkSubmitInfo batchInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};batchInfo.commandBufferCount=4;batchInfo.pCommandBuffers=batch.data()+1;
+   VkSubmitInfo batchInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};batchInfo.commandBufferCount=4;batchInfo.pCommandBuffers=batch.data()+queuedBatchStart;
    check(trackedSubmit(queue,1,&batchInfo,nullptr));check(vkQueueWaitIdle(queue));
-   assert(validationErrors==0);std::puts("PASS four queued FSR CBs remain executable; fifth safely declines before slot reuse; zero validation errors");break;
+   assert(validationErrors==0);queuedBatches++;queuedBatchStart=frame+1;sourceLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;bs4_fsr31_port_end_frame();continue;
   }
   assert(result);
   if(computeProbe){
@@ -122,6 +123,15 @@ int main(int argc,char** argv){
   if(computeProbe){void* value{};check(vkMapMemory(device,probeMemory,0,4,0,&value));if(*static_cast<uint32_t*>(value)!=expectedProbe)std::fprintf(stderr,"native compute probe mismatch actual=%08x expected=%08x\n",*static_cast<uint32_t*>(value),expectedProbe);
    assert(*static_cast<uint32_t*>(value)==expectedProbe);vkUnmapMemory(device,probeMemory);std::printf("PASS cached native compute after AMD frame=%u value=%08x\n",frame,expectedProbe);}
   void* mapped{};check(vkMapMemory(device,read.memory,0,read.allocationSize,0,&mapped));if(!(read.memoryProperties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){VkMappedMemoryRange mr{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};mr.memory=read.memory;mr.size=VK_WHOLE_SIZE;check(vkInvalidateMappedMemoryRanges(device,1,&mr));}auto half=(const uint16_t*)mapped;size_t blue=0;for(size_t i=0;i<1280*720;i++)blue+=(half[i*4+2]>0x3a66&&half[i*4+2]<0x3d00&&half[i*4]<0x34cd);assert(blue>1280*720*99/100);std::printf("PASS frame=%u real FSR3.1 camera dispatch blue_pixels=%zu/921600; upper-left scene/depth crop preserved\n",frame,blue);vkUnmapMemory(device,read.memory);sourceLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;bs4_fsr31_port_end_frame();
+ }
+ if(queued){
+  VkSubmitInfo remaining{VK_STRUCTURE_TYPE_SUBMIT_INFO};remaining.commandBufferCount=12-queuedBatchStart;remaining.pCommandBuffers=batch.data()+queuedBatchStart;
+  check(trackedSubmit(queue,1,&remaining,nullptr));check(vkQueueWaitIdle(queue));assert(queuedBatches==2);
+  void* mapped{};check(vkMapMemory(device,read.memory,0,read.allocationSize,0,&mapped));
+  if(!(read.memoryProperties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){VkMappedMemoryRange mr{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};mr.memory=read.memory;mr.size=VK_WHOLE_SIZE;check(vkInvalidateMappedMemoryRanges(device,1,&mr));}
+  auto half=static_cast<const uint16_t*>(mapped);size_t blue=0;for(size_t i=0;i<1280*720;i++)blue+=(half[i*4+2]>0x3a66&&half[i*4+2]<0x3d00&&half[i*4]<0x34cd);
+  assert(blue>1280*720*99/100);vkUnmapMemory(device,read.memory);
+  std::printf("PASS two batches of four queued temporal CBs plus final dispatch; ring safely reused after completion; final blue_pixels=%zu; zero Vulkan errors\n",blue);
  }
  assert(validationErrors==0);std::puts("PASS: zero Vulkan validation errors; actual R13-based camera shader + AMD FSR dispatch");
  return 0;
