@@ -24,5 +24,8 @@
   "fourImageGPUCoveragePassed": true,
   "stagePixelLoggingVerified": true,
   "workflowUrl": "https://github.com/erickmendes22/Bachata-S4-Plus/actions/runs/38609579666",
-  "libraryStatus": "pending upload"
+  "libraryStatus": "saved",
+  "libraryFileId": "libfile_2ebd1300c9bc81919a00700957ba751e",
+  "libraryBackingFileId": "file_00000000445081f5ac9af8e331784a24",
+  "localMetadataApplied": true
 }
