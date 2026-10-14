@@ -310,10 +310,21 @@ void VKAPI_CALL indexed_hook(VkCommandBuffer cb,uint32_t n,uint32_t i,uint32_t f
     drawIndexed(cb,n,i,first,vertex,base);restore(cb,shift);
 }
 void VKAPI_CALL indirect_hook(VkCommandBuffer cb,VkBuffer b,VkDeviceSize off,uint32_t n,uint32_t stride) {
-    observe_draw(cb);drawIndirect(cb,b,off,n,stride);
+    observe_draw(cb);
+    // GPU indirect arguments may not be host-visible. A proven G-buffer
+    // geometry pass supplies the contract; do not infer a vertex count from
+    // unreadable GPU memory or jitter a fullscreen post-processing pass.
+    bool geometry=false;{std::lock_guard lock{guard};auto it=commands.find(cb);
+        geometry=it!=commands.end()&&it->second.mrt>=5;}
+    const auto shift=geometry&&n?shift_geometry(cb,UINT32_MAX,1):ViewportShift{};
+    drawIndirect(cb,b,off,n,stride);restore(cb,shift);
 }
 void VKAPI_CALL indexed_indirect_hook(VkCommandBuffer cb,VkBuffer b,VkDeviceSize off,uint32_t n,uint32_t stride) {
-    observe_draw(cb);drawIndexedIndirect(cb,b,off,n,stride);
+    observe_draw(cb);
+    bool geometry=false;{std::lock_guard lock{guard};auto it=commands.find(cb);
+        geometry=it!=commands.end()&&it->second.mrt>=5;}
+    const auto shift=geometry&&n?shift_geometry(cb,UINT32_MAX,1):ViewportShift{};
+    drawIndexedIndirect(cb,b,off,n,stride);restore(cb,shift);
 }
 }
 void bs4_native_scene_begin(VkCommandBuffer cb,const VkRenderingInfo* info) {

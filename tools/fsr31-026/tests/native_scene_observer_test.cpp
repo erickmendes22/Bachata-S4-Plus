@@ -25,11 +25,15 @@ void VKAPI_CALL viewport_count(VkCommandBuffer,uint32_t count,const VkViewport* 
 VkResult VKAPI_CALL name(VkDevice,const VkDebugUtilsObjectNameInfoEXT*){return VK_SUCCESS;}
 void VKAPI_CALL destroy_layout(VkDevice,VkPipelineLayout,const VkAllocationCallbacks*){}
 void VKAPI_CALL draw(VkCommandBuffer,uint32_t n,uint32_t i,uint32_t first,uint32_t base){assert(n==30&&i==1&&first==0&&base==0);forwarded++;}
+void VKAPI_CALL indirect(VkCommandBuffer,VkBuffer,VkDeviceSize off,uint32_t count,uint32_t stride){
+ assert(off==32&&count==2&&stride==20);assert(actualViewport.x!=0);forwarded++;
+}
 int main(){
  setenv("BACHATA_FSR31_INPUT","port",1);
  auto a=wrap("vkAllocateMemory",&allocate);auto m=wrap("vkMapMemory",&map);
  auto b=wrap("vkBindBufferMemory",&bind);auto p=wrap("vkCmdPushDescriptorSetKHR",&push);
  auto c=wrap("vkCmdPushConstants",&constants);auto v=wrap("vkCmdSetViewport",&viewport);
+ auto indirectDraw=wrap("vkCmdDrawIndirect",&indirect);auto indirectIndexed=wrap("vkCmdDrawIndexedIndirect",&indirect);
  auto d=wrap("vkCmdDraw",&draw);auto u=wrap("vkUnmapMemory",&unmap);
  auto vc=wrap("vkCmdSetViewportWithCountEXT",&viewport_count);
  auto named=wrap("vkSetDebugUtilsObjectNameEXT",&name);auto destroyed=wrap("vkDestroyPipelineLayout",&destroy_layout);
@@ -67,6 +71,10 @@ int main(){
  setup();vc(cb,1,&vp);const auto oldCalls=viewportCalls;d(cb,30,1,0,0);
  assert(bs4_fsr31_port_camera(cb,depth,{640,360},out)&&out.motion.jitter[0]==.25f);
  assert(viewportCountCalls==3&&viewportCalls==oldCalls&&actualViewport.x==vp.x&&actualViewport.y==vp.y);
+ // Indirect G-buffer draws receive exactly the same phase, and the original
+ // viewport is restored after each call (including WithCount state).
+ indirectDraw(cb,buffer,32,2,20);assert(actualViewport.x==vp.x&&actualViewport.y==vp.y);
+ indirectIndexed(cb,buffer,32,2,20);assert(actualViewport.x==vp.x&&actualViewport.y==vp.y);
  resourcesReady=false;setup();const auto noJitterCalls=viewportCalls;d(cb,30,1,0,0);
  assert(viewportCalls==noJitterCalls&&actualViewport.x==vp.x&&actualViewport.y==vp.y);
  resourcesReady=true;
@@ -79,7 +87,7 @@ int main(){
  bufferInfo.range=863;setup();d(cb,30,1,0,0);assert(!bs4_native_scene_camera(cb,&found,&size));bufferInfo.range=864;
  info.colorAttachmentCount=4;setup();d(cb,30,1,0,0);assert(!bs4_native_scene_camera(cb,&found,&size));info.colorAttachmentCount=5;
  u({},mem);setup();d(cb,30,1,0,0);assert(!bs4_native_scene_camera(cb,&found,&size));
- assert(memory==original&&forwarded==9); // no guest memory writes; every draw forwarded
+ assert(memory==original&&forwarded==11); // no guest memory writes; every draw forwarded
  auto layout=handle<VkPipelineLayout>(9);
  Bs4NativeRenderState native{};native.width=640;native.height=360;native.layers=1;
  native.colorCount=1;native.colors[0].view=11;

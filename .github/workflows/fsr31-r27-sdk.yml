@@ -91,6 +91,7 @@ jobs:
             tools/fsr31-026/bridge.cpp
             tools/fsr31-026/vulkan_capture.cpp
             tools/fsr31-026/temporal_generic.cpp
+            tools/fsr31-026/gpu_frame_probe.cpp
             tools/fsr31-026/port_scene_frame.cpp
             tools/fsr31-026/native_compute_state.cpp
             tools/fsr31-026/native_draw_handoff.cpp
@@ -155,10 +156,13 @@ jobs:
           test -n "$VK_ICD_FILENAMES"
           /tmp/bs4-fsr-sdk-smoke | tee port-scene-gpu.txt
           /tmp/bs4-fsr-sdk-smoke abandon-recording | tee abandoned-recording-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke skip-temporal 2>&1 | tee skipped-temporal-gpu.txt
+          grep -q 'HISTORY_RESET_AFTER_SKIPPED_DISPATCH previous=3 current=5' skipped-temporal-gpu.txt
           /tmp/bs4-fsr-sdk-smoke quality-1x | tee -a port-scene-gpu.txt
           /tmp/bs4-fsr-sdk-smoke depth-stencil | tee -a port-scene-gpu.txt
           g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include tools/fsr31-026/tests/r13_composition_gpu_test.cpp -Lbuild-host -lbachata_fsr31 -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/bs4-fsr-sdk-smoke
-          /tmp/bs4-fsr-sdk-smoke | tee r13-composition-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke 2>&1 | tee r13-composition-gpu.txt
+          grep -q "GPU_FRAME_PROBE.*stages=0x3f.*native={cyan:0.*clone={cyan:0.*fsr={cyan:0.*ui={cyan:0.*gpu_completed=1" r13-composition-gpu.txt
           /tmp/bs4-fsr-sdk-smoke shared-target | tee shared-target-preservation-gpu.txt
           /tmp/bs4-fsr-sdk-smoke run-scaled-ui | tee native-run-scaled-ui-gpu.txt
           /tmp/bs4-fsr-sdk-smoke owned-ui | tee automatic-native-ui-gpu.txt
@@ -201,6 +205,7 @@ jobs:
             native-run-scaled-ui-gpu.txt
             automatic-native-ui-gpu.txt
             abandoned-recording-gpu.txt
+            skipped-temporal-gpu.txt
             depth-access-gpu.txt
             depth-clear-gpu.txt
             partial-same-layout-gpu.txt

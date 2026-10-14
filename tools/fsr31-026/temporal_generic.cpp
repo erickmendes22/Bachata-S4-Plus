@@ -8,6 +8,7 @@
 #include "camera_motion_spv.h"
 #include "port_scene_frame.h"
 #include "native_compute_state.h"
+#include "gpu_frame_probe.h"
 #include <cstdlib>
 #include <vulkan/vulkan.h>
 #include <algorithm>
@@ -36,6 +37,7 @@ struct Frame {
     Surface motion;
     Surface output;
     VkDescriptorSet descriptor{};
+    Bs4GpuFrameProbe probe;
     // A ring slot remains owned by a command buffer until it is submitted
     // and the GPU completion fence signals. Never rewrite its descriptors,
     // scene, motion or output while the GPU can still reference them.
@@ -59,7 +61,7 @@ size_t cursor=0;
 bool has_previous=false,abandoned_history=false;
 bool port_inputs=false;
 std::atomic<uint64_t> ready_port_extent{0};
-uint64_t frame_id=0;
+uint64_t frame_id=0,last_temporal_camera=0;
 std::chrono::steady_clock::time_point last_frame{};
 bool once_logged=false;
 std::atomic<uint64_t> reported_reasons{0};
@@ -153,11 +155,11 @@ void free_all() {
     if(sampler)vkDestroySampler(device,sampler,nullptr);
     flow_pipeline={};pipeline_layout={};desc_layout={};
     descriptors={};sampler={};
-    for(auto& f:frames){if(f.completion)vkDestroyFence(device,f.completion,nullptr);
+    for(auto& f:frames){if(f.submitted)bs4_probe_resolve(f.probe,device);bs4_probe_release(f.probe,device);if(f.completion)vkDestroyFence(device,f.completion,nullptr);
         free_surface(f.scene);free_surface(f.depth);
         free_surface(f.motion);free_surface(f.output);}
     frames.clear();free_surface(previous);
-    has_previous=false;abandoned_history=false;frame_id=0;cursor=0;
+    has_previous=false;abandoned_history=false;frame_id=0;last_temporal_camera=0;cursor=0;
 }
 bool build_compute(){
     VkDescriptorSetLayoutBinding bindings[3]{};
@@ -419,9 +421,14 @@ static uint64_t generic_render_impl(
     // Preparation performs resource validation/allocation only. It must not
     // advance the ring/history or record commands into an active render pass.
     if(prepare_only)return 1;
+    if(want_port&&has_previous&&camera.frameId==last_temporal_camera){
+        report_once(23,"temporal frame already recorded; do not advance AMD history twice");return 0;
+    }
     // Select a frame only if never recorded or fully completed on the GPU.
     // vkGetFenceStatus is nonblocking: a busy ring skips FSR rather than
     // corrupting in-flight resources or blocking the emulation thread.
+    for(auto& slot:frames)if(slot.submitted&&vkGetFenceStatus(device,slot.completion)==VK_SUCCESS)
+        bs4_probe_resolve(slot.probe,device);
     Frame* available=nullptr;
     for(size_t i=0;i<frames.size();++i) {
         Frame& candidate=frames[(cursor+i)%frames.size()];
@@ -446,9 +453,11 @@ static uint64_t generic_render_impl(
         ~RestoreNativeCompute(){bs4_native_compute_restore(cb);bs4_native_compute_leave_sdk();}
     } restore{cb};
     Frame& f=*available;
+    bs4_probe_begin(f.probe,device,physical,frame_id,want_port?camera.frameId:0);
     transit(cb,f.scene,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     barrier(cb,color.image,VK_IMAGE_ASPECT_COLOR_BIT,color.layout,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    bs4_probe_image(f.probe,cb,color.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,internal,color.format,0);
     VkImageBlit blit{};
     blit.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
     blit.srcOffsets[1]=want_port?VkOffset3D{int32_t(internal.width),int32_t(internal.height),1}:
@@ -459,6 +468,7 @@ static uint64_t generic_render_impl(
        f.scene.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&blit,VK_FILTER_LINEAR);
     barrier(cb,color.image,VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,color.layout);
+    bs4_probe_image(f.probe,cb,f.scene.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,internal,f.scene.format,1);
     transit(cb,f.scene,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     transit(cb,f.depth,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -500,6 +510,8 @@ static uint64_t generic_render_impl(
     barrier(cb,f.motion.image,VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     f.motion.layout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    bs4_probe_image(f.probe,cb,f.motion.image,f.motion.layout,internal,f.motion.format,4);
+    bs4_probe_image(f.probe,cb,f.depth.image,f.depth.layout,internal,f.depth.format,5);
     transit(cb,f.output,VK_IMAGE_LAYOUT_GENERAL);
     FfxVkPortableUpscaleDispatchInfo info{};
     info.structSize=sizeof(info);info.commandBuffer=cb;
@@ -528,7 +540,14 @@ static uint64_t generic_render_impl(
         info.cameraVerticalFovRadians=camera.verticalFov;
     }
     info.sharpness=0.2f;info.enableSharpening=VK_TRUE;
-    info.reset=(!has_previous||(want_port&&camera.reset))?VK_TRUE:VK_FALSE;
+    // Port OnDisplayPass resets after a displayed frame without an actual
+    // dispatch. Camera capture alone is not an AMD history submission.
+    const bool missed_temporal=want_port&&last_temporal_camera&&camera.frameId!=last_temporal_camera+1;
+    info.reset=(!has_previous||(want_port&&camera.reset)||missed_temporal)?VK_TRUE:VK_FALSE;
+    if(missed_temporal){static unsigned logged=0;if(logged++<8)std::fprintf(stderr,
+        "[BS4_FSR31] HISTORY_RESET_AFTER_SKIPPED_DISPATCH previous=%llu current=%llu\n",
+        (unsigned long long)last_temporal_camera,(unsigned long long)camera.frameId);}
+    f.probe.historyReset=info.reset;
     info.frameId=frame_id++;
     const auto result=ffxVkPortableUpscaleContextRecordDispatch(fsr,&info);
     if(result!=FFX_VK_PORTABLE_OK) {
@@ -538,6 +557,7 @@ static uint64_t generic_render_impl(
         }
         return 0;
     }
+    bs4_probe_image(f.probe,cb,f.output.image,VK_IMAGE_LAYOUT_GENERAL,output_extent,f.output.format,2);
     transit(cb,f.output,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     if(!want_port) {
     transit(cb,previous,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -553,6 +573,7 @@ static uint64_t generic_render_impl(
     }
     f.recordedBy=cb;f.recorded=true;
     has_previous=true;
+    if(want_port)last_temporal_camera=camera.frameId;
     if(frame_id==1)
         std::fprintf(stderr,"[BS4_FSR31] real FSR3.1 dispatch recorded (%ux%u->%ux%u)\n",
              internal.width,internal.height,output_extent.width,output_extent.height);
@@ -613,6 +634,17 @@ extern "C" void bs4_fsr31_temporal_reset_recording(VkCommandBuffer cb) {
     if(!cb)return;
     std::lock_guard lock{mutex};
     for(auto& f:frames)if(f.recorded&&f.recordedBy==cb){
-        f.recorded=false;f.recordedBy={};abandoned_history=true;
+        f.recorded=false;f.recordedBy={};f.probe.pending=false;abandoned_history=true;
     }
+}
+
+// A pre-HUD sample of the actual composited image. It is recorded in the
+// same CB and protected by the same completion fence as its FSR output.
+extern "C" void bs4_fsr31_probe_composite(VkCommandBuffer cb,VkImage image,VkImageLayout layout,VkExtent2D size,VkFormat format){
+    std::lock_guard lock{mutex};
+    for(auto& f:frames)if(f.recorded&&f.recordedBy==cb){bs4_probe_image(f.probe,cb,image,layout,size,format,3);return;}
+}
+extern "C" void bs4_fsr31_probe_completed(){
+    std::lock_guard lock{mutex};
+    for(auto& f:frames)if(f.submitted&&vkGetFenceStatus(device,f.completion)==VK_SUCCESS)bs4_probe_resolve(f.probe,device);
 }

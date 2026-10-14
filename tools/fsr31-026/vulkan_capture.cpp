@@ -67,6 +67,8 @@ extern "C" int bs4_fsr31_pre_ui_dispatch(VkCommandBuffer,VkImageView,
 extern "C" int bs4_fsr31_pre_ui_prepare(VkCommandBuffer,VkImageView,
                 VkImageView,VkExtent2D,VkExtent2D);
 extern "C" VkPhysicalDevice bs4_fsr31_physical_device();
+extern "C" void bs4_fsr31_probe_composite(VkCommandBuffer,VkImage,VkImageLayout,VkExtent2D,VkFormat);
+extern "C" void bs4_fsr31_probe_completed();
 
 PFN_vkBeginCommandBuffer original_begin_command{};
 PFN_vkResetCommandBuffer original_reset_command{};
@@ -487,6 +489,7 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     blit.dstOffsets[1]={int32_t(w),int32_t(h),1};
     vkCmdBlitImage(cmd,upscaled,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         dst,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&blit,VK_FILTER_LINEAR);
+    bs4_fsr31_probe_composite(cmd,dst,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,{w,h},VK_FORMAT_R8G8B8A8_UNORM);
     for(auto& b:bars) {
         std::swap(b.oldLayout,b.newLayout);
         b.srcStageMask=VK_PIPELINE_STAGE_2_TRANSFER_BIT;
@@ -668,6 +671,7 @@ extern "C" int bs4_fsr31_run_scaled_ui(VkCommandBuffer cb,VkImageView uiColor,Vk
     blit.dstOffsets[1]={1280,720,1};
     vkCmdBlitImage(cb,background,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,target.image,
         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&blit,VK_FILTER_LINEAR);
+    if(dispatched)bs4_fsr31_probe_composite(cb,target.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,{1280,720},target.format);
     transition(background,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,old);
     transition(target.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
@@ -847,6 +851,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_queue_submit2(VkQueue q,uint32
     return result;
 }
 extern "C" void bs4_fsr31_capture_present() {
+    bs4_fsr31_probe_completed();
     std::lock_guard lock{mutex};
     submitted_scene={};submitted_owner={};submitted_queue={};multiple_queues=false;
 }
