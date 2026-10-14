@@ -192,8 +192,14 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
         // render pass before its later UI CB starts. A successful submit
         // proves ordering, not that the contents still belong to that scene.
         // Retire that candidate as soon as any other CB begins writing it.
-        if(submitted_owner&&submitted_owner!=cmd&&
-           submitted_scene.color==view) {
+        // Compare the backing VkImage, not just VkImageView handles:
+        // games frequently create several compatible views of one allocation.
+        const auto source_view=views.find(submitted_scene.color);
+        const auto write_view=views.find(view);
+        const bool same_backing=source_view!=views.end()&&
+            write_view!=views.end()&&
+            source_view->second.image==write_view->second.image;
+        if(submitted_owner&&submitted_owner!=cmd&&same_backing) {
             submitted_scene={};submitted_owner={};
             static bool warned=false;
             if(!warned){warned=true;std::fprintf(stderr,
