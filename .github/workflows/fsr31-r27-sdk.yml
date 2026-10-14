@@ -92,6 +92,7 @@ jobs:
             tools/fsr31-026/vulkan_capture.cpp
             tools/fsr31-026/temporal_generic.cpp
             tools/fsr31-026/gpu_frame_probe.cpp
+            tools/fsr31-026/wsi_gpu_probe.cpp
             tools/fsr31-026/port_scene_frame.cpp
             tools/fsr31-026/native_compute_state.cpp
             tools/fsr31-026/native_draw_handoff.cpp
