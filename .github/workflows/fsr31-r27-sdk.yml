@@ -227,3 +227,5 @@ jobs:
             overwritten-scene-gpu.txt
           if-no-files-found: error
           retention-days: 7
+
+# n047: validate preserved GPU probes and WSI hooks
