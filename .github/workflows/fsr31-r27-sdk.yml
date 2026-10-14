@@ -163,6 +163,8 @@ jobs:
           /tmp/bs4-fsr-sdk-smoke run-scaled-ui | tee native-run-scaled-ui-gpu.txt
           /tmp/bs4-fsr-sdk-smoke owned-ui | tee automatic-native-ui-gpu.txt
           /tmp/bs4-fsr-sdk-smoke cross-cb | tee separate-command-buffers-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke depth-access | tee depth-access-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke depth-clear | tee depth-clear-gpu.txt
           /tmp/bs4-fsr-sdk-smoke same-cb-overwrite | tee same-cb-overwrite-gpu.txt
           if BS4_TEST_KEEP_REWRITTEN_LOCAL_SCENE=1 /tmp/bs4-fsr-sdk-smoke same-cb-overwrite > /tmp/stale-local.txt 2>&1; then
             echo 'Old local-candidate behavior unexpectedly passed'; exit 1
@@ -193,6 +195,8 @@ jobs:
             native-run-scaled-ui-gpu.txt
             automatic-native-ui-gpu.txt
             abandoned-recording-gpu.txt
+            depth-access-gpu.txt
+            depth-clear-gpu.txt
             same-cb-overwrite-gpu.txt
             separate-command-buffers-gpu.txt
             overwritten-scene-gpu.txt

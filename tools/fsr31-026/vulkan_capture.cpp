@@ -71,6 +71,7 @@ extern "C" VkPhysicalDevice bs4_fsr31_physical_device();
 PFN_vkBeginCommandBuffer original_begin_command{};
 PFN_vkResetCommandBuffer original_reset_command{};
 PFN_vkFreeCommandBuffers original_free_commands{};
+PFN_vkCmdClearDepthStencilImage original_clear_depth{};
 PFN_vkQueueSubmit original_queue_submit{};
 PFN_vkQueueSubmit2 original_queue_submit2{};
 PFN_vkCreateImage original_create_image{};
@@ -105,16 +106,14 @@ void update_layout(VkCommandBuffer cb,uint32_t count, const VkImageMemoryBarrier
         // observe_submission resurrected the unchanged local ScenePass.
         const auto local=command_scenes.find(cb);
         const VkAccessFlags2 writes=VK_ACCESS_2_SHADER_WRITE_BIT|VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT|
-            VK_ACCESS_2_TRANSFER_WRITE_BIT|VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT|
-            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            VK_ACCESS_2_TRANSFER_WRITE_BIT|VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
         const bool broadWrite=(barriers[i].dstAccessMask&VK_ACCESS_2_MEMORY_WRITE_BIT)&&
             (barriers[i].newLayout==VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL||
              barriers[i].newLayout==VK_IMAGE_LAYOUT_GENERAL);
         if(!bs4_native_compute_in_sdk()&&local!=command_scenes.end()&&local->second.ready&&
            ((barriers[i].dstAccessMask&writes)||broadWrite)) {
-            const auto c=views.find(local->second.color),d=views.find(local->second.depth);
-            const bool replaced=(c!=views.end()&&c->second.image==barriers[i].image)||
-                                (d!=views.end()&&d->second.image==barriers[i].image);
+            const auto c=views.find(local->second.color);
+            const bool replaced=c!=views.end()&&c->second.image==barriers[i].image;
             if(replaced) {
 #ifdef BS4_FSR31_TEST_HARNESS
                 if(!std::getenv("BS4_TEST_KEEP_REWRITTEN_LOCAL_SCENE"))
@@ -134,9 +133,7 @@ void update_layout(VkCommandBuffer cb,uint32_t count, const VkImageMemoryBarrier
         if(!bs4_native_compute_in_sdk()&&submitted_owner&&submitted_scene.color&&
            ((barriers[i].dstAccessMask&writes)||broadWrite)) {
             const auto v=views.find(submitted_scene.color);
-            const auto d=views.find(submitted_scene.depth);
-            if((v!=views.end() && v->second.image==barriers[i].image)||
-               (d!=views.end() && d->second.image==barriers[i].image)) {
+            if(v!=views.end() && v->second.image==barriers[i].image) {
                 submitted_scene={};submitted_owner={};
                 static bool logged=false;
                 if(!logged){logged=true;std::fprintf(stderr,
@@ -145,6 +142,25 @@ void update_layout(VkCommandBuffer cb,uint32_t count, const VkImageMemoryBarrier
             }
         }
     }
+}
+// Access masks specify dependencies, not an executed depth write. Retire
+// camera depth on a real clearing operation, not a read-only depth barrier.
+extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_clear_depth(VkCommandBuffer cb,VkImage image,
+    VkImageLayout layout,const VkClearDepthStencilValue* value,uint32_t count,
+    const VkImageSubresourceRange* ranges) {
+    if(!bs4_native_compute_in_sdk()&&ranges&&count) {
+        bool clearsDepth=false;for(uint32_t n=0;n<count;++n)clearsDepth|=bool(ranges[n].aspectMask&VK_IMAGE_ASPECT_DEPTH_BIT);
+        if(clearsDepth){std::lock_guard lock{mutex};
+            auto local=command_scenes.find(cb);
+            if(local!=command_scenes.end()&&local->second.ready){auto d=views.find(local->second.depth);
+                if(d!=views.end()&&d->second.image==image)local->second={};}
+            auto d=views.find(submitted_scene.depth);
+            if(submitted_owner&&d!=views.end()&&d->second.image==image){submitted_scene={};submitted_owner={};}
+            static bool logged=false;if(!logged){logged=true;std::fprintf(stderr,
+                "[BS4_FSR31] DEPTH_CLEAR_INVALIDATES_SCENE actual_clear=1\n");}
+        }
+    }
+    if(original_clear_depth)original_clear_depth(cb,image,layout,value,count,ranges);
 }
 void mirrored_ui_barriers(VkCommandBuffer cb,const VkDependencyInfo* dep,PFN_vkCmdPipelineBarrier2 original) {
     if(!dep||!original||!dep->pImageMemoryBarriers)return;
@@ -945,6 +961,7 @@ extern "C" PFN_vkVoidFunction bs4_fsr31_wrap_vulkan_proc(
             method=reinterpret_cast<decltype(method)>(proc); \
             return reinterpret_cast<PFN_vkVoidFunction>(target); \
         }
+    BS4_WRAP_GIPA(original_clear_depth,"vkCmdClearDepthStencilImage",&bs4_cap_clear_depth)
     BS4_WRAP_GIPA(original_begin_command,"vkBeginCommandBuffer",&bs4_cap_begin_command)
     BS4_WRAP_GIPA(original_reset_command,"vkResetCommandBuffer",&bs4_cap_reset_command)
     BS4_WRAP_GIPA(original_free_commands,"vkFreeCommandBuffers",&bs4_cap_free_commands)
@@ -977,6 +994,7 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
             method=reinterpret_cast<decltype(method)>(proc); \
             return reinterpret_cast<PFN_vkVoidFunction>(target); \
         }
+    BS4_WRAP(original_clear_depth,"vkCmdClearDepthStencilImage",&bs4_cap_clear_depth)
     BS4_WRAP(original_begin_command,"vkBeginCommandBuffer",&bs4_cap_begin_command)
     BS4_WRAP(original_reset_command,"vkResetCommandBuffer",&bs4_cap_reset_command)
     BS4_WRAP(original_free_commands,"vkFreeCommandBuffers",&bs4_cap_free_commands)
