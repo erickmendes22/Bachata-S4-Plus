@@ -27,7 +27,7 @@ int main(int argc,char** argv){
  const bool automatic=argc==2&&std::strcmp(argv[1],"owned-ui")==0;
  const bool cross=argc==2&&std::strcmp(argv[1],"cross-cb")==0;
  const bool runScaled=automatic||(argc==2&&std::strcmp(argv[1],"run-scaled-ui")==0);
- setenv("BACHATA_FSR31_NATIVE_UI",automatic?"1":"0",1);
+ setenv("BACHATA_FSR31_NATIVE_UI",cross?"0":"1",1);
  const bool shared=runScaled||(argc==2&&std::strcmp(argv[1],"shared-target")==0);
  const uint32_t uiWidth=runScaled?1280:(shared?640:1920),uiHeight=runScaled?720:(shared?360:1080);
  setenv("BS4_FSR31_TEST_OWNER","025",1);
@@ -77,12 +77,20 @@ int main(int argc,char** argv){
   // the existing rendering instance, as the native scheduler may do.
   // This is a preservation test, not proof of shared-target FSR support.
   pushConstants(cb,movie,VK_SHADER_STAGE_VERTEX_BIT,0,120,raw.data());assert(bs4_native_scene_ui_boundary(cb));
+  if(cross) {
+    // The actual native shader is identified on this second CB. It does
+    // not enqueue scheduler callbacks or pretend to record scene pixels.
+    Bs4NativeRenderState separateHud{};
+    separateHud.width=uiWidth;separateHud.height=uiHeight;separateHud.layers=1;
+    separateHud.colorCount=1;separateHud.colors[0].view=reinterpret_cast<uint64_t>(ui.view);
+    bs4_native_scene_draw_state(cb,separateHud);
+  }
   // In shared mode this is inside the original LDR rendering instance.
   // Validation catches any GPU command accidentally emitted by preparation.
   if(!cross)assert(bool(bs4_fsr31_pre_ui_prepare(cb,scene.view,depth.view,{640,360},{1280,720}))==bool(frame));
   std::array<unsigned char,0x1200> nativeScheduler{};const uint64_t nativeCommand=reinterpret_cast<uint64_t>(cb);std::memcpy(nativeScheduler.data()+0xf08,&nativeCommand,8);
   Bs4NativeRenderState nativeState{};nativeState.width=shared?640:uiWidth;nativeState.height=shared?360:uiHeight;nativeState.layers=1;nativeState.colorCount=1;nativeState.colors[0].view=reinterpret_cast<uint64_t>(shared?scene.view:ui.view);if(runScaled){nativeState.depthEnabled=1;nativeState.depth=reinterpret_cast<uint64_t>(depth.view);}
-  bs4_fsr31_native_begin(nativeScheduler.data(),&nativeState,0);
+  if(!cross)bs4_fsr31_native_begin(nativeScheduler.data(),&nativeState,0);
   Bs4NativeUiBoundary nativeBoundary{};
   if(!cross)assert(bs4_native_scene_ui_state(cb,nativeBoundary)&&nativeBoundary.color==(shared?scene.view:ui.view)&&nativeBoundary.guestExtent.width==nativeState.width);
   if(automatic){
