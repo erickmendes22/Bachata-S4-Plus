@@ -48,7 +48,7 @@ void bs4_probe_begin(Bs4GpuFrameProbe& p,VkDevice dev,VkPhysicalDevice physical,
     p.frame=frame;p.cameraFrame=camera;
     // Capture the first 512 real dispatches and then one in sixteen. Reporting
     // is independently bounded, including when an input is persistently cyan.
-    if(p.failed||(!force&&frame>=8&&frame%64))return;
+    if(p.failed||(force?wsi_reports>=24:reports>=24)||(!force&&frame>=8&&frame%64))return;
     if(!p.buffer){
         VkBufferCreateInfo ci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};ci.size=total;ci.usage=VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         if(vkCreateBuffer(dev,&ci,nullptr,&p.buffer)!=VK_SUCCESS){p.failed=true;return;}

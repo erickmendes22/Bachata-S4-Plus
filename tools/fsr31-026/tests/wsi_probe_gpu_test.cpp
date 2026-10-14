@@ -6,6 +6,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <vector>
+#include <cassert>
+static unsigned buffer_creates=0;
+extern "C" VkResult __real_vkCreateBuffer(VkDevice,const VkBufferCreateInfo*,const VkAllocationCallbacks*,VkBuffer*);
+extern "C" VkResult __wrap_vkCreateBuffer(VkDevice d,const VkBufferCreateInfo* i,const VkAllocationCallbacks* a,VkBuffer* out){++buffer_creates;return __real_vkCreateBuffer(d,i,a,out);}
 extern "C" void bs4_wsi_probe_write(VkDevice,VkPhysicalDevice,VkCommandBuffer,VkImage,VkImageLayout,VkExtent2D,VkFormat);
 extern "C" void bs4_wsi_probe_submitted1(VkQueue,uint32_t,const VkSubmitInfo*,PFN_vkQueueSubmit);
 extern "C" void bs4_wsi_probe_poll();
@@ -58,7 +62,8 @@ int main(int argc,char** argv){
     mai.allocationSize=req.size;mai.memoryTypeIndex=memory;
     VkDeviceMemory alloc{};CHECK(vkAllocateMemory(dev,&mai,nullptr,&alloc));
     CHECK(vkBindImageMemory(dev,image,alloc,0));
-    if(argc>1&&!std::strcmp(argv[1],"rotation")){
+    if(argc>1&&(!std::strcmp(argv[1],"rotation")||!std::strcmp(argv[1],"budget"))){
+        const bool budget=!std::strcmp(argv[1],"budget");
         VkImage rotation[4]{image};VkDeviceMemory allocations[4]{alloc};
         for(unsigned n=1;n<4;++n){
             CHECK(vkCreateImage(dev,&imageci,nullptr,&rotation[n]));
@@ -66,7 +71,7 @@ int main(int argc,char** argv){
             VkMemoryAllocateInfo a{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};a.allocationSize=rq.size;a.memoryTypeIndex=memory;
             CHECK(vkAllocateMemory(dev,&a,nullptr,&allocations[n]));CHECK(vkBindImageMemory(dev,rotation[n],allocations[n],0));
         }
-        for(unsigned step=0;step<260;++step){
+        for(unsigned step=0;step<(budget?2000u:260u);++step){
             const unsigned n=step%4;
             if(step)CHECK(vkResetCommandBuffer(cb,0));
             VkCommandBufferBeginInfo b{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};CHECK(vkBeginCommandBuffer(cb,&b));
@@ -88,6 +93,7 @@ int main(int argc,char** argv){
         }
         for(unsigned n=0;n<4;++n){vkDestroyImage(dev,rotation[n],nullptr);vkFreeMemory(dev,allocations[n],nullptr);}
         vkDestroyCommandPool(dev,pool,nullptr);vkDestroyDevice(dev,nullptr);vkDestroyInstance(instance,nullptr);
+        if(budget){assert(buffer_creates==24);std::puts("WSI_CAPTURE_BUDGET_LIMIT_24");}
         std::puts("WSI_ROTATION_PROBE_COMPLETE");return 0;
     }
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
