@@ -48,7 +48,7 @@ void bs4_probe_begin(Bs4GpuFrameProbe& p,VkDevice dev,VkPhysicalDevice physical,
     p.frame=frame;p.cameraFrame=camera;
     // Capture the first 512 real dispatches and then one in sixteen. Reporting
     // is independently bounded, including when an input is persistently cyan.
-    if(p.failed||(!force&&frame>=512&&frame%16))return;
+    if(p.failed||(!force&&frame>=8&&frame%64))return;
     if(!p.buffer){
         VkBufferCreateInfo ci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};ci.size=total;ci.usage=VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         if(vkCreateBuffer(dev,&ci,nullptr,&p.buffer)!=VK_SUCCESS){p.failed=true;return;}
@@ -123,9 +123,9 @@ void bs4_probe_resolve(Bs4GpuFrameProbe& p,VkDevice dev){
     }
     const bool wsi=bool(p.stages&(1u<<7));
     if(wsi) {
-        if(wsi_reports++>=160)return;
+        if(wsi_reports++>=24)return;
     } else {
-        if(reports>=96||(!unusual&&p.frame>=4&&p.frame%256&&(!saturated||p.frame%16)))return;
+        if(reports>=24||(!unusual&&p.frame>=4&&p.frame%256&&(!saturated||p.frame%16)))return;
         reports++;
     }
     std::array<char,8192> line{};size_t used=0;
@@ -134,7 +134,7 @@ void bs4_probe_resolve(Bs4GpuFrameProbe& p,VkDevice dev){
         const int n=std::snprintf(line.data()+used,line.size()-used,format,args...);
         if(n>0)used+=std::min<size_t>(size_t(n),line.size()-used-1);
     };
-    emit("[BS4_FSR31] GPU_FRAME_PROBE dispatch=%llu camera=%llu stages=0x%x samples=%u history_reset=%u",
+    emit(wsi?"[BS4_FSR31] GPU_FRAME_PROBE probe_sequence=%llu camera=%llu stages=0x%x samples=%u history_reset=%u":"[BS4_FSR31] GPU_FRAME_PROBE dispatch=%llu camera=%llu stages=0x%x samples=%u history_reset=%u",
         (unsigned long long)p.frame,(unsigned long long)p.cameraFrame,p.stages,pixels,unsigned(p.historyReset));
     const char* names[]={"native","clone","fsr","ui","motion","depth","post_hud","swapchain"};
     for(unsigned i=0;i<8;i++)if((i<4||i==6||i==7)&&(p.stages&(1u<<i)))emit(

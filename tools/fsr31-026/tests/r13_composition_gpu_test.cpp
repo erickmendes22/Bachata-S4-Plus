@@ -1,3 +1,4 @@
+#include "ldr_test_spv.h"
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Cross-command-buffer test preserves actual submission order; no synthetic camera handoff.
 // Actual camera observer -> R13 pre-UI boundary -> AMD dispatch -> original
@@ -26,6 +27,9 @@ static void transition(VkCommandBuffer cb,VkImage image,VkImageAspectFlags aspec
  VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};b.srcStageMask=b.dstStageMask=VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;b.srcAccessMask=b.dstAccessMask=VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT;b.oldLayout=old;b.newLayout=next;b.image=image;b.srcQueueFamilyIndex=b.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;b.subresourceRange={aspect,0,1,0,1};VkDependencyInfo d{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};d.imageMemoryBarrierCount=1;d.pImageMemoryBarriers=&b;barrier(cb,&d);
 }
 int main(int argc,char** argv){
+ const bool trueLdr=argc==2&&std::strcmp(argv[1],"true-ldr")==0;
+ const bool oldLdr=trueLdr&&std::getenv("BS4_TEST_OLD_LDR_SELECTION");
+ if(!trueLdr||oldLdr)setenv("BS4_TEST_ALLOW_DECOUPLED_SCENE","1",1);else unsetenv("BS4_TEST_ALLOW_DECOUPLED_SCENE");
  const bool fp16Only=argc==2&&std::strcmp(argv[1],"fp16-only")==0;
  const bool fp16=fp16Only||(argc==2&&std::strcmp(argv[1],"fp16-patterned")==0);
  const bool patterned=fp16||(argc==2&&std::strcmp(argv[1],"patterned-scene")==0);
@@ -38,7 +42,7 @@ int main(int argc,char** argv){
  const bool rewrite=argc==2&&std::strcmp(argv[1],"cross-cb-rewrite")==0;
  const bool cross=rewrite||(argc==2&&std::strcmp(argv[1],"cross-cb")==0);
  const bool runScaled=automatic||(argc==2&&std::strcmp(argv[1],"run-scaled-ui")==0);
- setenv("BACHATA_FSR31_NATIVE_UI",(cross||localWrite||depthAccess||depthClear||partial||discarded)?"0":"1",1);
+ setenv("BACHATA_FSR31_NATIVE_UI",(trueLdr||cross||localWrite||depthAccess||depthClear||partial||discarded)?"0":"1",1);
  const bool shared=runScaled||(argc==2&&std::strcmp(argv[1],"shared-target")==0);
  const uint32_t uiWidth=runScaled?1280:(shared?640:1920),uiHeight=runScaled?720:(shared?360:1080);
  setenv("BS4_FSR31_TEST_OWNER","025",1);
@@ -67,6 +71,28 @@ int main(int argc,char** argv){
  std::memcpy(nativePipeline.data()+0x60,&movie,sizeof(movie));std::memcpy(nativePipeline.data()+0xa0,&vertexInfo,8);std::memcpy(nativeVertexInfo.data()+0x1d38,&movieHash,8);
  bs4_fsr31_native_pipeline(nativePipeline.data()); // no vkSetDebugUtilsObjectName for this layout
 
+ VkPipeline ldrPipeline{};VkShaderModule ldrVs{},ldrFs{};
+ if(trueLdr){
+  auto module=[&](const uint32_t* words,size_t bytes,VkShaderModule& out){VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};ci.codeSize=bytes;ci.pCode=words;checked(vkCreateShaderModule(device,&ci,nullptr,&out));};
+  module(LDR_TEST_VS,sizeof(LDR_TEST_VS),ldrVs);module(LDR_TEST_FS,sizeof(LDR_TEST_FS),ldrFs);
+  VkPipelineShaderStageCreateInfo stages[2]{};
+  for(auto& st:stages){st.sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;st.pName="main";}
+  stages[0].stage=VK_SHADER_STAGE_VERTEX_BIT;stages[0].module=ldrVs;stages[1].stage=VK_SHADER_STAGE_FRAGMENT_BIT;stages[1].module=ldrFs;
+  VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+  VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};ia.topology=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+  VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};vp.viewportCount=vp.scissorCount=1;
+  VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};rs.polygonMode=VK_POLYGON_MODE_FILL;rs.lineWidth=1;rs.cullMode=VK_CULL_MODE_NONE;
+  VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};ms.rasterizationSamples=VK_SAMPLE_COUNT_1_BIT;
+  VkPipelineColorBlendAttachmentState ba{};ba.colorWriteMask=15;
+  VkPipelineColorBlendStateCreateInfo bs{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};bs.attachmentCount=1;bs.pAttachments=&ba;
+  VkDynamicState states[]={VK_DYNAMIC_STATE_VIEWPORT,VK_DYNAMIC_STATE_SCISSOR};VkPipelineDynamicStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};ds.dynamicStateCount=2;ds.pDynamicStates=states;
+  VkFormat fmt=VK_FORMAT_R8G8B8A8_UNORM;VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};rendering.colorAttachmentCount=1;rendering.pColorAttachmentFormats=&fmt;
+  VkGraphicsPipelineCreateInfo ci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};ci.pNext=&rendering;ci.stageCount=2;ci.pStages=stages;ci.layout=geometry;
+  ci.pVertexInputState=&vi;ci.pInputAssemblyState=&ia;ci.pViewportState=&vp;ci.pRasterizationState=&rs;ci.pMultisampleState=&ms;ci.pColorBlendState=&bs;ci.pDynamicState=&ds;
+  auto create=(PFN_vkCreateGraphicsPipelines)vkGetDeviceProcAddr(device,"vkCreateGraphicsPipelines");checked(create(device,{},1,&ci,nullptr,&ldrPipeline));
+  VkDebugUtilsObjectNameInfoEXT name{VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT};name.objectType=VK_OBJECT_TYPE_PIPELINE_LAYOUT;name.objectHandle=(uint64_t)geometry;
+  name.pObjectName="Graphics PipelineLayout fs_0xdead0002,vs_0xdead0001";checked(objectName(device,&name));
+ }
  VkDescriptorBufferInfo uniformInfo{uniform,0,864};VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};write.dstBinding=0;write.descriptorCount=1;write.descriptorType=VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;write.pBufferInfo=&uniformInfo;std::array<float,30> raw{};raw[0]=320;raw[1]=180;raw[2]=320;raw[3]=-180;VkViewport viewport{0,360,640,-360,0,1};
  VkCommandPoolCreateInfo pc{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};pc.queueFamilyIndex=choice.queueFamily;pc.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;VkCommandPool pool{};checked(vkCreateCommandPool(device,&pc,nullptr,&pool));VkCommandBufferAllocateInfo cbai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};cbai.commandPool=pool;cbai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;cbai.commandBufferCount=1;VkCommandBuffer cb{};checked(vkAllocateCommandBuffers(device,&cbai,&cb));
  VkCommandBuffer uiCb{};if(cross)checked(vkAllocateCommandBuffers(device,&cbai,&uiCb));
@@ -85,7 +111,7 @@ int main(int argc,char** argv){
   std::array<VkRenderingAttachmentInfo,5> attachments{};for(unsigned i=0;i<5;i++){transition(cb,colors[i].image,VK_IMAGE_ASPECT_COLOR_BIT,colors[i].layout,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);attachments[i]={VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};attachments[i].imageView=colors[i].view;attachments[i].imageLayout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;attachments[i].loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;attachments[i].storeOp=VK_ATTACHMENT_STORE_OP_STORE;attachments[i].clearValue.color={{.1f,.2f,.9f,1.f}};colors[i].layout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;}
   transition(cb,depth.image,VK_IMAGE_ASPECT_DEPTH_BIT,depth.layout,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);VkRenderingAttachmentInfo da{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};da.imageView=depth.view;da.imageLayout=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;da.loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;da.storeOp=VK_ATTACHMENT_STORE_OP_STORE;da.clearValue.depthStencil={.5f,0};VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};ri.renderArea.extent={1920,1080};ri.layerCount=1;ri.colorAttachmentCount=5;ri.pColorAttachments=attachments.data();ri.pDepthAttachment=&da;begin(cb,&ri);end(cb);depth.layout=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
   VkImageView observed{};VkExtent2D observedSize{};assert(bs4_native_scene_camera(cb,&observed,&observedSize)&&observed==depth.view&&observedSize.width==640);
-  transition(cb,scene.image,VK_IMAGE_ASPECT_COLOR_BIT,scene.layout,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);VkRenderingAttachmentInfo ldr=attachments[0];ldr.imageView=scene.view;if(discarded)ldr.storeOp=VK_ATTACHMENT_STORE_OP_DONT_CARE;ri.colorAttachmentCount=1;ri.pColorAttachments=&ldr;ri.pDepthAttachment=nullptr;begin(cb,&ri);if(patterned){VkClearAttachment orange{};orange.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;orange.clearValue.color={{.9f,.3f,.08f,1.f}};VkClearRect r{{{0,0},{640,180}},0,1};vkCmdClearAttachments(cb,1,&orange,1,&r);}if(!shared)end(cb);scene.layout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+  transition(cb,scene.image,VK_IMAGE_ASPECT_COLOR_BIT,scene.layout,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);VkRenderingAttachmentInfo ldr=attachments[0];ldr.imageView=scene.view;if(trueLdr)ldr.clearValue.color={{1,1,0,1}};if(discarded)ldr.storeOp=VK_ATTACHMENT_STORE_OP_DONT_CARE;ri.colorAttachmentCount=1;ri.pColorAttachments=&ldr;ri.pDepthAttachment=nullptr;begin(cb,&ri);if(patterned){VkClearAttachment orange{};orange.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;orange.clearValue.color={{.9f,.3f,.08f,1.f}};VkClearRect r{{{0,0},{640,180}},0,1};vkCmdClearAttachments(cb,1,&orange,1,&r);}if(!shared)end(cb);scene.layout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
   if(partial){
    // No barrier: begin another pass in the unchanged COLOR_ATTACHMENT
    // layout, write only the upper half, and leave the rest intact.
@@ -143,6 +169,16 @@ int main(int argc,char** argv){
   // Separate-target case starts a new UI pass. Shared-target case reuses
   // the existing rendering instance, as the native scheduler may do.
   // This is a preservation test, not proof of shared-target FSR support.
+  if(trueLdr){
+    transition(cb,ui.image,VK_IMAGE_ASPECT_COLOR_BIT,ui.layout,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    VkRenderingAttachmentInfo finalColor=ldr;finalColor.imageView=ui.view;finalColor.loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;finalColor.clearValue.color={{1,0,1,1}};
+    ri.renderArea.extent={1920,1080};ri.pColorAttachments=&finalColor;
+    pushConstants(cb,geometry,VK_SHADER_STAGE_VERTEX_BIT,0,120,raw.data());setViewport(cb,0,1,&viewport);
+    VkRect2D sceneRect{{0,0},{640,360}};setScissor(cb,0,1,&sceneRect);begin(cb,&ri);
+    auto bindPipeline=(PFN_vkCmdBindPipeline)vkGetDeviceProcAddr(device,"vkCmdBindPipeline");auto draw=(PFN_vkCmdDraw)vkGetDeviceProcAddr(device,"vkCmdDraw");
+    bindPipeline(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,ldrPipeline);draw(cb,3,1,0,0);end(cb);
+    ui.layout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+  }
   pushConstants(cb,movie,VK_SHADER_STAGE_VERTEX_BIT,0,120,raw.data());assert(bs4_native_scene_ui_boundary(cb));
   if(cross) {
     // The actual native shader is identified on this second CB. It does
@@ -157,9 +193,9 @@ int main(int argc,char** argv){
   if(!cross&&!localWrite&&!depthClear&&!partial&&!discarded)assert(bool(bs4_fsr31_pre_ui_prepare(cb,scene.view,depth.view,{640,360},{1280,720}))==bool(frame));
   std::array<unsigned char,0x1200> nativeScheduler{};const uint64_t nativeCommand=reinterpret_cast<uint64_t>(cb);std::memcpy(nativeScheduler.data()+0xf08,&nativeCommand,8);
   Bs4NativeRenderState nativeState{};nativeState.width=shared?640:uiWidth;nativeState.height=shared?360:uiHeight;nativeState.layers=1;nativeState.colorCount=1;nativeState.colors[0].view=reinterpret_cast<uint64_t>(shared?scene.view:ui.view);if(runScaled){nativeState.depthEnabled=1;nativeState.depth=reinterpret_cast<uint64_t>(depth.view);}
-  if(!cross&&!localWrite&&!depthClear&&!partial&&!discarded)bs4_fsr31_native_begin(nativeScheduler.data(),&nativeState,0);
+  if(!trueLdr&&!cross&&!localWrite&&!depthClear&&!partial&&!discarded)bs4_fsr31_native_begin(nativeScheduler.data(),&nativeState,0);
   Bs4NativeUiBoundary nativeBoundary{};
-  if(!cross&&!localWrite&&!depthClear&&!partial&&!discarded)assert(bs4_native_scene_ui_state(cb,nativeBoundary)&&nativeBoundary.color==(shared?scene.view:ui.view)&&nativeBoundary.guestExtent.width==nativeState.width);
+  if(!trueLdr&&!cross&&!localWrite&&!depthClear&&!partial&&!discarded)assert(bs4_native_scene_ui_state(cb,nativeBoundary)&&nativeBoundary.color==(shared?scene.view:ui.view)&&nativeBoundary.guestExtent.width==nativeState.width);
   if(automatic){
    Bs4FsrCaptureImage owned{};assert(bs4_native_ui_output(cb,owned));
    ui.image=owned.image;ui.view=bs4_native_ui_sampled_view(cb,scene.view);ui.layout=owned.layout;
@@ -180,13 +216,17 @@ int main(int argc,char** argv){
    assert(!bs4_fsr31_run_scaled_ui(cb,ui.view,depth.view));
    assert(bs4_fsr31_run_scaled_ui(cb,ui.view,uiDepth.view)==(frame?2:1));
   }
-  if(!shared)transition(cb,ui.image,VK_IMAGE_ASPECT_COLOR_BIT,ui.layout,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);VkRenderingAttachmentInfo hud=ldr;hud.imageView=ui.view;hud.storeOp=VK_ATTACHMENT_STORE_OP_STORE;hud.clearValue.color=(localWrite||depthClear||partial||discarded)?VkClearColorValue{{.1f,.2f,.9f,1.f}}:VkClearColorValue{{0,0,0,1}};ri.pColorAttachments=&hud;if(!shared)begin(cb,&ri);
+  if(!shared)transition(cb,ui.image,VK_IMAGE_ASPECT_COLOR_BIT,ui.layout,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);VkRenderingAttachmentInfo hud=ldr;hud.imageView=ui.view;hud.storeOp=VK_ATTACHMENT_STORE_OP_STORE;if(trueLdr)hud.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;hud.clearValue.color=(localWrite||depthClear||partial||discarded)?VkClearColorValue{{.1f,.2f,.9f,1.f}}:VkClearColorValue{{0,0,0,1}};ri.pColorAttachments=&hud;if(!shared)begin(cb,&ri);
   VkClearAttachment red{};red.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;red.clearValue.color={{1,0,0,1}};VkClearRect rect{{{0,0},{100,50}},0,1};vkCmdClearAttachments(cb,1,&red,1,&rect);end(cb);
   transition(cb,automatic?scene.image:ui.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);VkBufferImageCopy copy{};copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.imageExtent={uiWidth,uiHeight,1};vkCmdCopyImageToBuffer(cb,ui.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,read.buffer,1,&copy);ui.layout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;if((shared&&!runScaled)||automatic)scene.layout=ui.layout;checked(vkEndCommandBuffer(cb));VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cb;checked(submitProc(queue,1,&submit,nullptr));checked(vkQueueWaitIdle(queue));bs4_fsr31_probe_completed();void* pixels{};checked(vkMapMemory(device,read.memory,0,read.allocationSize,0,&pixels));if(!(read.memoryProperties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){VkMappedMemoryRange r{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};r.memory=read.memory;r.size=VK_WHOLE_SIZE;checked(vkInvalidateMappedMemoryRanges(device,1,&r));}const auto rgba=(const unsigned char*)pixels;size_t blue=0,redPixels=0,cyan=0,orangePixels=0;for(size_t i=0;i<size_t(uiWidth)*uiHeight;i++){orangePixels+=rgba[i*4]>200&&rgba[i*4+1]>32&&rgba[i*4+1]<120&&rgba[i*4+2]<64;blue+=rgba[i*4+2]>180&&rgba[i*4]<80&&rgba[i*4+1]<150;cyan+=rgba[i*4+2]>200&&rgba[i*4+1]>200&&rgba[i*4]<80;redPixels+=rgba[i*4]>240&&rgba[i*4+1]<10&&rgba[i*4+2]<10;}assert(redPixels==5000);if(localWrite&&std::getenv("BS4_TEST_KEEP_REWRITTEN_LOCAL_SCENE")&&frame&&cyan>size_t(uiWidth)*uiHeight/2){
  std::fprintf(stderr,"REPRODUCED stale local scene: cyan=%zu native blue=%zu HUD=%zu preserved\n",cyan,blue,redPixels);vkUnmapMemory(device,read.memory);return 42;}
  if(partial&&std::getenv("BS4_TEST_KEEP_PARTIAL_SCENE")&&frame&&cyan>size_t(uiWidth)*uiHeight/4){
  std::fprintf(stderr,"REPRODUCED stale partial scene: cyan=%zu native blue=%zu HUD=%zu preserved\n",cyan,blue,redPixels);vkUnmapMemory(device,read.memory);return 43;}
+ if(trueLdr&&frame&&blue!=size_t(uiWidth)*uiHeight-5000){
+    std::fprintf(stderr,"REPRODUCED unrelated yellow intermediate replaces actual blue LDR: blue=%zu expected=%zu\n",blue,size_t(uiWidth)*uiHeight-5000);return 23;
+ }
  if(localWrite||depthClear||partial||discarded){assert(cyan==0&&blue==size_t(uiWidth)*uiHeight-5000);}else if(patterned){if(frame){assert(cyan==0&&blue>size_t(uiWidth)*uiHeight*4/10&&orangePixels>size_t(uiWidth)*uiHeight*4/10);}}else if(rewrite)assert(blue==0);else if(frame||shared)assert(blue==size_t(uiWidth)*uiHeight-5000);std::printf("PASS composition frame=%u blue=%zu red=%zu native_UI_image_preserved=1 shared_target=%u\n",frame,blue,redPixels,unsigned(shared));vkUnmapMemory(device,read.memory);bs4_fsr31_port_end_frame();bs4_native_scene_present();if(cross)cb=sceneCb;
  }
  assert(errors==0);if(automatic){std::puts("PASS automatic native025 UI allocation and dispatch, seven temporal frames, HUD preserved, zero Vulkan errors");return 0;}if(runScaled){std::puts("PASS native same-target UI handoff: camera warmup copy and seven real FSR dispatches into prepared 720p UI target, scene and HUD preserved, zero Vulkan errors");return 0;}if(shared){std::puts("PASS shared-target preservation only: existing rendering instance and HUD intact; temporal shared-target composition remains unsupported");return 0;}std::puts("PASS R13 pre-UI composition: native camera producer, bounds, confirmed movie boundary, real AMD FSR, original guest HUD and zero Vulkan errors");return 0;
 }
+

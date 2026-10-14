@@ -61,6 +61,7 @@ size_t cursor=0;
 bool has_previous=false,abandoned_history=false;
 bool port_inputs=false;
 std::atomic<uint64_t> ready_port_extent{0};
+std::atomic<bool> real_dispatch_seen{false};
 uint64_t frame_id=0,last_temporal_camera=0;
 std::chrono::steady_clock::time_point last_frame{};
 bool once_logged=false;
@@ -581,7 +582,7 @@ static uint64_t generic_render_impl(
     transit(cb,f.scene,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
     f.recordedBy=cb;f.recorded=true;
-    has_previous=true;
+    has_previous=true;real_dispatch_seen.store(true,std::memory_order_release);
     if(want_port)last_temporal_camera=camera.frameId;
     if(frame_id==1)
         std::fprintf(stderr,"[BS4_FSR31] real FSR3.1 dispatch recorded (%ux%u->%ux%u)\n",
@@ -673,3 +674,6 @@ extern "C" void bs4_fsr31_probe_post_hud(VkCommandBuffer cb,VkImage image,VkImag
         bs4_probe_image(f.probe,cb,image,layout,size,format,6);return;
     }
 }
+
+
+extern "C" bool bs4_fsr31_has_real_dispatch(){return real_dispatch_seen.load(std::memory_order_acquire);}

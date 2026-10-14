@@ -26,6 +26,7 @@ struct DrawState {
     VkImageView depth{};
     std::array<VkImageView,8> colors{};
     VkExtent2D area{};
+    uint64_t renderEpoch{};
     uint32_t mrt{};
     std::array<float,4> raw{};
     std::array<unsigned char,120> pushRaw{};
@@ -367,7 +368,7 @@ void note_writer(VkCommandBuffer cb,uint32_t vertices,uint32_t instances) {
     if(!vertices||!instances||!it->second.inside)return;
     const auto& d=it->second;
     Bs4SceneWriter writer{};writer.command=cb;writer.frame=frame;writer.area=d.area;
-    writer.viewport=d.viewport;writer.vertices=vertices;writer.instances=instances;writer.colorCount=d.mrt;
+    writer.viewport=d.viewport;writer.scissor=d.scissor;writer.scissorValid=d.scissorValid;writer.renderEpoch=d.renderEpoch;writer.vertices=vertices;writer.instances=instances;writer.colorCount=d.mrt;
     const auto vs=layoutHashes.find(shader_layout(d)),ps=fragmentHashes.find(shader_layout(d));
     if(vs!=layoutHashes.end())writer.vertexHash=vs->second;
     if(ps!=fragmentHashes.end())writer.fragmentHash=ps->second;
@@ -408,7 +409,7 @@ void VKAPI_CALL indexed_indirect_hook(VkCommandBuffer cb,VkBuffer b,VkDeviceSize
 }
 void bs4_native_scene_begin(VkCommandBuffer cb,const VkRenderingInfo* info) {
     {
-        std::lock_guard lock{guard};auto& d=commands[cb];d.inside=info;d.colors={};
+        std::lock_guard lock{guard};auto& d=commands[cb];d.inside=info;++d.renderEpoch;d.colors={};
         if(info&&info->pColorAttachments)for(uint32_t n=0;n<std::min<uint32_t>(8,info->colorAttachmentCount);++n)
             d.colors[n]=info->pColorAttachments[n].imageView;
         d.depth=info&&info->pDepthAttachment?info->pDepthAttachment->imageView:VK_NULL_HANDLE;
@@ -626,3 +627,10 @@ void bs4_native_scene_forget_view(VkImageView view) {
     std::lock_guard lock{guard};sceneWriters.erase(view);
 }
 
+
+bool bs4_native_scene_active_writer(VkCommandBuffer cb,VkImageView view,Bs4SceneWriter& out){
+    std::lock_guard lock{guard};const auto state=commands.find(cb);const auto writer=sceneWriters.find(view);
+    if(state==commands.end()||writer==sceneWriters.end()||!state->second.inside||
+       writer->second.command!=cb||writer->second.frame!=frame||writer->second.renderEpoch!=state->second.renderEpoch)return false;
+    out=writer->second;return true;
+}

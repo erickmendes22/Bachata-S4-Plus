@@ -186,9 +186,28 @@ jobs:
           grep -q 'PASS partially recorded SDK failure retains resources' record-failure-gpu.txt
           /tmp/bs4-fsr-sdk-smoke quality-1x | tee -a port-scene-gpu.txt
           /tmp/bs4-fsr-sdk-smoke depth-stencil | tee -a port-scene-gpu.txt
+          glslangValidator -V tools/fsr31-026/tests/ldr_scene.vert -o /tmp/ldr-scene-vs.spv
+          glslangValidator -V tools/fsr31-026/tests/ldr_scene.frag -o /tmp/ldr-scene-fs.spv
+          python3 - <<'PY_LDR'
+          from pathlib import Path
+          import struct
+          out='#pragma once\n#include <cstdint>\n'
+          for kind in ['VS','FS']:
+              b=Path('/tmp/ldr-scene-'+kind.lower()+'.spv').read_bytes()
+              words=struct.unpack('<'+'I'*(len(b)//4),b)
+              out+='static const uint32_t LDR_TEST_'+kind+'[]={'+','.join(hex(w) for w in words)+'};\n'
+          Path('tools/fsr31-026/tests/ldr_test_spv.h').write_text(out)
+          PY_LDR
           g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include tools/fsr31-026/tests/r13_composition_gpu_test.cpp -Lbuild-host -lbachata_fsr31 -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/bs4-fsr-sdk-smoke
           /tmp/bs4-fsr-sdk-smoke 2>&1 | tee r13-composition-gpu.txt
           grep -q "GPU_FRAME_PROBE.*stages=0x[37]f.*native={cyan:0.*clone={cyan:0.*fsr={cyan:0.*ui={cyan:0.*gpu_completed=1" r13-composition-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke true-ldr 2>&1 | tee actual-ldr-gpu.txt
+          grep -q 'real FSR3.1 dispatch recorded' actual-ldr-gpu.txt
+          grep -q 'ui_same_backing=1' actual-ldr-gpu.txt
+          if BS4_TEST_OLD_LDR_SELECTION=1 /tmp/bs4-fsr-sdk-smoke true-ldr >/tmp/old-ldr.txt 2>&1; then
+            echo 'Old unrelated LDR selection unexpectedly passed'; exit 1
+          fi
+          grep -q 'REPRODUCED unrelated yellow intermediate' /tmp/old-ldr.txt
           /tmp/bs4-fsr-sdk-smoke patterned-scene 2>&1 | tee patterned-scene-gpu.txt
           /tmp/bs4-fsr-sdk-smoke fp16-patterned 2>&1 | tee fp16-patterned-gpu.txt
           grep -q 'device capabilities enabled fp16=1' fp16-patterned-gpu.txt
@@ -227,6 +246,8 @@ jobs:
         with:
           name: BS4-026-FSR31-GLIBC-BACKEND
           path: |
+            actual-ldr-gpu.txt
+            wsi-rotation-gpu.txt
             wsi-bgra-gpu.txt
             wsi-last-writer-gpu.txt
             wsi-stale-negative-gpu.txt

@@ -103,7 +103,7 @@ extern "C" void bs4_wsi_probe_write_tagged(VkDevice device,VkPhysicalDevice phys
     slot.probe.wsiImage=image;slot.probe.writeSerial=serial;
     slot.image=image;
     static unsigned shown=0;
-    if(shown++<24)std::fprintf(stderr,
+    if(shown++<2)std::fprintf(stderr,
         "[BS4_FSR31] WSI_GPU_SAMPLE_RECORDED image=%p cb=%p format=%d\n",
         reinterpret_cast<void*>(image),reinterpret_cast<void*>(cb),int(format));
 }
