@@ -55,7 +55,8 @@ void mark_submitted(VkQueue queue, VkCommandBuffer cb,
             int(result),reinterpret_cast<void*>(cb));
         vkDestroyFence(slot.device,slot.completion,nullptr);
         slot.completion=VK_NULL_HANDLE;
-        // Keep GPU allocation alive; original submit may have used the buffer.
+        slot.submitted=true; // Quarantine until process exit; original GPU work may still use memory.
+        // Do not destroy or reuse this sample without a completion fence.
     }
 }
 } // namespace
@@ -65,7 +66,7 @@ extern "C" void bs4_wsi_probe_write(VkDevice device,VkPhysicalDevice physical,
         VkFormat format) {
     if(!device||!physical||!cb||!image)return;
     const auto index=event_sequence.fetch_add(1,std::memory_order_relaxed);
-    if(index>=16 && index%16)return;
+    if(index>=8 && index%64)return;
     std::lock_guard lock{slots_mutex};
     auto it=slots.find(cb);
     if(it==slots.end()) {
@@ -117,7 +118,7 @@ extern "C" void bs4_wsi_probe_poll() {
     std::lock_guard lock{slots_mutex};
     for(auto it=slots.begin();it!=slots.end();) {
         auto& slot=it->second;
-        if(!slot.submitted||vkGetFenceStatus(slot.device,slot.completion)!=VK_SUCCESS){
+        if(!slot.submitted||!slot.completion||vkGetFenceStatus(slot.device,slot.completion)!=VK_SUCCESS){
             ++it;continue;
         }
         bs4_probe_resolve(slot.probe,slot.device);
