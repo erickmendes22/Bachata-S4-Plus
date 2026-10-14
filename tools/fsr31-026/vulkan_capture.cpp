@@ -126,8 +126,20 @@ void mirrored_ui_barriers(VkCommandBuffer cb,const VkDependencyInfo* dep,PFN_vkC
     original(cb,&info);update_layout(cb,info.imageMemoryBarrierCount,info.pImageMemoryBarriers);
 }
 void record_rendering(VkCommandBuffer cb,const VkRenderingInfo* info) {
-    if (!info || !info->pDepthAttachment ||
-        !info->pDepthAttachment->imageView) return;
+    if(!info)return;
+    // Attachments enter the layouts declared for THIS rendering instance.
+    // Do not publish them as globally executed before queue submission.
+    if(info->pColorAttachments) {
+        std::lock_guard lock{mutex};
+        for(uint32_t n=0;n<info->colorAttachmentCount;++n) {
+            const auto view=info->pColorAttachments[n].imageView;
+            if(!view)continue;
+            const auto iv=views.find(view);
+            if(iv!=views.end()&&images.count(iv->second.image))
+                recorded_layouts[cb][iv->second.image]=info->pColorAttachments[n].imageLayout;
+        }
+    }
+    if (!info->pDepthAttachment || !info->pDepthAttachment->imageView) return;
     const auto view = info->pDepthAttachment->imageView;
     std::lock_guard lock{mutex};
     auto iv = views.find(view);
@@ -497,8 +509,8 @@ extern "C" int bs4_fsr31_run_scaled_ui(VkCommandBuffer cb,VkImageView uiColor,Vk
        // HUD may share the 3D image or use a separate attachment.
        // native_ui_draw validates that the boundary belongs to this draw.
        !bs4_native_scene_ui_state(cb,boundary)||!boundary.color||
-       !bs4_fsr31_capture_image(scene.color,&source)||
-       !bs4_fsr31_capture_image(uiColor,&target)||source.image==target.image||
+       !bs4_fsr31_capture_image_at(cb,scene.color,&source)||
+       !bs4_fsr31_capture_image_at(cb,uiColor,&target)||source.image==target.image||
        source.format!=VK_FORMAT_R8G8B8A8_UNORM||target.format!=source.format||
        target.size.width!=1280||target.size.height!=720||
        source.samples!=VK_SAMPLE_COUNT_1_BIT||target.samples!=VK_SAMPLE_COUNT_1_BIT||
@@ -513,8 +525,8 @@ extern "C" int bs4_fsr31_run_scaled_ui(VkCommandBuffer cb,VkImageView uiColor,Vk
        !(features.optimalTilingFeatures&VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))return 0;
     if(boundary.depth) {
         Bs4FsrCaptureImage originalDepth{};
-        if(!uiDepth||!bs4_fsr31_capture_image(boundary.depth,&originalDepth)||
-           !bs4_fsr31_capture_image(uiDepth,&depthTarget)||
+        if(!uiDepth||!bs4_fsr31_capture_image_at(cb,boundary.depth,&originalDepth)||
+           !bs4_fsr31_capture_image_at(cb,uiDepth,&depthTarget)||
            originalDepth.format!=depthTarget.format||
            originalDepth.samples!=VK_SAMPLE_COUNT_1_BIT||depthTarget.samples!=VK_SAMPLE_COUNT_1_BIT||
            depthTarget.size.width!=1280||depthTarget.size.height!=720||
