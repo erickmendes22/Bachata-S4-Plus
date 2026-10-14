@@ -166,6 +166,8 @@ jobs:
           /tmp/bs4-fsr-sdk-smoke patterned-scene 2>&1 | tee patterned-scene-gpu.txt
           /tmp/bs4-fsr-sdk-smoke fp16-patterned 2>&1 | tee fp16-patterned-gpu.txt
           grep -q 'device capabilities enabled fp16=1' fp16-patterned-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke fp16-only 2>&1 | tee fp16-dependency-gpu.txt
+          grep -q 'device capabilities enabled fp16=0 raw_fp16=1 int16=0' fp16-dependency-gpu.txt
           /tmp/bs4-fsr-sdk-smoke shared-target | tee shared-target-preservation-gpu.txt
           /tmp/bs4-fsr-sdk-smoke run-scaled-ui | tee native-run-scaled-ui-gpu.txt
           /tmp/bs4-fsr-sdk-smoke owned-ui | tee automatic-native-ui-gpu.txt
@@ -206,6 +208,7 @@ jobs:
             r13-composition-gpu.txt
             patterned-scene-gpu.txt
             fp16-patterned-gpu.txt
+            fp16-dependency-gpu.txt
             shared-target-preservation-gpu.txt
             native-run-scaled-ui-gpu.txt
             automatic-native-ui-gpu.txt

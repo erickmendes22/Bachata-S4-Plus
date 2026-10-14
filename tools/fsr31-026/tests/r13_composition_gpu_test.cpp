@@ -26,7 +26,8 @@ static void transition(VkCommandBuffer cb,VkImage image,VkImageAspectFlags aspec
  VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};b.srcStageMask=b.dstStageMask=VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;b.srcAccessMask=b.dstAccessMask=VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT;b.oldLayout=old;b.newLayout=next;b.image=image;b.srcQueueFamilyIndex=b.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;b.subresourceRange={aspect,0,1,0,1};VkDependencyInfo d{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};d.imageMemoryBarrierCount=1;d.pImageMemoryBarriers=&b;barrier(cb,&d);
 }
 int main(int argc,char** argv){
- const bool fp16=argc==2&&std::strcmp(argv[1],"fp16-patterned")==0;
+ const bool fp16Only=argc==2&&std::strcmp(argv[1],"fp16-only")==0;
+ const bool fp16=fp16Only||(argc==2&&std::strcmp(argv[1],"fp16-patterned")==0);
  const bool patterned=fp16||(argc==2&&std::strcmp(argv[1],"patterned-scene")==0);
  const bool partial=argc==2&&std::strcmp(argv[1],"partial-same-layout")==0;
  const bool discarded=argc==2&&std::strcmp(argv[1],"discarded-color")==0;
@@ -51,7 +52,7 @@ int main(int argc,char** argv){
  VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};f13.synchronization2=f13.dynamicRendering=VK_TRUE;
  VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};f2.pNext=&f13;f2.features.shaderStorageImageWriteWithoutFormat=VK_TRUE;
  VkPhysicalDeviceVulkan12Features enabled12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
- if(fp16){VkPhysicalDeviceVulkan12Features supported12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};VkPhysicalDeviceFeatures2 supported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};supported.pNext=&supported12;vkGetPhysicalDeviceFeatures2(choice.device,&supported);assert(supported12.shaderFloat16);enabled12.shaderFloat16=VK_TRUE;enabled12.pNext=&f13;f2.pNext=&enabled12;}
+ if(fp16){VkPhysicalDeviceVulkan12Features supported12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};VkPhysicalDeviceFeatures2 supported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};supported.pNext=&supported12;vkGetPhysicalDeviceFeatures2(choice.device,&supported);assert(supported12.shaderFloat16&&supported.features.shaderInt16);f2.features.shaderInt16=fp16Only?VK_FALSE:VK_TRUE;enabled12.shaderFloat16=VK_TRUE;enabled12.pNext=&f13;f2.pNext=&enabled12;}
 
  float priority=1;VkDeviceQueueCreateInfo qci{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};qci.queueFamilyIndex=choice.queueFamily;qci.queueCount=1;qci.pQueuePriorities=&priority;VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};dci.pNext=&f2;dci.queueCreateInfoCount=1;dci.pQueueCreateInfos=&qci;const char* pushExt=VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME;dci.enabledExtensionCount=1;dci.ppEnabledExtensionNames=&pushExt;VkDevice device{};auto createDevice=(PFN_vkCreateDevice)vkGetInstanceProcAddr(instance,"vkCreateDevice");checked(createDevice(choice.device,&dci,nullptr,&device));assert(bs4_fsr31_attachment_ready()==1);
  VkQueue queue{};vkGetDeviceQueue(device,choice.queueFamily,0,&queue);

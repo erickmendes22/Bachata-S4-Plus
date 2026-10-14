@@ -33,7 +33,7 @@ FfxVkPortableDeviceInfo acquired_device{};
 bool device_attached = false;
 uint32_t created_graphics_family=UINT32_MAX;
 std::atomic<bool> single_graphics_queue{false};
-bool created_synchronization2=false,created_float16=false,created_subgroup_control=false,created_full_subgroups=false;
+bool created_synchronization2=false,created_float16=false,created_int16=false,created_subgroup_control=false,created_full_subgroups=false;
 std::atomic<VkInstance> fsr31_tracked_instance{VK_NULL_HANDLE};
 std::atomic<VkPhysicalDevice> fsr31_tracked_physical{VK_NULL_HANDLE};
 bool valid = false;
@@ -369,7 +369,9 @@ BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice 
     info.queue = graphics_queue;
     info.queueFamilyIndex = family;
     info.synchronization2Enabled = created_synchronization2 ? VK_TRUE : VK_FALSE;
-    info.shaderFloat16Enabled=created_float16?VK_TRUE:VK_FALSE;
+    // Generated AMD FP16 permutations also declare SPIR-V Int16. Report
+    // the safe shader path, using only features already enabled by the core.
+    info.shaderFloat16Enabled=created_float16&&created_int16?VK_TRUE:VK_FALSE;
     info.subgroupSizeControlEnabled=created_subgroup_control?VK_TRUE:VK_FALSE;
     info.computeFullSubgroupsEnabled=created_full_subgroups?VK_TRUE:VK_FALSE;
     VkPhysicalDeviceFeatures features{};
@@ -381,8 +383,8 @@ BS4_PUBLIC int bs4_fsr31_attach(void* fsr_pass, void* instance_object, VkDevice 
     info.shaderStorageImageWriteWithoutFormatEnabled =
         fsr31_storage_feature_enabled.load() ? VK_TRUE : VK_FALSE;
     acquired_device = info;
-    std::fprintf(stderr,"[BS4_FSR31] device capabilities enabled fp16=%u subgroup_control=%u full_subgroups=%u\n",
-        unsigned(info.shaderFloat16Enabled),unsigned(info.subgroupSizeControlEnabled),unsigned(info.computeFullSubgroupsEnabled));
+    std::fprintf(stderr,"[BS4_FSR31] device capabilities enabled fp16=%u raw_fp16=%u int16=%u subgroup_control=%u full_subgroups=%u\n",
+        unsigned(info.shaderFloat16Enabled),unsigned(created_float16),unsigned(created_int16),unsigned(info.subgroupSizeControlEnabled),unsigned(info.computeFullSubgroupsEnabled));
     device_attached = true;
     VkPhysicalDeviceProperties props{};
     vkGetPhysicalDeviceProperties(physical, &props);
@@ -538,9 +540,11 @@ VKAPI_ATTR VkResult VKAPI_CALL fsr31_create_device(
             }
         }
         single_graphics_queue.store(gfxQueues==1,std::memory_order_release);
-        created_float16=false;created_subgroup_control=false;created_full_subgroups=false;created_synchronization2=false;
+        created_float16=false;created_int16=ci.pEnabledFeatures&&ci.pEnabledFeatures->shaderInt16;created_subgroup_control=false;created_full_subgroups=false;created_synchronization2=false;
         auto* head=static_cast<const VkBaseInStructure*>(ci.pNext);
         for(unsigned n=0;head&&n<64;++n,head=head->pNext) {
+            if(head->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2)
+                created_int16=reinterpret_cast<const VkPhysicalDeviceFeatures2*>(head)->features.shaderInt16;
             if(head->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES)
                 created_float16=reinterpret_cast<const VkPhysicalDeviceVulkan12Features*>(head)->shaderFloat16;
             if(head->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES)
