@@ -4,6 +4,7 @@
 #include "vulkan_capture.h"
 #include "native_scene_observer.h"
 #include "native_compute_state.h"
+#include "temporal_lifetime.h"
 #include "port_scene_frame.h"
 #include "native_ui_targets.h"
 extern "C" int bs4_fsr31_owner_requested();
@@ -639,14 +640,22 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_queue_submit(VkQueue q,uint32_
        const VkSubmitInfo* infos,VkFence fence) {
     if(!original_queue_submit)return VK_ERROR_INITIALIZATION_FAILED;
     const VkResult result=original_queue_submit(q,count,infos,fence);
-    if(result==VK_SUCCESS)observe_submission(q,count,infos);
+    if(result==VK_SUCCESS){
+        for(uint32_t i=0;i<count;++i)for(uint32_t n=0;n<infos[i].commandBufferCount;++n)
+            bs4_temporal_submitted(q,infos[i].pCommandBuffers[n],original_queue_submit,nullptr);
+        observe_submission(q,count,infos);
+    }
     return result;
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_queue_submit2(VkQueue q,uint32_t count,
        const VkSubmitInfo2* infos,VkFence fence) {
     if(!original_queue_submit2)return VK_ERROR_INITIALIZATION_FAILED;
     const VkResult result=original_queue_submit2(q,count,infos,fence);
-    if(result==VK_SUCCESS)observe_submission2(q,count,infos);
+    if(result==VK_SUCCESS){
+        for(uint32_t i=0;i<count;++i)for(uint32_t n=0;n<infos[i].commandBufferInfoCount;++n)
+            bs4_temporal_submitted(q,infos[i].pCommandBufferInfos[n].commandBuffer,nullptr,original_queue_submit2);
+        observe_submission2(q,count,infos);
+    }
     return result;
 }
 extern "C" void bs4_fsr31_capture_present() {
@@ -657,7 +666,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_begin_command(
         VkCommandBuffer cb,const VkCommandBufferBeginInfo* info) {
     if (!original_begin_command) return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_begin_command(cb,info);
-    if(status==VK_SUCCESS){bs4_native_compute_reset(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);
+    if(status==VK_SUCCESS){bs4_temporal_discard(cb);bs4_native_compute_reset(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);
         if(submitted_owner==cb){submitted_owner=VK_NULL_HANDLE;submitted_scene={};}}
     return status;
 }
@@ -665,14 +674,14 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_reset_command(
         VkCommandBuffer cb,VkCommandBufferResetFlags flags) {
     if(!original_reset_command)return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_reset_command(cb,flags);
-    if(status==VK_SUCCESS){bs4_native_compute_reset(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);
+    if(status==VK_SUCCESS){bs4_temporal_discard(cb);bs4_native_compute_reset(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);
         if(submitted_owner==cb){submitted_owner=VK_NULL_HANDLE;submitted_scene={};}}
     return status;
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_free_commands(
         VkDevice device,VkCommandPool pool,uint32_t count,const VkCommandBuffer* cb) {
     if(cb&&count){
-        for(uint32_t i=0;i<count;++i){bs4_native_compute_reset(cb[i]);bs4_native_ui_reset(cb[i]);bs4_native_scene_reset(cb[i]);}
+        for(uint32_t i=0;i<count;++i){bs4_temporal_discard(cb[i]);bs4_native_compute_reset(cb[i]);bs4_native_ui_reset(cb[i]);bs4_native_scene_reset(cb[i]);}
         std::lock_guard lock{mutex};
         for(uint32_t i=0;i<count;++i){
             command_scenes.erase(cb[i]);

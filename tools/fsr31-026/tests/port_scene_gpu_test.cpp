@@ -25,6 +25,7 @@ static void layout(VkCommandBuffer cb,VkImage image,VkImageAspectFlags aspect,Vk
 int main(int argc,char** argv){
  setenv("BS4_FSR31_TEST_OWNER","025",1);
  const bool quality=argc>1&&std::strcmp(argv[1],"quality-1x")==0;
+ const bool queued=argc>1&&std::strcmp(argv[1],"queued-cbs")==0;
  const bool computeProbe=argc>1&&std::strcmp(argv[1],"compute-state")==0;
  const bool stencil=argc>1&&std::strcmp(argv[1],"depth-stencil")==0;
  const uint32_t width=quality?1280:640,height=quality?720:360;
@@ -74,8 +75,11 @@ int main(int argc,char** argv){
   VkComputePipelineCreateInfo cp{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};cp.stage={VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};cp.stage.stage=VK_SHADER_STAGE_COMPUTE_BIT;cp.stage.module=module;cp.stage.pName="main";cp.layout=probeLayout;
   check(vkCreateComputePipelines(device,VK_NULL_HANDLE,1,&cp,nullptr,&probePipeline));vkDestroyShaderModule(device,module,nullptr);
  }
+ auto trackedSubmit=(PFN_vkQueueSubmit)vkGetDeviceProcAddr(device,"vkQueueSubmit");
+ std::array<VkCommandBuffer,12> batch{};if(queued){cai.commandBufferCount=batch.size();check(vkAllocateCommandBuffers(device,&cai,batch.data()));}
  VkImageLayout sourceLayout=VK_IMAGE_LAYOUT_UNDEFINED;
  for(unsigned frame=0;frame<12;frame++){
+  if(queued)cb=batch[frame];
   check(vkResetCommandBuffer(cb,0));VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};check(vkBeginCommandBuffer(cb,&bi));
   layout(cb,color.image,VK_IMAGE_ASPECT_COLOR_BIT,sourceLayout,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);VkClearColorValue orange{{1.f,.25f,0.f,1.f}};VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};vkCmdClearColorImage(cb,color.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&orange,1,&range);
   layout(cb,color.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);VkRenderingAttachmentInfo att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};att.imageView=cv;att.imageLayout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;att.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;att.storeOp=VK_ATTACHMENT_STORE_OP_STORE;VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};ri.renderArea.extent={width,height};ri.layerCount=1;ri.colorAttachmentCount=1;ri.pColorAttachments=&att;vkCmdBeginRendering(cb,&ri);VkClearAttachment clear{};clear.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;clear.clearValue.color={{.1f,.2f,.9f,1.f}};VkClearRect rect{{{0,0},{width,height}},0,1};vkCmdClearAttachments(cb,1,&clear,1,&rect);vkCmdEndRendering(cb);layout(cb,color.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -88,7 +92,20 @@ int main(int argc,char** argv){
   const uint32_t expectedProbe=0x12340000u+frame;
   if(computeProbe){nativeBind(cb,VK_PIPELINE_BIND_POINT_COMPUTE,probePipeline);nativeSets(cb,VK_PIPELINE_BIND_POINT_COMPUTE,probeLayout,0,1,&probeSet,0,nullptr);nativeConstants(cb,probeLayout,VK_SHADER_STAGE_ALL,0,4,&expectedProbe);}
   const auto result=bs4_fsr31_generic_render(&owned,cb,cv,{width,height},{1280,720},4,0,1,dv);
-  if(!frame){assert(!result);check(vkEndCommandBuffer(cb));VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cb;check(vkQueueSubmit(queue,1,&submit,nullptr));check(vkQueueWaitIdle(queue));sourceLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;bs4_fsr31_port_end_frame();continue;}
+  if(!frame){assert(!result);check(vkEndCommandBuffer(cb));VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cb;check(trackedSubmit(queue,1,&submit,nullptr));check(vkQueueWaitIdle(queue));sourceLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;bs4_fsr31_port_end_frame();continue;}
+  if(queued&&frame==5){
+   if(result){
+    std::fputs("UNSAFE: fifth recorded temporal dispatch reused an unsubmitted slot\n",stderr);
+    check(vkEndCommandBuffer(cb));VkSubmitInfo unsafe{VK_STRUCTURE_TYPE_SUBMIT_INFO};unsafe.commandBufferCount=5;unsafe.pCommandBuffers=batch.data()+1;
+    trackedSubmit(queue,1,&unsafe,nullptr);vkQueueWaitIdle(queue);
+    if(validationErrors)std::fputs("REPRODUCED: descriptor reuse invalidated a recorded native command buffer\n",stderr);
+    return 42;
+   }
+   check(vkEndCommandBuffer(cb));
+   VkSubmitInfo batchInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};batchInfo.commandBufferCount=4;batchInfo.pCommandBuffers=batch.data()+1;
+   check(trackedSubmit(queue,1,&batchInfo,nullptr));check(vkQueueWaitIdle(queue));
+   assert(validationErrors==0);std::puts("PASS four queued FSR CBs remain executable; fifth safely declines before slot reuse; zero validation errors");break;
+  }
   assert(result);
   if(computeProbe){
    // Emulate the native cache: dispatch again WITHOUT rebinding the native
@@ -99,7 +116,9 @@ int main(int argc,char** argv){
    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};dep.memoryBarrierCount=1;dep.pMemoryBarriers=&memory;vkCmdPipelineBarrier2(cb,&dep);
   }
   const auto view=reinterpret_cast<VkImageView>(result);VkImage out=bs4_fsr31_output_image(view);assert(out);
-  layout(cb,out,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);VkBufferImageCopy copy{};copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.imageExtent={1280,720,1};vkCmdCopyImageToBuffer(cb,out,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,read.buffer,1,&copy);layout(cb,out,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);check(vkEndCommandBuffer(cb));VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cb;check(vkQueueSubmit(queue,1,&submit,nullptr));check(vkQueueWaitIdle(queue));
+  layout(cb,out,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);VkBufferImageCopy copy{};copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.imageExtent={1280,720,1};vkCmdCopyImageToBuffer(cb,out,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,read.buffer,1,&copy);layout(cb,out,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);check(vkEndCommandBuffer(cb));
+  if(queued){sourceLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;bs4_fsr31_port_end_frame();continue;}
+  VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cb;check(trackedSubmit(queue,1,&submit,nullptr));check(vkQueueWaitIdle(queue));
   if(computeProbe){void* value{};check(vkMapMemory(device,probeMemory,0,4,0,&value));if(*static_cast<uint32_t*>(value)!=expectedProbe)std::fprintf(stderr,"native compute probe mismatch actual=%08x expected=%08x\n",*static_cast<uint32_t*>(value),expectedProbe);
    assert(*static_cast<uint32_t*>(value)==expectedProbe);vkUnmapMemory(device,probeMemory);std::printf("PASS cached native compute after AMD frame=%u value=%08x\n",frame,expectedProbe);}
   void* mapped{};check(vkMapMemory(device,read.memory,0,read.allocationSize,0,&mapped));if(!(read.memoryProperties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){VkMappedMemoryRange mr{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};mr.memory=read.memory;mr.size=VK_WHOLE_SIZE;check(vkInvalidateMappedMemoryRanges(device,1,&mr));}auto half=(const uint16_t*)mapped;size_t blue=0;for(size_t i=0;i<1280*720;i++)blue+=(half[i*4+2]>0x3a66&&half[i*4+2]<0x3d00&&half[i*4]<0x34cd);assert(blue>1280*720*99/100);std::printf("PASS frame=%u real FSR3.1 camera dispatch blue_pixels=%zu/921600; upper-left scene/depth crop preserved\n",frame,blue);vkUnmapMemory(device,read.memory);sourceLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;bs4_fsr31_port_end_frame();

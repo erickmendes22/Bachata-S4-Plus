@@ -92,6 +92,7 @@ jobs:
             tools/fsr31-026/vulkan_capture.cpp
             tools/fsr31-026/temporal_generic.cpp
             tools/fsr31-026/port_scene_frame.cpp
+            tools/fsr31-026/temporal_lifetime.cpp
             tools/fsr31-026/native_compute_state.cpp
             tools/fsr31-026/native_draw_handoff.cpp
             tools/fsr31-026/native_scene_observer.cpp
@@ -134,6 +135,8 @@ jobs:
           /tmp/r27-depth-stencil-test
           g++ -std=c++17 -Wall -Wextra -Werror -pthread tools/fsr31-026/native_compute_state.cpp tools/fsr31-026/tests/native_compute_state_test.cpp -o /tmp/native-compute-state-test
           /tmp/native-compute-state-test
+          g++ -std=c++17 -Wall -Wextra -Werror -pthread tools/fsr31-026/temporal_lifetime.cpp tools/fsr31-026/tests/temporal_lifetime_test.cpp -o /tmp/temporal-lifetime-test
+          /tmp/temporal-lifetime-test
           python3 tools/fsr31-026/tests/scene_transition_regression.py
           g++ -std=c++17 -pthread -I/usr/include tools/fsr31-026/port_scene_frame.cpp tools/fsr31-026/tests/port_scene_frame_test.cpp -o /tmp/port-scene-test
           /tmp/port-scene-test
@@ -154,6 +157,12 @@ jobs:
           export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name '*lvp*.json' | head -n1)"
           test -n "$VK_ICD_FILENAMES"
           /tmp/bs4-fsr-sdk-smoke | tee port-scene-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke queued-cbs | tee queued-command-buffers-gpu.txt
+          if BS4_TEST_UNSAFE_TEMPORAL_REUSE=1 /tmp/bs4-fsr-sdk-smoke queued-cbs > /tmp/unsafe-temporal.txt 2>&1; then
+            echo "Unsafe temporal reuse unexpectedly passed"; exit 1
+          fi
+          grep 'REPRODUCED: descriptor reuse invalidated' /tmp/unsafe-temporal.txt
+          echo 'PASS negative control: old descriptor mutation invalidates recorded CBs (host harness only)' | tee -a queued-command-buffers-gpu.txt
           /tmp/bs4-fsr-sdk-smoke quality-1x | tee -a port-scene-gpu.txt
           /tmp/bs4-fsr-sdk-smoke depth-stencil | tee -a port-scene-gpu.txt
           glslangValidator -V --target-env vulkan1.2 -S comp -o /tmp/native-compute-probe.spv tools/fsr31-026/tests/native_compute_probe.comp
@@ -188,6 +197,7 @@ jobs:
             sha256.txt
             needed.txt
             symbols.txt
+            queued-command-buffers-gpu.txt
             port-scene-gpu.txt
             native-compute-restoration-gpu.txt
             r13-composition-gpu.txt

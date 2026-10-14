@@ -8,6 +8,7 @@
 #include "camera_motion_spv.h"
 #include "port_scene_frame.h"
 #include "native_compute_state.h"
+#include "temporal_lifetime.h"
 #include <cstdlib>
 #include <vulkan/vulkan.h>
 #include <algorithm>
@@ -53,7 +54,7 @@ size_t cursor=0;
 bool has_previous=false;
 bool port_inputs=false;
 std::atomic<uint64_t> ready_port_extent{0};
-uint64_t frame_id=0;
+uint64_t frame_id=0,last_port_frame=0;
 std::chrono::steady_clock::time_point last_frame{};
 bool once_logged=false;
 std::atomic<uint64_t> reported_reasons{0};
@@ -139,6 +140,7 @@ void transit(VkCommandBuffer cb,Surface& s,VkImageLayout next) {
 void free_all() {
     ready_port_extent.store(0,std::memory_order_release);
     if(device)vkDeviceWaitIdle(device);
+    bs4_temporal_reset_after_drain();
     if(fsr) {ffxVkPortableUpscaleContextDestroy(fsr);fsr=nullptr;}
     if(flow_pipeline)vkDestroyPipeline(device,flow_pipeline,nullptr);
     if(pipeline_layout)vkDestroyPipelineLayout(device,pipeline_layout,nullptr);
@@ -150,7 +152,7 @@ void free_all() {
     for(auto& f:frames){free_surface(f.scene);free_surface(f.depth);
         free_surface(f.motion);free_surface(f.output);}
     frames.clear();free_surface(previous);
-    has_previous=false;frame_id=0;cursor=0;
+    has_previous=false;frame_id=0;last_port_frame=0;cursor=0;
 }
 bool build_compute(){
     VkDescriptorSetLayoutBinding bindings[3]{};
@@ -203,6 +205,7 @@ FfxVkPortableImage describe(const Surface& s,FfxVkPortableResourceState state) {
     im.mipCount=1;im.arrayLayers=1;im.usage=s.usage;
     im.aspect=s.aspect;im.state=state;return im;
 }
+void initialize_flow_descriptors(const Frame& f);
 bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D output,
                   VkFormat color_format,VkFormat depth_format) {
     free_all();
@@ -226,6 +229,7 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
         if(!result(vkAllocateDescriptorSets(device,&ai,&f.descriptor),"descriptors"))return false;
     }
     if(!port_inputs && !alloc(previous,color_format,render,sampled,VK_IMAGE_ASPECT_COLOR_BIT))return false;
+    for(const auto& f:frames)initialize_flow_descriptors(f);
     const auto r=ffxVkPortableUpscaleContextCreate(&info,&config,&fsr);
     if(r!=FFX_VK_PORTABLE_OK) {
         std::fprintf(stderr,"[BS4_FSR31] FSR3.1 Vulkan context error=%d\n",int(r));
@@ -237,13 +241,12 @@ bool allocate_for(FfxVkPortableDeviceInfo info, VkExtent2D render,VkExtent2D out
          render.width,render.height,output.width,output.height);
     return true;
 }
-void flow(VkCommandBuffer cb,const Frame& f,VkExtent2D size,
-          const Bs4PortCameraDispatch* camera) {
+void initialize_flow_descriptors(const Frame& f) {
     VkDescriptorImageInfo resources[3]{};
     resources[0]={sampler,f.scene.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     resources[1]={sampler,previous.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     resources[2]={VK_NULL_HANDLE,f.motion.view,VK_IMAGE_LAYOUT_GENERAL};
-    if(camera) {
+    if(port_inputs) {
         resources[0]={VK_NULL_HANDLE,f.depth.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         resources[1]={VK_NULL_HANDLE,f.motion.view,VK_IMAGE_LAYOUT_GENERAL};
         resources[2]=resources[0]; // Port mode=0: object vectors unavailable
@@ -252,12 +255,20 @@ void flow(VkCommandBuffer cb,const Frame& f,VkExtent2D size,
     for(uint32_t i=0;i<3;i++) {
         writes[i]={VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
         writes[i].dstSet=f.descriptor;writes[i].dstBinding=i;
-        writes[i].descriptorType=camera?
+        writes[i].descriptorType=port_inputs?
             (i==1?VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE):
             (i==2?VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
         writes[i].descriptorCount=1;writes[i].pImageInfo=&resources[i];
     }
+    // These views stay fixed until a GPU-drained context rebuild. Updating
+    // a descriptor used by an executable/pending CB invalidates that CB.
     vkUpdateDescriptorSets(device,3,writes,0,nullptr);
+}
+void flow(VkCommandBuffer cb,const Frame& f,VkExtent2D size,
+          const Bs4PortCameraDispatch* camera) {
+#ifdef BS4_FSR31_TEST_HARNESS
+    if(std::getenv("BS4_TEST_UNSAFE_TEMPORAL_REUSE"))initialize_flow_descriptors(f);
+#endif
     vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,flow_pipeline);
     vkCmdBindDescriptorSets(cb,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline_layout,
                             0,1,&f.descriptor,0,nullptr);
@@ -396,7 +407,7 @@ static uint64_t generic_render_impl(
     if(!depth.size.width||!depth.size.height){report_once(11,"depth extent invalid");return 0;}
     if (!want_port && (internal.width!=depth.size.width || internal.height!=depth.size.height) &&
         !depth_can_blit){report_once(12,"scaled depth blit unsupported by GPU");return 0;}
-    if(!fsr || port_inputs!=want_port || config.maxRenderSize.width!=internal.width ||
+    if(bs4_temporal_abandoned() || !fsr || port_inputs!=want_port || config.maxRenderSize.width!=internal.width ||
        config.maxRenderSize.height!=internal.height ||
        config.maxOutputSize.width!=output_extent.width ||
        config.maxOutputSize.height!=output_extent.height ||
@@ -407,6 +418,15 @@ static uint64_t generic_render_impl(
     // Preparation performs resource validation/allocation only. It must not
     // advance the ring/history or record commands into an active render pass.
     if(prepare_only)return 1;
+    bool safe_slot=true;
+#ifdef BS4_FSR31_TEST_HARNESS
+    if(!std::getenv("BS4_TEST_UNSAFE_TEMPORAL_REUSE"))
+#endif
+        safe_slot=bs4_temporal_acquire(cursor%frames.size(),device,cb);
+    if(!safe_slot) {
+        report_once(20,"temporal slot still recorded/pending; original scene preserved");
+        return 0;
+    }
     struct RestoreNativeCompute {VkCommandBuffer command;
         explicit RestoreNativeCompute(VkCommandBuffer cb):command(cb){bs4_native_compute_enter_sdk();}
         ~RestoreNativeCompute(){
@@ -498,7 +518,7 @@ static uint64_t generic_render_impl(
         info.cameraVerticalFovRadians=camera.verticalFov;
     }
     info.sharpness=0.2f;info.enableSharpening=VK_TRUE;
-    info.reset=(!has_previous||(want_port&&camera.reset))?VK_TRUE:VK_FALSE;
+    info.reset=(!has_previous||(want_port&&(camera.reset||camera.frameId!=last_port_frame+1)))?VK_TRUE:VK_FALSE;
     info.frameId=frame_id++;
     const auto result=ffxVkPortableUpscaleContextRecordDispatch(fsr,&info);
     if(result!=FFX_VK_PORTABLE_OK) {
@@ -522,9 +542,11 @@ static uint64_t generic_render_impl(
     transit(cb,f.scene,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
     has_previous=true;
-    if(frame_id==1)
-        std::fprintf(stderr,"[BS4_FSR31] real FSR3.1 dispatch recorded (%ux%u->%ux%u)\n",
-             internal.width,internal.height,output_extent.width,output_extent.height);
+    if(want_port)last_port_frame=camera.frameId;
+    if(frame_id==1 || frame_id%600==0)
+        std::fprintf(stderr,"[BS4_FSR31] real FSR3.1 dispatch recorded (%ux%u->%ux%u) frame=%llu camera=%llu reset=%u jitter=(%.4f,%.4f)\n",
+             internal.width,internal.height,output_extent.width,output_extent.height,
+             (unsigned long long)frame_id,(unsigned long long)last_port_frame,unsigned(info.reset),info.jitterOffset.x,info.jitterOffset.y);
     return reinterpret_cast<uint64_t>(f.output.view);
 }
 
