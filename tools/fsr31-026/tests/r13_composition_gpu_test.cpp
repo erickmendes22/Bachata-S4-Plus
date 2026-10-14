@@ -57,6 +57,14 @@ int main(int argc,char** argv){
  VkDescriptorBufferInfo uniformInfo{uniform,0,864};VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};write.dstBinding=0;write.descriptorCount=1;write.descriptorType=VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;write.pBufferInfo=&uniformInfo;std::array<float,30> raw{};raw[0]=320;raw[1]=180;raw[2]=320;raw[3]=-180;VkViewport viewport{0,360,640,-360,0,1};
  VkCommandPoolCreateInfo pc{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};pc.queueFamilyIndex=choice.queueFamily;pc.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;VkCommandPool pool{};checked(vkCreateCommandPool(device,&pc,nullptr,&pool));VkCommandBufferAllocateInfo cbai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};cbai.commandPool=pool;cbai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;cbai.commandBufferCount=1;VkCommandBuffer cb{};checked(vkAllocateCommandBuffers(device,&cbai,&cb));
  VkCommandBuffer uiCb{};if(cross)checked(vkAllocateCommandBuffers(device,&cbai,&uiCb));
+ VkImageView aliasScene{};
+ if(rewrite){
+    VkImageViewCreateInfo av{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    av.image=scene.image;av.viewType=VK_IMAGE_VIEW_TYPE_2D;
+    av.format=VK_FORMAT_R8G8B8A8_UNORM;
+    av.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+    checked(createView(device,&av,nullptr,&aliasScene));
+ }
  auto submitProc=(PFN_vkQueueSubmit)vkGetDeviceProcAddr(device,"vkQueueSubmit");assert(submitProc);
  ReadbackBuffer read{};assert(createReadbackBuffer(choice.device,device,uiWidth*uiHeight*4,&read));
  for(unsigned frame=0;frame<8;frame++){
@@ -77,8 +85,10 @@ int main(int argc,char** argv){
   }
   if(rewrite){
     // A later guest render pass overwrites the submitted LDR color image.
-    ri.renderArea.extent={640,360};ri.pColorAttachments=&ldr;
-    begin(cb,&ri);end(cb);ri.renderArea.extent={1920,1080};
+    VkRenderingAttachmentInfo aliasLdr=ldr;aliasLdr.imageView=aliasScene;
+    ri.renderArea.extent={640,360};ri.pColorAttachments=&aliasLdr;
+    begin(cb,&ri);end(cb);
+    ri.renderArea.extent={1920,1080};ri.pColorAttachments=&ldr;
   }
   // Separate-target case starts a new UI pass. Shared-target case reuses
   // the existing rendering instance, as the native scheduler may do.
