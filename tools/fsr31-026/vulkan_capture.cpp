@@ -359,6 +359,18 @@ extern "C" int bs4_fsr31_capture_image(VkImageView view, Bs4FsrCaptureImage* out
     return 1;
 }
 
+// A native scheduler callback is useful only after a real low-resolution
+// scene has been identified.  During loading/menu screens n035 enqueued
+// thousands of callbacks without ever reaching the temporal renderer.
+extern "C" int bs4_fsr31_any_scene_ready() {
+    std::lock_guard lock{mutex};
+    for(const auto& [cmd,stage]:command_scenes)
+        if(stage.color&&stage.depth&&(stage.inside||stage.ready)&&
+           stage.extent.width>=600&&stage.extent.width<1280&&
+           stage.extent.height>=320&&stage.extent.height<720)
+            return 1;
+    return 0;
+}
 extern "C" int bs4_fsr31_capture_scene(VkCommandBuffer cb,VkImageView* color,VkImageView* depth,VkExtent2D* extent) {
     if(!color||!depth||!extent)return 0;
     std::lock_guard lock{mutex};const auto it=command_scenes.find(cb);
