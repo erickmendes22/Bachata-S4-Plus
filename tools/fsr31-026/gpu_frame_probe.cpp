@@ -27,11 +27,12 @@ float half(uint16_t h){
     return (h&0x8000)?-v:v;
 }
 struct Summary {unsigned cyan{},white{},red{},invalid{},topCyan{},bottomCyan{};double r{},g{},b{},a{};float min=1e30f,max=-1e30f,maxY{};};
-Summary summarize(const unsigned char* data,bool fp16){
+Summary summarize(const unsigned char* data,bool fp16,bool bgra=false){
     Summary s{};
     for(unsigned i=0;i<pixels;i++){
         float c[4]{};
         for(unsigned k=0;k<4;k++){if(fp16){uint16_t h{};std::memcpy(&h,data+i*8+k*2,2);c[k]=half(h);}else c[k]=data[i*4+k]/255.f;}
+        if(bgra)std::swap(c[0],c[2]);
         if(!std::isfinite(c[0])||!std::isfinite(c[1])||!std::isfinite(c[2])||!std::isfinite(c[3])){s.invalid++;continue;}
         const bool cyan=c[0]<.13f&&c[1]>.78f&&c[2]>.78f;
         s.red+=c[0]>.94f&&c[1]<.06f&&c[2]<.06f;
@@ -70,8 +71,11 @@ void bs4_probe_image(Bs4GpuFrameProbe& p,VkCommandBuffer cb,VkImage image,VkImag
     if(!p.pending||stage>=8||!image||size.width<side||size.height<side)return;
     const bool fp16=format==VK_FORMAT_R16G16B16A16_SFLOAT;
     const bool motion=stage==4&&format==VK_FORMAT_R16G16_SFLOAT;
+    const bool bgra=stage==7&&(format==VK_FORMAT_B8G8R8A8_UNORM||format==VK_FORMAT_B8G8R8A8_SRGB);
+    const bool wsi_rgba=stage==7&&(format==VK_FORMAT_R8G8B8A8_UNORM||format==VK_FORMAT_R8G8B8A8_SRGB);
     const bool depth=stage==5&&(format==VK_FORMAT_D32_SFLOAT||format==VK_FORMAT_D32_SFLOAT_S8_UINT);
-    if(!motion&&!depth&&((stage==1)!=fp16||(!fp16&&format!=VK_FORMAT_R8G8B8A8_UNORM)))return;
+    if(!motion&&!depth&&stage==7&&!bgra&&!wsi_rgba)return;
+    if(!motion&&!depth&&stage!=7&&((stage==1)!=fp16||(!fp16&&format!=VK_FORMAT_R8G8B8A8_UNORM)))return;
     const auto aspects=depth?(format==VK_FORMAT_D32_SFLOAT_S8_UINT?VK_IMAGE_ASPECT_DEPTH_BIT|VK_IMAGE_ASPECT_STENCIL_BIT:VK_IMAGE_ASPECT_DEPTH_BIT):VK_IMAGE_ASPECT_COLOR_BIT;
     transition(cb,image,layout,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,aspects);
     std::array<VkBufferImageCopy,tiles> regions{};
@@ -96,7 +100,7 @@ void bs4_probe_resolve(Bs4GpuFrameProbe& p,VkDevice dev){
     Summary s[8]{};bool unusual=false,saturated=false;
     for(unsigned i=0;i<8;i++)if(p.stages&(1u<<i)){
         const auto* data=static_cast<const unsigned char*>(p.mapped)+stride*i;
-        if(i<4||i==6||i==7s[i]=summarize(data,i==1);
+        if(i<4||i==6||i==7s[i]=summarize(data,i==1,i==7&&(p.formats[7]==VK_FORMAT_B8G8R8A8_UNORM||p.formats[7]==VK_FORMAT_B8G8R8A8_SRGB));
         else for(unsigned n=0;n<pixels;n++){
             float x{},y{};
             if(i==4){uint16_t h[2]{};std::memcpy(h,data+n*4,4);x=half(h[0]);y=half(h[1]);}
