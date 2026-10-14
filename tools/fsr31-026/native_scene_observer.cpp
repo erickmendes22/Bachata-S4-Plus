@@ -409,6 +409,16 @@ void bs4_native_scene_draw_state(VkCommandBuffer cb,const Bs4NativeRenderState& 
     // Preserve the newest native attachment/viewport instead of retaining
     // the first entry and misrouting later shared-target HUD draws.
     native_ui_boundaries.insert_or_assign(cb,boundary);
+    static bool loggedColor=false;
+    if(boundary.color&&!loggedColor) {
+        loggedColor=true;
+        std::fprintf(stderr,
+            "[BS4_FSR31] FIRST_NATIVE_COLOR_UI_BOUNDARY hash=0x%llx "
+            "color=%p extent=%ux%u command=%p\\n",
+            static_cast<unsigned long long>(hash->second),
+            reinterpret_cast<void*>(boundary.color),boundary.guestExtent.width,
+            boundary.guestExtent.height,reinterpret_cast<void*>(cb));
+    }
     static bool logged=false;
     if(!logged) {
         logged=true;
