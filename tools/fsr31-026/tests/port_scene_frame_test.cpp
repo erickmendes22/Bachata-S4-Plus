@@ -54,6 +54,11 @@ int main() {
     }
     data[0]=1000;wrong=f;wrong.frameId=6;assert(!bs4_fsr31_port_scene(&wrong));
     data[0]=3000;data[183]=100;assert(!bs4_fsr31_port_scene(&wrong));
+    // Resolution and sceneId stay the same across a teleport. Motion history
+    // must reset instead of reprojecting the previous scene into this one.
+    data[11]=-50.f;data[183]=50.f;f.frameId=6;
+    assert(bs4_fsr31_port_scene(&f));
+    assert(bs4_fsr31_port_camera(cb,depth,{640,360},out)&&out.reset);
     bs4_fsr31_port_invalidate_after_gpu_drain();
     assert(!bs4_fsr31_port_camera(cb,depth,{640,360},out));
     std::cout<<"Port handoff: history, depth, camera cuts, viewport signs, jitter, copied constants and stale-CB rejection passed\n";
