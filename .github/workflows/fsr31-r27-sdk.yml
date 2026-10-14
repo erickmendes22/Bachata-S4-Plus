@@ -139,8 +139,12 @@ jobs:
           python3 tools/fsr31-026/tests/scene_transition_regression.py
           g++ -std=c++17 -pthread -I/usr/include tools/fsr31-026/port_scene_frame.cpp tools/fsr31-026/tests/port_scene_frame_test.cpp -o /tmp/port-scene-test
           /tmp/port-scene-test
-          g++ -std=c++17 -pthread -I/usr/include tools/fsr31-026/native_scene_observer.cpp tools/fsr31-026/port_scene_frame.cpp tools/fsr31-026/tests/native_scene_observer_test.cpp -o /tmp/native-observer-test
+          g++ -std=c++17 -pthread -DBS4_FSR31_TEST_HARNESS=1 -I/usr/include tools/fsr31-026/native_scene_observer.cpp tools/fsr31-026/port_scene_frame.cpp tools/fsr31-026/tests/native_scene_observer_test.cpp -o /tmp/native-observer-test
           /tmp/native-observer-test
+          if BS4_TEST_USE_PREVIOUS_BOUND_BOUNDARY=1 /tmp/native-observer-test > /tmp/previous-pipeline.txt 2>&1; then
+            echo 'Previous-pipeline boundary unexpectedly passed'; exit 1
+          fi
+          grep -q 'bs4_native_scene_ui_boundary(cb)' /tmp/previous-pipeline.txt
           g++ -std=c++17 -O2 -Wall -Wextra -Werror tools/fsr31-026/native_draw_handoff.cpp tools/fsr31-026/tests/native_draw_handoff_test.cpp -o /tmp/native-draw-handoff-test
           /tmp/native-draw-handoff-test
           g++ -std=c++17 -pthread -I/usr/include tools/fsr31-026/native_scene_observer.cpp tools/fsr31-026/port_scene_frame.cpp tools/fsr31-026/tests/native_ui_scale_test.cpp -o /tmp/native-ui-scale-test
@@ -162,6 +166,12 @@ jobs:
           /tmp/bs4-wsi-probe-test last-writer 2>&1 | tee wsi-last-writer-gpu.txt
           grep -q 'swapchain={cyan:576.*mean:0.000,1.000,1.000,1.000' wsi-last-writer-gpu.txt
           grep -q 'write=9001 present_seq=42 index=2 final_write_matched=1' wsi-last-writer-gpu.txt
+          /tmp/bs4-wsi-probe-test rotation 2>&1 | tee wsi-rotation-gpu.txt
+          grep -q 'swapchain={cyan:576.*present_seq=259 index=2 final_write_matched=1' wsi-rotation-gpu.txt
+          for index in 0 1 2 3; do
+            seq=$((257+index))
+            grep -q "present_seq=$seq index=$index final_write_matched=1" wsi-rotation-gpu.txt
+          done
           /tmp/bs4-wsi-probe-test unmatched 2>&1 | tee wsi-unmatched-gpu.txt
           grep -q 'write=9001 present_seq=42 index=2 final_write_matched=0' wsi-unmatched-gpu.txt
           BS4_TEST_KEEP_EARLY_WSI_SAMPLE=1 /tmp/bs4-wsi-probe-test last-writer 2>&1 | tee wsi-stale-negative-gpu.txt

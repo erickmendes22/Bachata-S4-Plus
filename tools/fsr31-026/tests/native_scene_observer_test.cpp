@@ -145,6 +145,30 @@ int main(){
  bindPipe(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,handles[0]);assert(bs4_native_scene_ui_boundary(cb));
  bindPipe(cb,VK_PIPELINE_BIND_POINT_COMPUTE,handles[1]);assert(bs4_native_scene_ui_boundary(cb));
  bindPipe(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,handle<VkPipeline>(99));assert(!bs4_native_scene_ui_boundary(cb));
+ // Production ordering: resources for the NEXT draw precede BeginRendering;
+ // its vkCmdBindPipeline follows it. The prior bound pipeline must not decide.
+ bindPipe(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,handles[1]);
+ c(cb,layout,VK_SHADER_STAGE_VERTEX_BIT,0,120,raw.data());
+ assert(bs4_native_scene_ui_boundary(cb)); // scene -> upcoming HUD
+ native.colorCount=1;native.colors[0].view=75;
+ bs4_native_scene_draw_state(cb,native);
+ assert(bs4_native_scene_ui_state(cb,boundary)&&boundary.color==handle<VkImageView>(75));
+ bindPipe(cb,VK_PIPELINE_BIND_POINT_COMPUTE,handles[1]);
+ assert(bs4_native_scene_ui_boundary(cb)); // SDK compute leaves pending graphics intact
+ bindPipe(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,handles[0]);
+ d(cb,30,1,0,0);
+ c(cb,pipelines[1].layout,VK_SHADER_STAGE_VERTEX_BIT,0,120,raw.data());
+ assert(!bs4_native_scene_ui_boundary(cb)); // prior HUD -> upcoming scene
+ bindPipe(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,handles[1]);
+ assert(!bs4_native_scene_ui_boundary(cb));
+ // After a draw, old PushData must not remain an upcoming-shader override.
+ c(cb,layout,VK_SHADER_STAGE_VERTEX_BIT,0,120,raw.data());
+ d(cb,30,1,0,0);
+ assert(!bs4_native_scene_ui_boundary(cb));
+ // Explicit incompatible/unknown actual binds still fail closed.
+ bindPipe(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,handle<VkPipeline>(99));
+ assert(!bs4_native_scene_ui_boundary(cb));
+ std::cout<<"PASS pre-render boundary follows fresh upcoming resources; actual draws consume them\n";
  destroyPipe({},handles[0],nullptr);bindPipe(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,handles[0]);assert(!bs4_native_scene_ui_boundary(cb));
  std::cout<<"PASS shader identity follows actual graphics pipeline, not stale push constants; compute does not replace graphics state\n";
  unsetenv("BACHATA_FSR31_INPUT");assert(wrap("vkCmdDraw",&draw)==&draw);

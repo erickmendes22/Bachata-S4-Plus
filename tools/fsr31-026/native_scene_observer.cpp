@@ -33,7 +33,7 @@ struct DrawState {
     bool rawValid{},inside{},haveCamera{},cameraLatched{};
     VkViewport viewport{};
     bool viewportValid{},viewportWithCount{};
-    VkPipelineLayout graphicsLayout{},boundGraphicsLayout{};bool pipelineObserved{};
+    VkPipelineLayout graphicsLayout{},boundGraphicsLayout{};bool pipelineObserved{},pendingGraphicsResources{};
     VkRect2D scissor{};
     bool scissorValid{},scissorWithCount{};
     std::map<uint32_t,Buffers> pushes;
@@ -238,6 +238,7 @@ void VKAPI_CALL constants_hook(VkCommandBuffer cb,VkPipelineLayout l,VkShaderSta
         std::lock_guard lock{guard};auto& d=commands[cb];
         std::memcpy(d.raw.data(),values,16);d.rawValid=true;d.graphicsLayout=l;
         std::memcpy(d.pushRaw.data(),values,120);d.pushStages=stage;
+        d.pendingGraphicsResources=true;
         for(float v:d.raw)if(!std::isfinite(v))d.rawValid=false;
     }
     pushConstants(cb,l,stage,offset,size,values);
@@ -267,6 +268,17 @@ VkPipelineLayout shader_layout(const DrawState& d){
     // They are not proof of the shader currently executing this draw.
     return d.pipelineObserved?d.boundGraphicsLayout:d.graphicsLayout;
 }
+VkPipelineLayout boundary_layout(const DrawState& d){
+#ifdef BS4_FSR31_TEST_HARNESS
+    if(std::getenv("BS4_TEST_USE_PREVIOUS_BOUND_BOUNDARY"))return shader_layout(d);
+#endif
+    // Core025 records BindResources/PushData before BeginRendering, then binds
+    // the draw's graphics pipeline AFTER BeginRendering. At this boundary the
+    // previously bound pipeline belongs to the preceding draw. Only a fresh,
+    // complete native PushData packet may identify the upcoming draw. A real
+    // graphics bind or completed draw consumes it; stale constants never win.
+    return d.pendingGraphicsResources&&d.rawValid?d.graphicsLayout:shader_layout(d);
+}
 VkResult VKAPI_CALL graphics_create_hook(VkDevice dev,VkPipelineCache cache,uint32_t count,
     const VkGraphicsPipelineCreateInfo* info,const VkAllocationCallbacks* alloc,VkPipeline* out){
     if(out)std::fill(out,out+count,VK_NULL_HANDLE);
@@ -282,7 +294,7 @@ void VKAPI_CALL pipeline_destroy_hook(VkDevice dev,VkPipeline pipeline,const VkA
 }
 void VKAPI_CALL pipeline_bind_hook(VkCommandBuffer cb,VkPipelineBindPoint point,VkPipeline pipeline){
     if(point==VK_PIPELINE_BIND_POINT_GRAPHICS){std::lock_guard lock{guard};auto& d=commands[cb];
-        d.pipelineObserved=true;const auto it=graphicsPipelines.find(pipeline);
+        d.pipelineObserved=true;d.pendingGraphicsResources=false;const auto it=graphicsPipelines.find(pipeline);
         d.boundGraphicsLayout=it==graphicsPipelines.end()?VK_NULL_HANDLE:it->second;
     }
     bindPipeline(cb,point,pipeline);
@@ -349,9 +361,10 @@ void restore(VkCommandBuffer cb,const ViewportShift& shift) {
     if(shift.applied)native_viewport(cb,shift.original,shift.withCount);
 }
 void note_writer(VkCommandBuffer cb,uint32_t vertices,uint32_t instances) {
-    if(!instances)return;
     std::lock_guard lock{guard};const auto it=commands.find(cb);
-    if(it==commands.end()||!it->second.inside)return;
+    if(it==commands.end())return;
+    it->second.pendingGraphicsResources=false;
+    if(!vertices||!instances||!it->second.inside)return;
     const auto& d=it->second;
     Bs4SceneWriter writer{};writer.command=cb;writer.frame=frame;writer.area=d.area;
     writer.viewport=d.viewport;writer.vertices=vertices;writer.instances=instances;writer.colorCount=d.mrt;
@@ -369,11 +382,11 @@ void note_writer(VkCommandBuffer cb,uint32_t vertices,uint32_t instances) {
 }
 void VKAPI_CALL draw_hook(VkCommandBuffer cb,uint32_t n,uint32_t i,uint32_t first,uint32_t base) {
     observe_draw(cb);const auto shift=shift_geometry(cb,n,i);
-    draw(cb,n,i,first,base);restore(cb,shift);if(n)note_writer(cb,n,i);
+    draw(cb,n,i,first,base);restore(cb,shift);note_writer(cb,n,i);
 }
 void VKAPI_CALL indexed_hook(VkCommandBuffer cb,uint32_t n,uint32_t i,uint32_t first,int32_t vertex,uint32_t base) {
     observe_draw(cb);const auto shift=shift_geometry(cb,n,i);
-    drawIndexed(cb,n,i,first,vertex,base);restore(cb,shift);if(n)note_writer(cb,n,i);
+    drawIndexed(cb,n,i,first,vertex,base);restore(cb,shift);note_writer(cb,n,i);
 }
 void VKAPI_CALL indirect_hook(VkCommandBuffer cb,VkBuffer b,VkDeviceSize off,uint32_t n,uint32_t stride) {
     observe_draw(cb);
@@ -383,14 +396,14 @@ void VKAPI_CALL indirect_hook(VkCommandBuffer cb,VkBuffer b,VkDeviceSize off,uin
     bool geometry=false;{std::lock_guard lock{guard};auto it=commands.find(cb);
         geometry=it!=commands.end()&&it->second.mrt>=5;}
     const auto shift=geometry&&n?shift_geometry(cb,UINT32_MAX,1):ViewportShift{};
-    drawIndirect(cb,b,off,n,stride);restore(cb,shift);if(n)note_writer(cb,UINT32_MAX,n);
+    drawIndirect(cb,b,off,n,stride);restore(cb,shift);note_writer(cb,UINT32_MAX,n);
 }
 void VKAPI_CALL indexed_indirect_hook(VkCommandBuffer cb,VkBuffer b,VkDeviceSize off,uint32_t n,uint32_t stride) {
     observe_draw(cb);
     bool geometry=false;{std::lock_guard lock{guard};auto it=commands.find(cb);
         geometry=it!=commands.end()&&it->second.mrt>=5;}
     const auto shift=geometry&&n?shift_geometry(cb,UINT32_MAX,1):ViewportShift{};
-    drawIndexedIndirect(cb,b,off,n,stride);restore(cb,shift);if(n)note_writer(cb,UINT32_MAX,n);
+    drawIndexedIndirect(cb,b,off,n,stride);restore(cb,shift);note_writer(cb,UINT32_MAX,n);
 }
 }
 void bs4_native_scene_begin(VkCommandBuffer cb,const VkRenderingInfo* info) {
@@ -466,14 +479,21 @@ extern "C" PFN_vkVoidFunction bs4_native_scene_wrap(const char* name,PFN_vkVoidF
 bool bs4_native_scene_ui_boundary(VkCommandBuffer cb) {
     std::lock_guard lock{guard};auto it=commands.find(cb);
     if(it==commands.end())return false;
-    const auto hash=layoutHashes.find(shader_layout(it->second));
+    const auto hash=layoutHashes.find(boundary_layout(it->second));
     const bool movie=hash!=layoutHashes.end()&&Vulkan::UiComposition::MovieShader(hash->second);
     const auto old=layoutHashes.find(it->second.graphicsLayout);
-    if(it->second.pipelineObserved&&!movie&&old!=layoutHashes.end()&&Vulkan::UiComposition::MovieShader(old->second)){
+    if(!it->second.pendingGraphicsResources&&it->second.pipelineObserved&&!movie&&old!=layoutHashes.end()&&Vulkan::UiComposition::MovieShader(old->second)){
         static unsigned logs=0;if(logs++<16)std::fprintf(stderr,
             "[BS4_FSR31] UI_SHADER_IDENTITY_REJECTED_STALE_PUSH cb=%p pushed_vs=0x%llx bound_vs=0x%llx bound_known=%d\n",
             reinterpret_cast<void*>(cb),(unsigned long long)old->second,
             (unsigned long long)(hash==layoutHashes.end()?0:hash->second),int(bool(it->second.boundGraphicsLayout)));
+    }
+    if(it->second.pendingGraphicsResources&&it->second.pipelineObserved&&
+       boundary_layout(it->second)!=shader_layout(it->second)){
+        static unsigned logs=0;if(logs++<16)std::fprintf(stderr,
+            "[BS4_FSR31] UI_BOUNDARY_PENDING_RESOURCES cb=%p next_vs=0x%llx movie=%d previous_pipeline=%p\n",
+            reinterpret_cast<void*>(cb),(unsigned long long)(hash==layoutHashes.end()?0:hash->second),
+            int(movie),reinterpret_cast<void*>(it->second.boundGraphicsLayout));
     }
     return movie;
 }
@@ -483,7 +503,7 @@ void bs4_native_scene_draw_state(VkCommandBuffer cb,const Bs4NativeRenderState& 
     std::lock_guard lock{guard};const auto it=commands.find(cb);
     if(it==commands.end()||!it->second.rawValid)return;
     const auto& d=it->second;
-    const auto hash=layoutHashes.find(shader_layout(d));
+    const auto hash=layoutHashes.find(boundary_layout(d));
     if(hash==layoutHashes.end()||!Vulkan::UiComposition::MovieShader(hash->second))return;
     // The native scheduler can reuse an existing rendering instance. This
     // callback is ordered after BindResources on its worker, so shader/raw

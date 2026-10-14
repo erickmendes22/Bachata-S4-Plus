@@ -43,11 +43,12 @@ Summary summarize(const unsigned char* data,bool fp16,bool bgra=false){
     s.r/=pixels;s.g/=pixels;s.b/=pixels;s.a/=pixels;return s;
 }
 }
-void bs4_probe_begin(Bs4GpuFrameProbe& p,VkDevice dev,VkPhysicalDevice physical,uint64_t frame,uint64_t camera){
-    p.pending=false;p.stages=0;p.compositeImage={};
+void bs4_probe_begin(Bs4GpuFrameProbe& p,VkDevice dev,VkPhysicalDevice physical,uint64_t frame,uint64_t camera,bool force){
+    p.pending=false;p.stages=0;p.compositeImage={};p.recordedBy={};p.images[0]={};
+    p.frame=frame;p.cameraFrame=camera;
     // Capture the first 512 real dispatches and then one in sixteen. Reporting
     // is independently bounded, including when an input is persistently cyan.
-    if(p.failed||(frame>=512&&frame%16))return;
+    if(p.failed||(!force&&frame>=512&&frame%16))return;
     if(!p.buffer){
         VkBufferCreateInfo ci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};ci.size=total;ci.usage=VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         if(vkCreateBuffer(dev,&ci,nullptr,&p.buffer)!=VK_SUCCESS){p.failed=true;return;}
@@ -98,7 +99,7 @@ void bs4_probe_image(Bs4GpuFrameProbe& p,VkCommandBuffer cb,VkImage image,VkImag
     VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};b.srcStageMask=VK_PIPELINE_STAGE_2_TRANSFER_BIT;
     b.srcAccessMask=VK_ACCESS_2_TRANSFER_WRITE_BIT;b.dstStageMask=VK_PIPELINE_STAGE_2_HOST_BIT;b.dstAccessMask=VK_ACCESS_2_HOST_READ_BIT;
     VkDependencyInfo d{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};d.memoryBarrierCount=1;d.pMemoryBarriers=&b;vkCmdPipelineBarrier2(cb,&d);
-    p.stages|=1u<<stage;p.formats[stage]=format;p.extents[stage]=size;
+    p.stages|=1u<<stage;p.formats[stage]=format;p.extents[stage]=size;p.images[stage]=image;p.recordedBy=cb;
     if(stage==3)p.compositeImage=image;
 }
 void bs4_probe_resolve(Bs4GpuFrameProbe& p,VkDevice dev){
@@ -127,7 +128,7 @@ void bs4_probe_resolve(Bs4GpuFrameProbe& p,VkDevice dev){
         if(reports>=96||(!unusual&&p.frame>=4&&p.frame%256&&(!saturated||p.frame%16)))return;
         reports++;
     }
-    std::array<char,4096> line{};size_t used=0;
+    std::array<char,8192> line{};size_t used=0;
     auto emit=[&](const char* format,auto... args){
         if(used>=line.size()-1)return;
         const int n=std::snprintf(line.data()+used,line.size()-used,format,args...);
@@ -139,6 +140,21 @@ void bs4_probe_resolve(Bs4GpuFrameProbe& p,VkDevice dev){
     for(unsigned i=0;i<8;i++)if((i<4||i==6||i==7)&&(p.stages&(1u<<i)))emit(
         " %s={cyan:%u white:%u red:%u invalid:%u top:%u bottom:%u mean:%.3f,%.3f,%.3f,%.3f}",
         names[i],s[i].cyan,s[i].white,s[i].red,s[i].invalid,s[i].topCyan,s[i].bottomCyan,s[i].r,s[i].g,s[i].b,s[i].a);
+    emit(" recorded_cb=%p composite_image=%p",reinterpret_cast<void*>(p.recordedBy),reinterpret_cast<void*>(p.compositeImage));
+    // Stage means can hide channel/coordinate discrepancies. Keep exact pixels
+    // from the same fence-owned dispatch, with explicit image and dimensions.
+    for(unsigned stage: {0u,1u,2u,3u,6u})if(p.stages&(1u<<stage)){
+        const auto size=p.extents[stage];const bool fp16=stage==1;
+        const auto* raw=static_cast<const unsigned char*>(p.mapped)+stride*stage;
+        emit(" %s_image=%p extent=%ux%u",names[stage],reinterpret_cast<void*>(p.images[stage]),size.width,size.height);
+        for(unsigned tile: {0u,4u,8u}){
+            const auto* pixel=raw+tile*side*side*(fp16?8:4);float c[4]{};
+            for(unsigned k=0;k<4;++k){if(fp16){uint16_t h{};std::memcpy(&h,pixel+k*2,2);c[k]=half(h);}else c[k]=pixel[k]/255.f;}
+            emit(" %s_pixel[%u,%u]=%.6g,%.6g,%.6g,%.6g raw=",names[stage],
+                (size.width-side)*(tile%3)/2,(size.height-side)*(tile/3)/2,c[0],c[1],c[2],c[3]);
+            for(unsigned k=0;k<(fp16?8u:4u);++k)emit("%02x",pixel[k]);
+        }
+    }
     if(p.stages&16)emit(" motion={invalid:%u range_x:%.3f,%.3f max_abs_y:%.3f}",s[4].invalid,s[4].min,s[4].max,s[4].maxY);
     if(p.stages&128){
         emit(" swapchain_image=%p write=%llu present_seq=%llu index=%u final_write_matched=%u present_result=%d",

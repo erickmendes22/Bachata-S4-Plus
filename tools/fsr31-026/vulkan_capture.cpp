@@ -66,6 +66,8 @@ extern "C" void bs4_wsi_probe_submitted1(VkQueue,uint32_t,const VkSubmitInfo*,PF
 extern "C" void bs4_wsi_probe_submitted2(VkQueue,uint32_t,const VkSubmitInfo2*,PFN_vkQueueSubmit2);
 extern "C" void bs4_wsi_probe_poll();
 extern "C" void bs4_wsi_probe_reset_unsubmitted(VkCommandBuffer);
+extern "C" void bs4_wsi_probe_forget_image(VkImage);
+extern "C" bool bs4_wsi_probe_selected(VkCommandBuffer,VkImage,uint64_t);
 extern "C" VkPhysicalDevice bs4_fsr31_physical_device();
 void observe_wsi_write(VkCommandBuffer cb,VkImage image,VkImageLayout layout) {
     SwapchainDiagnostics meta{};bool found=false;uint64_t serial=0;
@@ -88,6 +90,25 @@ void observe_wsi_write(VkCommandBuffer cb,VkImage image,VkImageLayout layout) {
         reinterpret_cast<void*>(image),reinterpret_cast<void*>(cb),
         int(layout),int(meta.format),int(readable));
     if(readable)bs4_wsi_probe_write_tagged(meta.device,bs4_fsr31_physical_device(),cb,image,layout,meta.extent,meta.format,serial);
+    if(readable&&bs4_wsi_probe_selected(cb,image,serial)){
+        VkImageView writtenView{};
+        {std::lock_guard lock{mutex};const auto active=present_active_color.find(cb);
+         if(active!=present_active_color.end()&&active->second.image==image)writtenView=active->second.view;}
+        Bs4SceneWriter writer{};
+        const bool known=writtenView&&bs4_native_scene_writer(writtenView,writer)&&writer.command==cb;
+        std::array<char,4096> line{};size_t used=0;
+        auto emit=[&](const char* format,auto... args){if(used>=line.size()-1)return;
+            const int n=std::snprintf(line.data()+used,line.size()-used,format,args...);
+            if(n>0)used+=std::min<size_t>(n,line.size()-used-1);};
+        emit("[BS4_FSR31] WSI_WRITE_SOURCES write=%llu image=%p cb=%p provenance_known=%d scene_frame=%llu vs=0x%llx ps=0x%llx sampled_count=%u truncated=%d temporal_association=unresolved",
+             (unsigned long long)serial,reinterpret_cast<void*>(image),reinterpret_cast<void*>(cb),int(known),
+             (unsigned long long)(known?writer.frame:0),(unsigned long long)(known?writer.vertexHash:0),
+             (unsigned long long)(known?writer.fragmentHash:0),known?writer.sampledCount:0,int(known&&writer.sampledOverflow));
+        if(known)for(uint32_t n=0;n<writer.sampledCount;++n){Bs4FsrCaptureImage input{};
+            if(bs4_fsr31_capture_image_at(cb,writer.sampled[n],&input))emit(" input[%u]={view:%p image:%p format:%d extent:%ux%u layout:%d}",n,
+                reinterpret_cast<void*>(writer.sampled[n]),reinterpret_cast<void*>(input.image),int(input.format),input.size.width,input.size.height,int(input.layout));}
+        emit("%s","\n");std::fwrite(line.data(),1,used,stderr);
+    }
 }
 void present_trace_end(VkCommandBuffer cb) {
     VkImage image=VK_NULL_HANDLE;
@@ -104,9 +125,9 @@ void present_trace_end(VkCommandBuffer cb) {
             "[BS4_FSR31] POST_UI_COLOR_PASS_END pass=%llu image=%p view=%p cb=%p\n",
             (unsigned long long)it->second.serial,reinterpret_cast<void*>(image),
             reinterpret_cast<void*>(it->second.view),reinterpret_cast<void*>(cb));
-        present_active_color.erase(it);
     }
     observe_wsi_write(cb,image,layout);
+    {std::lock_guard lock{mutex};present_active_color.erase(cb);}
 }
 
 struct ScenePass {
@@ -1045,7 +1066,13 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_swap_images(VkDevice d,VkSwapc
     return r;
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_swap_destroy(VkDevice d,VkSwapchainKHR s,const VkAllocationCallbacks* alloc) {
-    {std::lock_guard lock{mutex};present_swap_images.erase(s);present_swap_metadata.erase(s);}
+    std::vector<VkImage> retired;
+    {std::lock_guard lock{mutex};const auto found=present_swap_images.find(s);
+     if(found!=present_swap_images.end())retired=found->second;
+     for(auto image:retired){submitted_wsi_writes.erase(image);present_last_color.erase(image);
+         for(auto& entry:recorded_wsi_writes)entry.second.erase(image);}
+     present_swap_images.erase(s);present_swap_metadata.erase(s);}
+    for(auto image:retired)bs4_wsi_probe_forget_image(image);
     if(original_swap_destroy)original_swap_destroy(d,s,alloc);
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_present(VkQueue q,const VkPresentInfoKHR* p) {
@@ -1129,13 +1156,14 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image(
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_destroy_image(
     VkDevice dev,VkImage img,const VkAllocationCallbacks* ac) {
-    bs4_native_ui_release(img);
+    bs4_native_ui_release(img);bs4_wsi_probe_forget_image(img);
     {std::lock_guard lock{mutex};
         if(submitted_scene.color){
             const auto v=views.find(submitted_scene.color);
             if(v!=views.end()&&v->second.image==img){submitted_owner={};submitted_scene={};}
         }
-        images.erase(img);
+        images.erase(img);submitted_wsi_writes.erase(img);present_last_color.erase(img);
+        for(auto& entry:recorded_wsi_writes)entry.second.erase(img);
         for(auto& [cb,layouts]:recorded_layouts)layouts.erase(img);
     }
     if(original_destroy_image) original_destroy_image(dev,img,ac);

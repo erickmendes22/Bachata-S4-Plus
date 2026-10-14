@@ -38,7 +38,7 @@ int main(int argc,char** argv){
     di.queueCreateInfoCount=1;di.pQueueCreateInfos=&qi;
     VkDevice dev{};CHECK(vkCreateDevice(physical,&di,nullptr,&dev));
     VkQueue queue{};vkGetDeviceQueue(dev,family,0,&queue);
-    VkCommandPoolCreateInfo pi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};pi.queueFamilyIndex=family;
+    VkCommandPoolCreateInfo pi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};pi.queueFamilyIndex=family;pi.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     VkCommandPool pool{};CHECK(vkCreateCommandPool(dev,&pi,nullptr,&pool));
     VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
     ai.commandPool=pool;ai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;ai.commandBufferCount=1;
@@ -58,6 +58,38 @@ int main(int argc,char** argv){
     mai.allocationSize=req.size;mai.memoryTypeIndex=memory;
     VkDeviceMemory alloc{};CHECK(vkAllocateMemory(dev,&mai,nullptr,&alloc));
     CHECK(vkBindImageMemory(dev,image,alloc,0));
+    if(argc>1&&!std::strcmp(argv[1],"rotation")){
+        VkImage rotation[4]{image};VkDeviceMemory allocations[4]{alloc};
+        for(unsigned n=1;n<4;++n){
+            CHECK(vkCreateImage(dev,&imageci,nullptr,&rotation[n]));
+            VkMemoryRequirements rq{};vkGetImageMemoryRequirements(dev,rotation[n],&rq);
+            VkMemoryAllocateInfo a{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};a.allocationSize=rq.size;a.memoryTypeIndex=memory;
+            CHECK(vkAllocateMemory(dev,&a,nullptr,&allocations[n]));CHECK(vkBindImageMemory(dev,rotation[n],allocations[n],0));
+        }
+        for(unsigned step=0;step<260;++step){
+            const unsigned n=step%4;
+            if(step)CHECK(vkResetCommandBuffer(cb,0));
+            VkCommandBufferBeginInfo b{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};CHECK(vkBeginCommandBuffer(cb,&b));
+            VkImageMemoryBarrier2 tr{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+            tr.srcStageMask=tr.dstStageMask=VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            tr.srcAccessMask=VK_ACCESS_2_MEMORY_WRITE_BIT;tr.dstAccessMask=VK_ACCESS_2_TRANSFER_WRITE_BIT;
+            tr.oldLayout=step<4?VK_IMAGE_LAYOUT_UNDEFINED:VK_IMAGE_LAYOUT_GENERAL;
+            tr.newLayout=VK_IMAGE_LAYOUT_GENERAL;tr.image=rotation[n];tr.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+            VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};dep.imageMemoryBarrierCount=1;dep.pImageMemoryBarriers=&tr;
+            vkCmdPipelineBarrier2(cb,&dep);
+            VkClearColorValue c{};c.float32[0]=n==2?0:1;c.float32[1]=1;c.float32[2]=n==2?1:0;c.float32[3]=1;
+            vkCmdClearColorImage(cb,rotation[n],VK_IMAGE_LAYOUT_GENERAL,&c,1,&tr.subresourceRange);
+            bs4_wsi_probe_write_tagged(dev,physical,cb,rotation[n],VK_IMAGE_LAYOUT_GENERAL,{64,64},imageci.format,step+1);
+            CHECK(vkEndCommandBuffer(cb));
+            VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};si.commandBufferCount=1;si.pCommandBuffers=&cb;
+            CHECK(vkQueueSubmit(queue,1,&si,VK_NULL_HANDLE));bs4_wsi_probe_submitted1(queue,1,&si,&vkQueueSubmit);
+            CHECK(vkQueueWaitIdle(queue)); // synthetic coverage test only
+            bs4_wsi_probe_present(rotation[n],step+1,step+1,n,VK_SUCCESS);bs4_wsi_probe_poll();
+        }
+        for(unsigned n=0;n<4;++n){vkDestroyImage(dev,rotation[n],nullptr);vkFreeMemory(dev,allocations[n],nullptr);}
+        vkDestroyCommandPool(dev,pool,nullptr);vkDestroyDevice(dev,nullptr);vkDestroyInstance(instance,nullptr);
+        std::puts("WSI_ROTATION_PROBE_COMPLETE");return 0;
+    }
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     CHECK(vkBeginCommandBuffer(cb,&bi));
     VkImageMemoryBarrier2 bar{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};

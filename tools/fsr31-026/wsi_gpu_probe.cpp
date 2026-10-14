@@ -21,6 +21,7 @@ struct Slot {
 std::mutex slots_mutex;
 std::unordered_map<VkCommandBuffer, Slot> slots;
 std::atomic<uint64_t> event_sequence{0};
+std::unordered_map<VkImage,uint64_t> image_write_sequences;
 std::atomic<unsigned> capture_failures{0};
 
 void release_slot(Slot& slot) {
@@ -67,18 +68,22 @@ extern "C" void bs4_wsi_probe_write_tagged(VkDevice device,VkPhysicalDevice phys
         VkCommandBuffer cb,VkImage image,VkImageLayout layout,VkExtent2D extent,
         VkFormat format,uint64_t serial) {
     if(!device||!physical||!cb||!image)return;
+    if(format!=VK_FORMAT_R8G8B8A8_UNORM&&format!=VK_FORMAT_R8G8B8A8_SRGB&&
+       format!=VK_FORMAT_B8G8R8A8_UNORM&&format!=VK_FORMAT_B8G8R8A8_SRGB)return;
     const auto index=event_sequence.fetch_add(1,std::memory_order_relaxed);
     std::lock_guard lock{slots_mutex};
+    const auto image_index=image_write_sequences[image]++;
     auto it=slots.find(cb);
 #ifdef BS4_FSR31_TEST_HARNESS
     if(index>=8&&index%64&&std::getenv("BS4_TEST_KEEP_EARLY_WSI_SAMPLE"))return;
 #endif
     if(it==slots.end()) {
-        if(index>=8 && index%64)return;
+        // Per-image cadence cannot alias a 4-image swapchain to one buffer.
+        if(index>=8 && image_index%64)return;
         if(slots.size()>=8)return;
         it=slots.emplace(cb,Slot{}).first;
         it->second.device=device;
-        bs4_probe_begin(it->second.probe,device,physical,index,0);
+        bs4_probe_begin(it->second.probe,device,physical,index,0,true);
         if(!it->second.probe.pending) {
             release_slot(it->second);
             slots.erase(it);
@@ -156,4 +161,16 @@ extern "C" void bs4_wsi_probe_present(VkImage image,uint64_t serial,uint64_t seq
         s.probe.presentSequence=seq;s.probe.presentIndex=index;s.probe.presentResult=result;
         s.probe.finalWriteMatched=s.probe.writeSerial==serial;
     }
+}
+
+extern "C" void bs4_wsi_probe_forget_image(VkImage image){
+    // Pending readback buffers have their own completion fences; retain them.
+    // Only cadence metadata belongs to the destroyed swapchain image handle.
+    std::lock_guard lock{slots_mutex};image_write_sequences.erase(image);
+}
+
+extern "C" bool bs4_wsi_probe_selected(VkCommandBuffer cb,VkImage image,uint64_t serial){
+    std::lock_guard lock{slots_mutex};const auto it=slots.find(cb);
+    return it!=slots.end()&&!it->second.submitted&&it->second.image==image&&
+        it->second.probe.pending&&it->second.probe.writeSerial==serial;
 }
