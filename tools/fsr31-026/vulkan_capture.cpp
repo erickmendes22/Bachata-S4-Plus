@@ -836,7 +836,8 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_queue_present(
         seq=++present_trace_counter;
         if(info&&info->pSwapchains&&info->pImageIndices)
             for(uint32_t n=0;n<info->swapchainCount;++n) {
-                const auto swap=info->pSwapchains[n],index=info->pImageIndices[n];
+                const auto swap=info->pSwapchains[n];
+                const uint32_t index=info->pImageIndices[n];
                 const auto it=tracked_swapchain_images.find(swap);
                 const bool mapped=it!=tracked_swapchain_images.end()&&index<it->second.size();
                 const VkImage image=mapped?it->second[index]:VK_NULL_HANDLE;
