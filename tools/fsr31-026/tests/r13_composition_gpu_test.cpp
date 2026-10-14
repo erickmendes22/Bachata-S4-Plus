@@ -26,7 +26,8 @@ static void transition(VkCommandBuffer cb,VkImage image,VkImageAspectFlags aspec
 }
 int main(int argc,char** argv){
  const bool automatic=argc==2&&std::strcmp(argv[1],"owned-ui")==0;
- const bool cross=argc==2&&std::strcmp(argv[1],"cross-cb")==0;
+ const bool rewrite=argc==2&&std::strcmp(argv[1],"cross-cb-rewrite")==0;
+ const bool cross=rewrite||(argc==2&&std::strcmp(argv[1],"cross-cb")==0);
  const bool runScaled=automatic||(argc==2&&std::strcmp(argv[1],"run-scaled-ui")==0);
  setenv("BACHATA_FSR31_NATIVE_UI",cross?"0":"1",1);
  const bool shared=runScaled||(argc==2&&std::strcmp(argv[1],"shared-target")==0);
@@ -74,6 +75,11 @@ int main(int argc,char** argv){
     checked(submitProc(queue,1,&first,nullptr));checked(vkQueueWaitIdle(queue));
     cb=uiCb;checked(resetCommand(cb,0));VkCommandBufferBeginInfo biUi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};checked(beginCommand(cb,&biUi));
   }
+  if(rewrite){
+    // A later guest render pass overwrites the submitted LDR color image.
+    ri.renderArea.extent={640,360};ri.pColorAttachments=&ldr;
+    begin(cb,&ri);end(cb);ri.renderArea.extent={1920,1080};
+  }
   // Separate-target case starts a new UI pass. Shared-target case reuses
   // the existing rendering instance, as the native scheduler may do.
   // This is a preservation test, not proof of shared-target FSR support.
@@ -116,7 +122,7 @@ int main(int argc,char** argv){
   }
   if(!shared)transition(cb,ui.image,VK_IMAGE_ASPECT_COLOR_BIT,ui.layout,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);VkRenderingAttachmentInfo hud=ldr;hud.imageView=ui.view;hud.clearValue.color={{0,0,0,1}};ri.pColorAttachments=&hud;if(!shared)begin(cb,&ri);
   VkClearAttachment red{};red.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;red.clearValue.color={{1,0,0,1}};VkClearRect rect{{{0,0},{100,50}},0,1};vkCmdClearAttachments(cb,1,&red,1,&rect);end(cb);
-  transition(cb,automatic?scene.image:ui.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);VkBufferImageCopy copy{};copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.imageExtent={uiWidth,uiHeight,1};vkCmdCopyImageToBuffer(cb,ui.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,read.buffer,1,&copy);ui.layout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;if((shared&&!runScaled)||automatic)scene.layout=ui.layout;checked(vkEndCommandBuffer(cb));VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cb;checked(vkQueueSubmit(queue,1,&submit,nullptr));checked(vkQueueWaitIdle(queue));void* pixels{};checked(vkMapMemory(device,read.memory,0,read.allocationSize,0,&pixels));if(!(read.memoryProperties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){VkMappedMemoryRange r{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};r.memory=read.memory;r.size=VK_WHOLE_SIZE;checked(vkInvalidateMappedMemoryRanges(device,1,&r));}const auto rgba=(const unsigned char*)pixels;size_t blue=0,redPixels=0;for(size_t i=0;i<size_t(uiWidth)*uiHeight;i++){blue+=rgba[i*4+2]>180&&rgba[i*4]<80;redPixels+=rgba[i*4]>240&&rgba[i*4+1]<10&&rgba[i*4+2]<10;}assert(redPixels==5000);if(frame||shared)assert(blue==size_t(uiWidth)*uiHeight-5000);std::printf("PASS composition frame=%u blue=%zu red=%zu native_UI_image_preserved=1 shared_target=%u\n",frame,blue,redPixels,unsigned(shared));vkUnmapMemory(device,read.memory);bs4_fsr31_port_end_frame();bs4_native_scene_present();if(cross)cb=sceneCb;
+  transition(cb,automatic?scene.image:ui.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);VkBufferImageCopy copy{};copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.imageExtent={uiWidth,uiHeight,1};vkCmdCopyImageToBuffer(cb,ui.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,read.buffer,1,&copy);ui.layout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;if((shared&&!runScaled)||automatic)scene.layout=ui.layout;checked(vkEndCommandBuffer(cb));VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cb;checked(vkQueueSubmit(queue,1,&submit,nullptr));checked(vkQueueWaitIdle(queue));void* pixels{};checked(vkMapMemory(device,read.memory,0,read.allocationSize,0,&pixels));if(!(read.memoryProperties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){VkMappedMemoryRange r{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};r.memory=read.memory;r.size=VK_WHOLE_SIZE;checked(vkInvalidateMappedMemoryRanges(device,1,&r));}const auto rgba=(const unsigned char*)pixels;size_t blue=0,redPixels=0;for(size_t i=0;i<size_t(uiWidth)*uiHeight;i++){blue+=rgba[i*4+2]>180&&rgba[i*4]<80;redPixels+=rgba[i*4]>240&&rgba[i*4+1]<10&&rgba[i*4+2]<10;}assert(redPixels==5000);if(rewrite)assert(blue==0);else if(frame||shared)assert(blue==size_t(uiWidth)*uiHeight-5000);std::printf("PASS composition frame=%u blue=%zu red=%zu native_UI_image_preserved=1 shared_target=%u\n",frame,blue,redPixels,unsigned(shared));vkUnmapMemory(device,read.memory);bs4_fsr31_port_end_frame();bs4_native_scene_present();if(cross)cb=sceneCb;
  }
  assert(errors==0);if(automatic){std::puts("PASS automatic native025 UI allocation and dispatch, seven temporal frames, HUD preserved, zero Vulkan errors");return 0;}if(runScaled){std::puts("PASS native same-target UI handoff: camera warmup copy and seven real FSR dispatches into prepared 720p UI target, scene and HUD preserved, zero Vulkan errors");return 0;}if(shared){std::puts("PASS shared-target preservation only: existing rendering instance and HUD intact; temporal shared-target composition remains unsupported");return 0;}std::puts("PASS R13 pre-UI composition: native camera producer, bounds, confirmed movie boundary, real AMD FSR, original guest HUD and zero Vulkan errors");return 0;
 }
