@@ -40,6 +40,14 @@ std::unordered_map<VkImageView, View> views;
 uint64_t depth_counter{};
 struct PresentTrace {VkImage image{};VkImageView view{};uint64_t serial{};};
 std::unordered_map<VkSwapchainKHR,std::vector<VkImage>> present_swap_images;
+struct SwapchainDiagnostics {
+    VkFormat format=VK_FORMAT_UNDEFINED;
+    VkColorSpaceKHR colorspace=VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    VkExtent2D extent{};
+    VkImageUsageFlags usage{};
+    VkSharingMode sharing=VK_SHARING_MODE_EXCLUSIVE;
+};
+std::unordered_map<VkSwapchainKHR,SwapchainDiagnostics> present_swap_metadata;
 std::unordered_map<VkCommandBuffer,PresentTrace> present_active_color;
 std::unordered_map<VkImage,uint64_t> present_last_color;
 uint64_t present_serial=0,present_count=0;
@@ -105,6 +113,7 @@ PFN_vkCmdClearDepthStencilImage original_clear_depth{};
 PFN_vkQueueSubmit original_queue_submit{};
 PFN_vkQueueSubmit2 original_queue_submit2{};
 PFN_vkGetSwapchainImagesKHR original_swap_images{};
+PFN_vkCreateSwapchainKHR original_swap_create{};
 PFN_vkQueuePresentKHR original_present{};
 PFN_vkDestroySwapchainKHR original_swap_destroy{};
 PFN_vkCreateImage original_create_image{};
@@ -919,6 +928,25 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_queue_submit2(VkQueue q,uint32
     return result;
 }
 
+// Observe the actual WSI allocation without mutating Vulkan's swapchain flags.
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_swap_create(
+        VkDevice device,const VkSwapchainCreateInfoKHR* info,
+        const VkAllocationCallbacks* alloc,VkSwapchainKHR* out) {
+    if(!original_swap_create)return VK_ERROR_INITIALIZATION_FAILED;
+    const VkResult result=original_swap_create(device,info,alloc,out);
+    if(result==VK_SUCCESS&&info&&out){
+        std::lock_guard lock{mutex};
+        present_swap_metadata[*out]={info->imageFormat,info->imageColorSpace,
+            info->imageExtent,info->imageUsage,info->imageSharingMode};
+        std::fprintf(stderr,
+            "[BS4_FSR31] WSI_IMAGE_PROPERTIES swap=%p format=%d colorspace=%d extent=%ux%u usage=0x%x transfer_src=%u sharing=%d\\n",
+            reinterpret_cast<void*>(*out),int(info->imageFormat),
+            int(info->imageColorSpace),info->imageExtent.width,info->imageExtent.height,
+            unsigned(info->imageUsage),unsigned(bool(info->imageUsage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)),
+            int(info->imageSharingMode));
+    }
+    return result;
+}
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_swap_images(VkDevice d,VkSwapchainKHR s,uint32_t* count,VkImage* out) {
     if(!original_swap_images)return VK_ERROR_INITIALIZATION_FAILED;
     VkResult r=original_swap_images(d,s,count,out);
@@ -926,12 +954,13 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_swap_images(VkDevice d,VkSwapc
     return r;
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_swap_destroy(VkDevice d,VkSwapchainKHR s,const VkAllocationCallbacks* alloc) {
-    {std::lock_guard lock{mutex};present_swap_images.erase(s);}
+    {std::lock_guard lock{mutex};present_swap_images.erase(s);present_swap_metadata.erase(s);}
     if(original_swap_destroy)original_swap_destroy(d,s,alloc);
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_present(VkQueue q,const VkPresentInfoKHR* p) {
     if(!original_present)return VK_ERROR_INITIALIZATION_FAILED;
-    struct Trace {VkImage image;uint32_t index;uint64_t pass;bool mapped;};
+    struct Trace {VkImage image;uint32_t index;uint64_t pass;bool mapped;
+        VkFormat format;VkColorSpaceKHR colorspace;VkImageUsageFlags usage;VkExtent2D extent;};
     std::vector<Trace> hits;
     uint64_t seq;
     {
@@ -941,15 +970,21 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_present(VkQueue q,const VkPres
         uint32_t idx=p->pImageIndices[i];bool mapped=found!=present_swap_images.end()&&idx<found->second.size();
         VkImage image=mapped?found->second[idx]:VK_NULL_HANDLE;
         auto pass=present_last_color.find(image);
-        hits.push_back({image,idx,pass==present_last_color.end()?0:pass->second,mapped});
+        const auto meta=present_swap_metadata.find(p->pSwapchains[i]);
+        const auto info=meta==present_swap_metadata.end()?SwapchainDiagnostics{}:meta->second;
+        hits.push_back({image,idx,pass==present_last_color.end()?0:pass->second,
+            mapped,info.format,info.colorspace,info.usage,info.extent});
       }
     }
     VkResult result=original_present(q,p);
     if(seq<=8192)for(size_t i=0;i<hits.size();++i){
       const auto& t=hits[i];
-      std::fprintf(stderr,"[BS4_FSR31] WSI_PRESENT seq=%llu image=%p index=%u mapped=%d last_color_pass=%llu result=%d\\n",
-          (unsigned long long)seq,reinterpret_cast<void*>(t.image),t.index,int(t.mapped),
-          (unsigned long long)t.pass,int(p&&p->pResults?p->pResults[i]:result));
+      std::fprintf(stderr,
+        "[BS4_FSR31] WSI_PRESENT seq=%llu image=%p index=%u mapped=%d last_color_pass=%llu result=%d format=%d colorspace=%d extent=%ux%u transfer_src=%d pixels_captured=0\\n",
+        (unsigned long long)seq,reinterpret_cast<void*>(t.image),t.index,int(t.mapped),
+        (unsigned long long)t.pass,int(p&&p->pResults?p->pResults[i]:result),
+        int(t.format),int(t.colorspace),t.extent.width,t.extent.height,
+        int(bool(t.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)));
     }
     return result;
 }
@@ -1125,6 +1160,7 @@ extern "C" PFN_vkVoidFunction bs4_fsr31_wrap_vulkan_proc(
     BS4_WRAP_GIPA(original_queue_submit,"vkQueueSubmit",&bs4_cap_queue_submit)
     BS4_WRAP_GIPA(original_queue_submit2,"vkQueueSubmit2",&bs4_cap_queue_submit2)
     BS4_WRAP_GIPA(original_queue_submit2,"vkQueueSubmit2KHR",&bs4_cap_queue_submit2)
+    BS4_WRAP_GIPA(original_swap_create,"vkCreateSwapchainKHR",&bs4_cap_swap_create)
     BS4_WRAP_GIPA(original_swap_images,"vkGetSwapchainImagesKHR",&bs4_cap_swap_images)
     BS4_WRAP_GIPA(original_present,"vkQueuePresentKHR",&bs4_cap_present)
     BS4_WRAP_GIPA(original_swap_destroy,"vkDestroySwapchainKHR",&bs4_cap_swap_destroy)
@@ -1161,6 +1197,7 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
     BS4_WRAP(original_queue_submit,"vkQueueSubmit",&bs4_cap_queue_submit)
     BS4_WRAP(original_queue_submit2,"vkQueueSubmit2",&bs4_cap_queue_submit2)
     BS4_WRAP(original_queue_submit2,"vkQueueSubmit2KHR",&bs4_cap_queue_submit2)
+    BS4_WRAP(original_swap_create,"vkCreateSwapchainKHR",&bs4_cap_swap_create)
     BS4_WRAP(original_swap_images,"vkGetSwapchainImagesKHR",&bs4_cap_swap_images)
     BS4_WRAP(original_present,"vkQueuePresentKHR",&bs4_cap_present)
     BS4_WRAP(original_swap_destroy,"vkDestroySwapchainKHR",&bs4_cap_swap_destroy)
