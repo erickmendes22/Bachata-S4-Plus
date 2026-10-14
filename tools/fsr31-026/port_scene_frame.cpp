@@ -12,6 +12,12 @@ struct Record {
 };
 std::mutex guard;
 Record current{},previous{};
+struct SubmittedPair {
+    VkCommandBuffer scene{},ui{};
+    VkImageView depth{};
+    uint64_t frame{};
+};
+SubmittedPair authorized{};
 bool frame_open=false;
 bool committed=false;
 bool finite_shift(float v) {return std::isfinite(v)&&std::abs(v)<=1.f;}
@@ -43,17 +49,28 @@ int bs4_fsr31_port_scene(const Bs4PortSceneFrame* f) {
                  f->jitterX,f->jitterY,true};
         return 1;
     }
-    previous=current;
+    previous=current;authorized={};
     current={c,f->frameId,f->sceneId,f->command,f->depth,
              f->jitterX,f->jitterY,true};
     frame_open=true;committed=false;
     return 1;
 }
+void bs4_fsr31_port_authorize_submitted(VkCommandBuffer scene,VkCommandBuffer ui,
+                                      VkImageView depth) {
+    std::lock_guard lock{guard};
+    if(!frame_open||!current.valid||!scene||!ui||scene==ui||
+       current.command!=scene||current.depth!=depth)return;
+    authorized={scene,ui,depth,current.frame};
+}
 bool bs4_fsr31_port_camera(VkCommandBuffer cb,VkImageView depth,
                            VkExtent2D size,Bs4PortCameraDispatch& out) {
     std::lock_guard lock{guard};
-    if(!frame_open||!current.valid||!previous.valid||current.command!=cb||current.depth!=depth||
-       current.camera.width!=size.width||current.camera.height!=size.height)
+    const bool same=current.command==cb;
+    const bool submitted=authorized.scene==current.command&&
+       authorized.ui==cb&&authorized.depth==depth&&authorized.frame==current.frame;
+    if(!frame_open||!current.valid||!previous.valid||(!same&&!submitted)||
+       current.depth!=depth||current.camera.width!=size.width||
+       current.camera.height!=size.height)
         return false;
     const bool coherent=previous.valid&&previous.frame+1==current.frame&&
         previous.scene==current.scene&&
@@ -72,9 +89,9 @@ bool bs4_fsr31_port_camera(VkCommandBuffer cb,VkImageView depth,
 }
 extern "C" __attribute__((visibility("default")))
 void bs4_fsr31_port_invalidate_after_gpu_drain() {
-    std::lock_guard lock{guard};current={};previous={};frame_open=false;committed=false;
+    std::lock_guard lock{guard};current={};previous={};authorized={};frame_open=false;committed=false;
 }
 
 void bs4_fsr31_port_end_frame() {
-    std::lock_guard lock{guard};frame_open=false;committed=false;
+    std::lock_guard lock{guard};authorized={};frame_open=false;committed=false;
 }
