@@ -33,7 +33,7 @@ struct DrawState {
     bool rawValid{},inside{},haveCamera{},cameraLatched{};
     VkViewport viewport{};
     bool viewportValid{},viewportWithCount{};
-    VkPipelineLayout graphicsLayout{};
+    VkPipelineLayout graphicsLayout{},boundGraphicsLayout{};bool pipelineObserved{};
     VkRect2D scissor{};
     bool scissorValid{},scissorWithCount{};
     std::map<uint32_t,Buffers> pushes;
@@ -52,6 +52,7 @@ std::unordered_map<VkDescriptorSet,Sampled> sampledDescriptors;
 std::unordered_map<VkCommandBuffer,DrawState> commands;
 uint64_t frame=1;
 std::unordered_map<VkPipelineLayout,uint64_t> layoutHashes, fragmentHashes;
+std::unordered_map<VkPipeline,VkPipelineLayout> graphicsPipelines;
 std::unordered_map<VkImageView,Bs4SceneWriter> sceneWriters;
 PFN_vkAllocateMemory allocate;
 PFN_vkMapMemory mapMemory;
@@ -70,6 +71,9 @@ PFN_vkCmdSetViewport setViewport;
 PFN_vkCmdSetViewportWithCount setViewportCount;
 PFN_vkSetDebugUtilsObjectNameEXT objectName;
 PFN_vkDestroyPipelineLayout destroyLayout;
+PFN_vkCreateGraphicsPipelines createGraphics;
+PFN_vkDestroyPipeline destroyPipeline;
+PFN_vkCmdBindPipeline bindPipeline;
 PFN_vkCmdDraw draw;
 PFN_vkCmdDrawIndexed drawIndexed;
 PFN_vkCmdDrawIndirect drawIndirect;
@@ -258,6 +262,31 @@ void VKAPI_CALL scissor_count_hook(VkCommandBuffer cb,uint32_t count,const VkRec
         d.scissorWithCount=true;if(d.scissorValid)d.scissor=*value;}
     setScissorCount(cb,count,value);
 }
+VkPipelineLayout shader_layout(const DrawState& d){
+    // Push constants can legally remain valid across compatible pipeline switches.
+    // They are not proof of the shader currently executing this draw.
+    return d.pipelineObserved?d.boundGraphicsLayout:d.graphicsLayout;
+}
+VkResult VKAPI_CALL graphics_create_hook(VkDevice dev,VkPipelineCache cache,uint32_t count,
+    const VkGraphicsPipelineCreateInfo* info,const VkAllocationCallbacks* alloc,VkPipeline* out){
+    if(out)std::fill(out,out+count,VK_NULL_HANDLE);
+    const auto result=createGraphics(dev,cache,count,info,alloc,out);
+    // Pipeline creation may partially succeed; only non-null returned handles have state.
+    if(info&&out){std::lock_guard lock{guard};for(uint32_t n=0;n<count;++n)
+        if(out[n])graphicsPipelines[out[n]]=info[n].layout;}
+    return result;
+}
+void VKAPI_CALL pipeline_destroy_hook(VkDevice dev,VkPipeline pipeline,const VkAllocationCallbacks* alloc){
+    {std::lock_guard lock{guard};graphicsPipelines.erase(pipeline);}
+    destroyPipeline(dev,pipeline,alloc);
+}
+void VKAPI_CALL pipeline_bind_hook(VkCommandBuffer cb,VkPipelineBindPoint point,VkPipeline pipeline){
+    if(point==VK_PIPELINE_BIND_POINT_GRAPHICS){std::lock_guard lock{guard};auto& d=commands[cb];
+        d.pipelineObserved=true;const auto it=graphicsPipelines.find(pipeline);
+        d.boundGraphicsLayout=it==graphicsPipelines.end()?VK_NULL_HANDLE:it->second;
+    }
+    bindPipeline(cb,point,pipeline);
+}
 VkResult VKAPI_CALL name_hook(VkDevice dev,const VkDebugUtilsObjectNameInfoEXT* info) {
     if(info&&info->objectType==VK_OBJECT_TYPE_PIPELINE_LAYOUT) {
         std::lock_guard lock{guard};auto layout=(VkPipelineLayout)(uintptr_t)info->objectHandle;
@@ -326,7 +355,7 @@ void note_writer(VkCommandBuffer cb,uint32_t vertices,uint32_t instances) {
     const auto& d=it->second;
     Bs4SceneWriter writer{};writer.command=cb;writer.frame=frame;writer.area=d.area;
     writer.viewport=d.viewport;writer.vertices=vertices;writer.instances=instances;writer.colorCount=d.mrt;
-    const auto vs=layoutHashes.find(d.graphicsLayout),ps=fragmentHashes.find(d.graphicsLayout);
+    const auto vs=layoutHashes.find(shader_layout(d)),ps=fragmentHashes.find(shader_layout(d));
     if(vs!=layoutHashes.end())writer.vertexHash=vs->second;
     if(ps!=fragmentHashes.end())writer.fragmentHash=ps->second;
     auto add=[&](const Sampled& bindings){for(const auto& pair:bindings)if(pair.second){
@@ -423,6 +452,9 @@ extern "C" PFN_vkVoidFunction bs4_native_scene_wrap(const char* name,PFN_vkVoidF
     WRAP(setScissorCount,"vkCmdSetScissorWithCountEXT",scissor_count_hook)
     WRAP(objectName,"vkSetDebugUtilsObjectNameEXT",name_hook)
     WRAP(destroyLayout,"vkDestroyPipelineLayout",layout_destroy_hook)
+    WRAP(createGraphics,"vkCreateGraphicsPipelines",graphics_create_hook)
+    WRAP(destroyPipeline,"vkDestroyPipeline",pipeline_destroy_hook)
+    WRAP(bindPipeline,"vkCmdBindPipeline",pipeline_bind_hook)
     WRAP(draw,"vkCmdDraw",draw_hook)
     WRAP(drawIndexed,"vkCmdDrawIndexed",indexed_hook)
     WRAP(drawIndirect,"vkCmdDrawIndirect",indirect_hook)
@@ -434,8 +466,16 @@ extern "C" PFN_vkVoidFunction bs4_native_scene_wrap(const char* name,PFN_vkVoidF
 bool bs4_native_scene_ui_boundary(VkCommandBuffer cb) {
     std::lock_guard lock{guard};auto it=commands.find(cb);
     if(it==commands.end())return false;
-    const auto hash=layoutHashes.find(it->second.graphicsLayout);
-    return hash!=layoutHashes.end()&&Vulkan::UiComposition::MovieShader(hash->second);
+    const auto hash=layoutHashes.find(shader_layout(it->second));
+    const bool movie=hash!=layoutHashes.end()&&Vulkan::UiComposition::MovieShader(hash->second);
+    const auto old=layoutHashes.find(it->second.graphicsLayout);
+    if(it->second.pipelineObserved&&!movie&&old!=layoutHashes.end()&&Vulkan::UiComposition::MovieShader(old->second)){
+        static unsigned logs=0;if(logs++<16)std::fprintf(stderr,
+            "[BS4_FSR31] UI_SHADER_IDENTITY_REJECTED_STALE_PUSH cb=%p pushed_vs=0x%llx bound_vs=0x%llx bound_known=%d\n",
+            reinterpret_cast<void*>(cb),(unsigned long long)old->second,
+            (unsigned long long)(hash==layoutHashes.end()?0:hash->second),int(bool(it->second.boundGraphicsLayout)));
+    }
+    return movie;
 }
 
 void bs4_native_scene_draw_state(VkCommandBuffer cb,const Bs4NativeRenderState& state) {
@@ -443,7 +483,7 @@ void bs4_native_scene_draw_state(VkCommandBuffer cb,const Bs4NativeRenderState& 
     std::lock_guard lock{guard};const auto it=commands.find(cb);
     if(it==commands.end()||!it->second.rawValid)return;
     const auto& d=it->second;
-    const auto hash=layoutHashes.find(d.graphicsLayout);
+    const auto hash=layoutHashes.find(shader_layout(d));
     if(hash==layoutHashes.end()||!Vulkan::UiComposition::MovieShader(hash->second))return;
     // The native scheduler can reuse an existing rendering instance. This
     // callback is ordered after BindResources on its worker, so shader/raw
@@ -565,3 +605,4 @@ bool bs4_native_scene_writer(VkImageView view,Bs4SceneWriter& out) {
 void bs4_native_scene_forget_view(VkImageView view) {
     std::lock_guard lock{guard};sceneWriters.erase(view);
 }
+

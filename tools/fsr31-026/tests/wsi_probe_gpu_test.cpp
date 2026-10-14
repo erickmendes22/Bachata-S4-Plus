@@ -4,13 +4,19 @@
 #include <vulkan/vulkan.h>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 extern "C" void bs4_wsi_probe_write(VkDevice,VkPhysicalDevice,VkCommandBuffer,VkImage,VkImageLayout,VkExtent2D,VkFormat);
 extern "C" void bs4_wsi_probe_submitted1(VkQueue,uint32_t,const VkSubmitInfo*,PFN_vkQueueSubmit);
 extern "C" void bs4_wsi_probe_poll();
+extern "C" void bs4_wsi_probe_write_tagged(VkDevice,VkPhysicalDevice,VkCommandBuffer,VkImage,VkImageLayout,VkExtent2D,VkFormat,uint64_t);
+extern "C" void bs4_wsi_probe_present(VkImage,uint64_t,uint64_t,uint32_t,VkResult);
 
 #define CHECK(x) do {auto v=(x);if(v!=VK_SUCCESS){std::fprintf(stderr,"WSI_TEST_FAILED line=%d status=%d\\n",__LINE__,int(v));return 1;}}while(0)
-int main(){
+int main(int argc,char** argv){
+    const bool bgra=argc>1;
+    const bool unmatched=argc>1&&!std::strcmp(argv[1],"unmatched");
+    const bool last=unmatched||(argc>1&&!std::strcmp(argv[1],"last-writer"));
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};app.apiVersion=VK_API_VERSION_1_3;
     VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};ici.pApplicationInfo=&app;
     VkInstance instance{};CHECK(vkCreateInstance(&ici,nullptr,&instance));
@@ -38,7 +44,7 @@ int main(){
     ai.commandPool=pool;ai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;ai.commandBufferCount=1;
     VkCommandBuffer cb{};CHECK(vkAllocateCommandBuffers(dev,&ai,&cb));
     VkImageCreateInfo imageci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-    imageci.imageType=VK_IMAGE_TYPE_2D;imageci.format=VK_FORMAT_R8G8B8A8_UNORM;
+    imageci.imageType=VK_IMAGE_TYPE_2D;imageci.format=bgra?VK_FORMAT_B8G8R8A8_UNORM:VK_FORMAT_R8G8B8A8_UNORM;
     imageci.extent={64,64,1};imageci.mipLevels=1;imageci.arrayLayers=1;
     imageci.samples=VK_SAMPLE_COUNT_1_BIT;imageci.tiling=VK_IMAGE_TILING_OPTIMAL;
     imageci.usage=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -64,16 +70,24 @@ int main(){
     vkCmdPipelineBarrier2(cb,&dep);
     VkClearColorValue cyan{};cyan.float32[0]=0;cyan.float32[1]=1;cyan.float32[2]=1;cyan.float32[3]=1;
     VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+    if(last){
+        VkClearColorValue yellow{};yellow.float32[0]=yellow.float32[1]=yellow.float32[3]=1;
+        vkCmdClearColorImage(cb,image,VK_IMAGE_LAYOUT_GENERAL,&yellow,1,&range);
+        for(unsigned n=0;n<8;++n)bs4_wsi_probe_write(dev,physical,cb,image,VK_IMAGE_LAYOUT_GENERAL,{64,64},imageci.format);
+    }
     vkCmdClearColorImage(cb,image,VK_IMAGE_LAYOUT_GENERAL,&cyan,1,&range);
-    bs4_wsi_probe_write(dev,physical,cb,image,VK_IMAGE_LAYOUT_GENERAL,{64,64},VK_FORMAT_R8G8B8A8_UNORM);
+    if(last)bs4_wsi_probe_write_tagged(dev,physical,cb,image,VK_IMAGE_LAYOUT_GENERAL,{64,64},imageci.format,9001);
+    else bs4_wsi_probe_write(dev,physical,cb,image,VK_IMAGE_LAYOUT_GENERAL,{64,64},imageci.format);
     CHECK(vkEndCommandBuffer(cb));
     VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};si.commandBufferCount=1;si.pCommandBuffers=&cb;
     CHECK(vkQueueSubmit(queue,1,&si,VK_NULL_HANDLE));
     bs4_wsi_probe_submitted1(queue,1,&si,&vkQueueSubmit);
     CHECK(vkQueueWaitIdle(queue)); // synthetic test only, never a production GPU stall.
+    if(last)bs4_wsi_probe_present(image,unmatched?9002:9001,42,2,VK_SUCCESS);
     bs4_wsi_probe_poll();
     std::puts("WSI_FENCED_PROBE_COMPLETE");
     vkDestroyImage(dev,image,nullptr);vkFreeMemory(dev,alloc,nullptr);
     vkDestroyCommandPool(dev,pool,nullptr);vkDestroyDevice(dev,nullptr);vkDestroyInstance(instance,nullptr);
     return 0;
 }
+

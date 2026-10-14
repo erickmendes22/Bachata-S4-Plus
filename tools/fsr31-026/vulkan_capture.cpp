@@ -51,21 +51,24 @@ struct SwapchainDiagnostics {
 std::unordered_map<VkSwapchainKHR,SwapchainDiagnostics> present_swap_metadata;
 std::unordered_map<VkCommandBuffer,PresentTrace> present_active_color;
 std::unordered_map<VkImage,uint64_t> present_last_color;
-uint64_t present_serial=0,present_count=0;
+uint64_t present_serial=0,present_count=0,write_serial=0;
+std::unordered_map<VkCommandBuffer,std::unordered_map<VkImage,uint64_t>> recorded_wsi_writes;
+std::unordered_map<VkImage,uint64_t> submitted_wsi_writes;
 void present_trace_begin(VkCommandBuffer cb,const VkRenderingInfo* info) {
     if(!info||!info->colorAttachmentCount||!info->pColorAttachments)return;
     std::lock_guard lock{mutex};
     auto v=views.find(info->pColorAttachments[0].imageView);
     if(v!=views.end())present_active_color[cb]={v->second.image,info->pColorAttachments[0].imageView,++present_serial,info->pColorAttachments[0].imageLayout};
 }
-extern "C" void bs4_wsi_probe_write(VkDevice,VkPhysicalDevice,VkCommandBuffer,VkImage,VkImageLayout,VkExtent2D,VkFormat);
+extern "C" void bs4_wsi_probe_write_tagged(VkDevice,VkPhysicalDevice,VkCommandBuffer,VkImage,VkImageLayout,VkExtent2D,VkFormat,uint64_t);
+extern "C" void bs4_wsi_probe_present(VkImage,uint64_t,uint64_t,uint32_t,VkResult);
 extern "C" void bs4_wsi_probe_submitted1(VkQueue,uint32_t,const VkSubmitInfo*,PFN_vkQueueSubmit);
 extern "C" void bs4_wsi_probe_submitted2(VkQueue,uint32_t,const VkSubmitInfo2*,PFN_vkQueueSubmit2);
 extern "C" void bs4_wsi_probe_poll();
 extern "C" void bs4_wsi_probe_reset_unsubmitted(VkCommandBuffer);
 extern "C" VkPhysicalDevice bs4_fsr31_physical_device();
 void observe_wsi_write(VkCommandBuffer cb,VkImage image,VkImageLayout layout) {
-    SwapchainDiagnostics meta{};bool found=false;
+    SwapchainDiagnostics meta{};bool found=false;uint64_t serial=0;
     {
         std::lock_guard lock{mutex};
         for(const auto& entry:present_swap_images){
@@ -77,13 +80,14 @@ void observe_wsi_write(VkCommandBuffer cb,VkImage image,VkImageLayout layout) {
         }
     }
     if(!found)return;
+    {std::lock_guard lock{mutex};serial=++write_serial;recorded_wsi_writes[cb][image]=serial;}
     const bool readable=(meta.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)!=0;
     static std::atomic<unsigned> shown{0};
     if(shown.fetch_add(1)<48)std::fprintf(stderr,
         "[BS4_FSR31] WSI_WRITE image=%p cb=%p layout=%d format=%d transfer_src=%d\n",
         reinterpret_cast<void*>(image),reinterpret_cast<void*>(cb),
         int(layout),int(meta.format),int(readable));
-    if(readable)bs4_wsi_probe_write(meta.device,bs4_fsr31_physical_device(),cb,image,layout,meta.extent,meta.format);
+    if(readable)bs4_wsi_probe_write_tagged(meta.device,bs4_fsr31_physical_device(),cb,image,layout,meta.extent,meta.format,serial);
 }
 void present_trace_end(VkCommandBuffer cb) {
     VkImage image=VK_NULL_HANDLE;
@@ -808,7 +812,7 @@ extern "C" int bs4_fsr31_run_scaled_ui(VkCommandBuffer cb,VkImageView uiColor,Vk
     }
     begin(cb,&info);
     {
-        std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);post_hud_targets.erase(cb);
+        std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);recorded_wsi_writes.erase(cb);post_hud_targets.erase(cb);
         const auto c=images.find(target.image);if(c!=images.end())recorded_layouts[cb][target.image]=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         const auto d=images.find(depthTarget.image);if(d!=images.end())recorded_layouts[cb][depthTarget.image]=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     }
@@ -894,6 +898,8 @@ static void observe_submission(VkQueue queue,uint32_t count,const VkSubmitInfo* 
     // their (possibly concurrent/out-of-order) recording order.
     for(uint32_t i=0;i<count;++i)for(uint32_t n=0;n<infos[i].commandBufferCount;++n) {
         const auto cmd=infos[i].pCommandBuffers[n];
+        const auto ws=recorded_wsi_writes.find(cmd);
+        if(ws!=recorded_wsi_writes.end())for(const auto& entry:ws->second)submitted_wsi_writes[entry.first]=entry.second;
         const auto changes=recorded_layouts.find(cmd);
         if(changes!=recorded_layouts.end())
             for(const auto& [image,layout]:changes->second) {
@@ -921,6 +927,8 @@ static void observe_submission2(VkQueue queue,uint32_t count,const VkSubmitInfo2
     std::lock_guard lock{mutex};
     for(uint32_t i=0;i<count;++i)for(uint32_t n=0;n<infos[i].commandBufferInfoCount;++n) {
         const auto cmd=infos[i].pCommandBufferInfos[n].commandBuffer;
+        const auto ws=recorded_wsi_writes.find(cmd);
+        if(ws!=recorded_wsi_writes.end())for(const auto& entry:ws->second)submitted_wsi_writes[entry.first]=entry.second;
         const auto changes=recorded_layouts.find(cmd);
         if(changes!=recorded_layouts.end())
             for(const auto& [image,layout]:changes->second) {
@@ -948,6 +956,10 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_queue_submit(VkQueue q,uint32_
     if(!original_queue_submit)return VK_ERROR_INITIALIZATION_FAILED;
     const VkResult result=original_queue_submit(q,count,infos,fence);
     if(result==VK_SUCCESS) {
+        if(infos){std::lock_guard lock{mutex};for(uint32_t i=0;i<count;++i)for(uint32_t n=0;n<infos[i].commandBufferCount;++n){
+            const auto w=recorded_wsi_writes.find(infos[i].pCommandBuffers[n]);
+            if(w!=recorded_wsi_writes.end())for(const auto& entry:w->second)submitted_wsi_writes[entry.first]=entry.second;
+        }}
         observe_submission(q,count,infos);
         if(infos)for(uint32_t i=0;i<count;++i)for(uint32_t n=0;n<infos[i].commandBufferCount;++n)
             bs4_fsr31_temporal_submitted(q,infos[i].pCommandBuffers[n],original_queue_submit,nullptr);
@@ -960,6 +972,10 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_queue_submit2(VkQueue q,uint32
     if(!original_queue_submit2)return VK_ERROR_INITIALIZATION_FAILED;
     const VkResult result=original_queue_submit2(q,count,infos,fence);
     if(result==VK_SUCCESS) {
+        if(infos){std::lock_guard lock{mutex};for(uint32_t i=0;i<count;++i)for(uint32_t n=0;n<infos[i].commandBufferInfoCount;++n){
+            const auto w=recorded_wsi_writes.find(infos[i].pCommandBufferInfos[n].commandBuffer);
+            if(w!=recorded_wsi_writes.end())for(const auto& entry:w->second)submitted_wsi_writes[entry.first]=entry.second;
+        }}
         observe_submission2(q,count,infos);
         if(infos)for(uint32_t i=0;i<count;++i)for(uint32_t n=0;n<infos[i].commandBufferInfoCount;++n)
             bs4_fsr31_temporal_submitted(q,infos[i].pCommandBufferInfos[n].commandBuffer,nullptr,original_queue_submit2);
@@ -1034,7 +1050,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_swap_destroy(VkDevice d,VkSwapchai
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_present(VkQueue q,const VkPresentInfoKHR* p) {
     if(!original_present)return VK_ERROR_INITIALIZATION_FAILED;
-    struct Trace {VkImage image;uint32_t index;uint64_t pass;bool mapped;
+    struct Trace {VkImage image;uint32_t index;uint64_t pass;uint64_t write;bool mapped;
         VkFormat format;VkColorSpaceKHR colorspace;VkImageUsageFlags usage;VkExtent2D extent;};
     std::vector<Trace> hits;
     uint64_t seq;
@@ -1048,17 +1064,19 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_present(VkQueue q,const VkPres
         const auto meta=present_swap_metadata.find(p->pSwapchains[i]);
         const auto info=meta==present_swap_metadata.end()?SwapchainDiagnostics{}:meta->second;
         hits.push_back({image,idx,pass==present_last_color.end()?0:pass->second,
-            mapped,info.format,info.colorspace,info.usage,info.extent});
+            submitted_wsi_writes.count(image)?submitted_wsi_writes.at(image):0,mapped,info.format,info.colorspace,info.usage,info.extent});
       }
     }
     VkResult result=original_present(q,p);
+    for(size_t i=0;i<hits.size();++i)bs4_wsi_probe_present(hits[i].image,hits[i].write,seq,hits[i].index,
+        p&&p->pResults?p->pResults[i]:result);
     bs4_wsi_probe_poll();
     if(seq<=8192)for(size_t i=0;i<hits.size();++i){
       const auto& t=hits[i];
       std::fprintf(stderr,
-        "[BS4_FSR31] WSI_PRESENT seq=%llu image=%p index=%u mapped=%d last_color_pass=%llu result=%d format=%d colorspace=%d extent=%ux%u transfer_src=%d pixel_readback=async\n",
+        "[BS4_FSR31] WSI_PRESENT seq=%llu image=%p index=%u mapped=%d last_color_pass=%llu submitted_write=%llu result=%d format=%d colorspace=%d extent=%ux%u transfer_src=%d pixel_readback=async\n",
         (unsigned long long)seq,reinterpret_cast<void*>(t.image),t.index,int(t.mapped),
-        (unsigned long long)t.pass,int(p&&p->pResults?p->pResults[i]:result),
+        (unsigned long long)t.pass,(unsigned long long)t.write,int(p&&p->pResults?p->pResults[i]:result),
         int(t.format),int(t.colorspace),t.extent.width,t.extent.height,
         int(bool(t.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)));
     }
@@ -1074,7 +1092,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_begin_command(
         VkCommandBuffer cb,const VkCommandBufferBeginInfo* info) {
     if (!original_begin_command) return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_begin_command(cb,info);
-    if(status==VK_SUCCESS){bs4_wsi_probe_reset_unsubmitted(cb);bs4_native_compute_reset(cb);bs4_fsr31_temporal_reset_recording(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);post_hud_targets.erase(cb);
+    if(status==VK_SUCCESS){bs4_wsi_probe_reset_unsubmitted(cb);bs4_native_compute_reset(cb);bs4_fsr31_temporal_reset_recording(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);recorded_wsi_writes.erase(cb);post_hud_targets.erase(cb);
         if(submitted_owner==cb){submitted_owner=VK_NULL_HANDLE;submitted_scene={};}}
     return status;
 }
@@ -1082,7 +1100,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_reset_command(
         VkCommandBuffer cb,VkCommandBufferResetFlags flags) {
     if(!original_reset_command)return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_reset_command(cb,flags);
-    if(status==VK_SUCCESS){bs4_native_compute_reset(cb);bs4_fsr31_temporal_reset_recording(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);post_hud_targets.erase(cb);
+    if(status==VK_SUCCESS){bs4_native_compute_reset(cb);bs4_fsr31_temporal_reset_recording(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);recorded_wsi_writes.erase(cb);post_hud_targets.erase(cb);
         if(submitted_owner==cb){submitted_owner=VK_NULL_HANDLE;submitted_scene={};}}
     return status;
 }
@@ -1093,7 +1111,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_free_commands(
         std::lock_guard lock{mutex};
         for(uint32_t i=0;i<count;++i){
             command_scenes.erase(cb[i]);post_hud_targets.erase(cb[i]);
-            recorded_layouts.erase(cb[i]);
+            recorded_layouts.erase(cb[i]);recorded_wsi_writes.erase(cb[i]);
             if(submitted_owner==cb[i]){submitted_owner={};submitted_scene={};}
         }}
     if(original_free_commands)original_free_commands(device,pool,count,cb);
@@ -1295,3 +1313,4 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
     #undef BS4_WRAP
     return bs4_native_compute_wrap(name,bs4_native_scene_wrap(name,proc));
 }
+

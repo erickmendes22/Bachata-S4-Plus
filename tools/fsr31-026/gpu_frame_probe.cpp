@@ -84,12 +84,21 @@ void bs4_probe_image(Bs4GpuFrameProbe& p,VkCommandBuffer cb,VkImage image,VkImag
         r.imageSubresource={depth?VK_IMAGE_ASPECT_DEPTH_BIT:VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
         r.imageOffset={int32_t((size.width-side)*x/2),int32_t((size.height-side)*y/2),0};r.imageExtent={side,side,1};
     }
+    // Multiple intercepted writers may update a selected WSI sample in the same CB.
+    // Preserve transfer WAW ordering for the shared readback slice, including sync validation.
+    if(p.stages&(1u<<stage)){
+        VkMemoryBarrier2 waw{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        waw.srcStageMask=waw.dstStageMask=VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+        waw.srcAccessMask=waw.dstAccessMask=VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        VkDependencyInfo d{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};d.memoryBarrierCount=1;d.pMemoryBarriers=&waw;
+        vkCmdPipelineBarrier2(cb,&d);
+    }
     vkCmdCopyImageToBuffer(cb,image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,p.buffer,tiles,regions.data());
     transition(cb,image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,layout,aspects);
     VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};b.srcStageMask=VK_PIPELINE_STAGE_2_TRANSFER_BIT;
     b.srcAccessMask=VK_ACCESS_2_TRANSFER_WRITE_BIT;b.dstStageMask=VK_PIPELINE_STAGE_2_HOST_BIT;b.dstAccessMask=VK_ACCESS_2_HOST_READ_BIT;
     VkDependencyInfo d{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};d.memoryBarrierCount=1;d.pMemoryBarriers=&b;vkCmdPipelineBarrier2(cb,&d);
-    p.stages|=1u<<stage;p.formats[stage]=format;
+    p.stages|=1u<<stage;p.formats[stage]=format;p.extents[stage]=size;
     if(stage==3)p.compositeImage=image;
 }
 void bs4_probe_resolve(Bs4GpuFrameProbe& p,VkDevice dev){
@@ -118,18 +127,38 @@ void bs4_probe_resolve(Bs4GpuFrameProbe& p,VkDevice dev){
         if(reports>=96||(!unusual&&p.frame>=4&&p.frame%256&&(!saturated||p.frame%16)))return;
         reports++;
     }
-    std::fprintf(stderr,"[BS4_FSR31] GPU_FRAME_PROBE dispatch=%llu camera=%llu stages=0x%x samples=%u history_reset=%u",
+    std::array<char,4096> line{};size_t used=0;
+    auto emit=[&](const char* format,auto... args){
+        if(used>=line.size()-1)return;
+        const int n=std::snprintf(line.data()+used,line.size()-used,format,args...);
+        if(n>0)used+=std::min<size_t>(size_t(n),line.size()-used-1);
+    };
+    emit("[BS4_FSR31] GPU_FRAME_PROBE dispatch=%llu camera=%llu stages=0x%x samples=%u history_reset=%u",
         (unsigned long long)p.frame,(unsigned long long)p.cameraFrame,p.stages,pixels,unsigned(p.historyReset));
     const char* names[]={"native","clone","fsr","ui","motion","depth","post_hud","swapchain"};
-    for(unsigned i=0;i<8;i++)if((i<4||i==6||i==7)&&(p.stages&(1u<<i)))std::fprintf(stderr,
+    for(unsigned i=0;i<8;i++)if((i<4||i==6||i==7)&&(p.stages&(1u<<i)))emit(
         " %s={cyan:%u white:%u red:%u invalid:%u top:%u bottom:%u mean:%.3f,%.3f,%.3f,%.3f}",
         names[i],s[i].cyan,s[i].white,s[i].red,s[i].invalid,s[i].topCyan,s[i].bottomCyan,s[i].r,s[i].g,s[i].b,s[i].a);
-    if(p.stages&16)std::fprintf(stderr," motion={invalid:%u range_x:%.3f,%.3f max_abs_y:%.3f}",s[4].invalid,s[4].min,s[4].max,s[4].maxY);
-    if(p.stages&128)std::fprintf(stderr," swapchain_image=%p",reinterpret_cast<void*>(p.wsiImage));
-    if(p.stages&32)std::fprintf(stderr," depth={invalid:%u range:%.6f,%.6f}",s[5].invalid,s[5].min,s[5].max);
-    std::fprintf(stderr," formats=%d,%d,%d,%d,%d,%d,%d,%d gpu_completed=1\n",int(p.formats[0]),int(p.formats[1]),int(p.formats[2]),int(p.formats[3]),int(p.formats[4]),int(p.formats[5]),int(p.formats[6]),int(p.formats[7]));
+    if(p.stages&16)emit(" motion={invalid:%u range_x:%.3f,%.3f max_abs_y:%.3f}",s[4].invalid,s[4].min,s[4].max,s[4].maxY);
+    if(p.stages&128){
+        emit(" swapchain_image=%p write=%llu present_seq=%llu index=%u final_write_matched=%u present_result=%d",
+            reinterpret_cast<void*>(p.wsiImage),(unsigned long long)p.writeSerial,
+            (unsigned long long)p.presentSequence,p.presentIndex,unsigned(p.finalWriteMatched),int(p.presentResult));
+        const auto* raw=static_cast<const unsigned char*>(p.mapped)+stride*7;
+        const bool bgra=p.formats[7]==VK_FORMAT_B8G8R8A8_UNORM||p.formats[7]==VK_FORMAT_B8G8R8A8_SRGB;
+        const auto size=p.extents[7];
+        for(unsigned y=0;y<3;++y)for(unsigned x=0;x<3;++x){const unsigned n=(y*3+x)*side*side*4;
+            emit(" pixel[%u,%u]=%u,%u,%u,%u raw=%02x%02x%02x%02x",
+                (size.width-side)*x/2,(size.height-side)*y/2,
+                raw[n+(bgra?2:0)],raw[n+1],raw[n+(bgra?0:2)],raw[n+3],raw[n],raw[n+1],raw[n+2],raw[n+3]);
+        }
+    }
+    if(p.stages&32)emit(" depth={invalid:%u range:%.6f,%.6f}",s[5].invalid,s[5].min,s[5].max);
+    emit(" formats=%d,%d,%d,%d,%d,%d,%d,%d gpu_completed=1\n",int(p.formats[0]),int(p.formats[1]),int(p.formats[2]),int(p.formats[3]),int(p.formats[4]),int(p.formats[5]),int(p.formats[6]),int(p.formats[7]));
+    std::fwrite(line.data(),1,used,stderr);
 }
 void bs4_probe_release(Bs4GpuFrameProbe& p,VkDevice dev){
     if(p.mapped)vkUnmapMemory(dev,p.memory);if(p.buffer)vkDestroyBuffer(dev,p.buffer,nullptr);
     if(p.memory)vkFreeMemory(dev,p.memory,nullptr);p={};
 }
+

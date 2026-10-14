@@ -23,6 +23,11 @@ void VKAPI_CALL constants(VkCommandBuffer,VkPipelineLayout,VkShaderStageFlags,ui
 void VKAPI_CALL viewport(VkCommandBuffer,uint32_t first,uint32_t count,const VkViewport* value){assert(first==0&&count==1);actualViewport=*value;viewportCalls++;}
 void VKAPI_CALL viewport_count(VkCommandBuffer,uint32_t count,const VkViewport* value){assert(count==1);actualViewport=*value;viewportCountCalls++;}
 VkResult VKAPI_CALL name(VkDevice,const VkDebugUtilsObjectNameInfoEXT*){return VK_SUCCESS;}
+VkResult VKAPI_CALL create_graphics(VkDevice,VkPipelineCache,uint32_t n,const VkGraphicsPipelineCreateInfo*,const VkAllocationCallbacks*,VkPipeline* out){
+ for(uint32_t i=0;i<n;i++)out[i]=handle<VkPipeline>(81+i);return VK_SUCCESS;
+}
+void VKAPI_CALL bind_pipeline(VkCommandBuffer,VkPipelineBindPoint,VkPipeline){}
+void VKAPI_CALL destroy_pipeline(VkDevice,VkPipeline,const VkAllocationCallbacks*){}
 void VKAPI_CALL destroy_layout(VkDevice,VkPipelineLayout,const VkAllocationCallbacks*){}
 void VKAPI_CALL draw(VkCommandBuffer,uint32_t n,uint32_t i,uint32_t first,uint32_t base){assert(n==30&&i==1&&first==0&&base==0);forwarded++;}
 void VKAPI_CALL indirect(VkCommandBuffer,VkBuffer,VkDeviceSize off,uint32_t count,uint32_t stride){
@@ -127,6 +132,22 @@ int main(){
  assert(bs4_native_scene_writer(colorAtt.imageView,writer)&&writer.sampledCount==0);
  bs4_native_scene_forget_view(colorAtt.imageView);assert(!bs4_native_scene_writer(colorAtt.imageView,writer));
  assert(memory==original&&forwarded==13);
+ // Negative control: a stale movie push-constant layout must not authorize
+ // FSR while a scene pipeline is actually bound, even if constants are compatible.
+ auto create=wrap("vkCreateGraphicsPipelines",&create_graphics);
+ auto bindPipe=wrap("vkCmdBindPipeline",&bind_pipeline);
+ auto destroyPipe=wrap("vkDestroyPipeline",&destroy_pipeline);
+ VkGraphicsPipelineCreateInfo pipelines[2]{};pipelines[0].layout=layout;pipelines[1].layout=handle<VkPipelineLayout>(10);
+ VkPipeline handles[2]{};assert(create({}, {},2,pipelines,nullptr,handles)==VK_SUCCESS);
+ bs4_native_scene_register_pipeline(layout,0x34e8a281);bs4_native_scene_register_pipeline(pipelines[1].layout,0xabcdef01);
+ c(cb,layout,VK_SHADER_STAGE_VERTEX_BIT,0,120,raw.data());assert(bs4_native_scene_ui_boundary(cb));
+ bindPipe(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,handles[1]);assert(!bs4_native_scene_ui_boundary(cb));
+ bindPipe(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,handles[0]);assert(bs4_native_scene_ui_boundary(cb));
+ bindPipe(cb,VK_PIPELINE_BIND_POINT_COMPUTE,handles[1]);assert(bs4_native_scene_ui_boundary(cb));
+ bindPipe(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,handle<VkPipeline>(99));assert(!bs4_native_scene_ui_boundary(cb));
+ destroyPipe({},handles[0],nullptr);bindPipe(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,handles[0]);assert(!bs4_native_scene_ui_boundary(cb));
+ std::cout<<"PASS shader identity follows actual graphics pipeline, not stale push constants; compute does not replace graphics state\n";
  unsetenv("BACHATA_FSR31_INPUT");assert(wrap("vkCmdDraw",&draw)==&draw);
  std::cout<<"PASS native observer: forwarded draws, 864-byte camera, 120-byte raw viewport, depth pairing, finite bounds, unmap, no guest writes\n";
 }
+

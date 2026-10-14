@@ -5,6 +5,7 @@
 #include "gpu_frame_probe.h"
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -32,6 +33,7 @@ void mark_submitted(VkQueue queue, VkCommandBuffer cb,
     auto it=slots.find(cb);
     if(it==slots.end() || it->second.submitted)return;
     auto& slot=it->second;
+    slot.submitted=true; // Original work has already reached this queue: never reset/free it as unsubmitted.
     VkFenceCreateInfo ci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
     if(vkCreateFence(slot.device,&ci,nullptr,&slot.completion)!=VK_SUCCESS) {
         ++capture_failures;
@@ -61,15 +63,18 @@ void mark_submitted(VkQueue queue, VkCommandBuffer cb,
 }
 } // namespace
 
-extern "C" void bs4_wsi_probe_write(VkDevice device,VkPhysicalDevice physical,
+extern "C" void bs4_wsi_probe_write_tagged(VkDevice device,VkPhysicalDevice physical,
         VkCommandBuffer cb,VkImage image,VkImageLayout layout,VkExtent2D extent,
-        VkFormat format) {
+        VkFormat format,uint64_t serial) {
     if(!device||!physical||!cb||!image)return;
     const auto index=event_sequence.fetch_add(1,std::memory_order_relaxed);
-    if(index>=8 && index%64)return;
     std::lock_guard lock{slots_mutex};
     auto it=slots.find(cb);
+#ifdef BS4_FSR31_TEST_HARNESS
+    if(index>=8&&index%64&&std::getenv("BS4_TEST_KEEP_EARLY_WSI_SAMPLE"))return;
+#endif
     if(it==slots.end()) {
+        if(index>=8 && index%64)return;
         if(slots.size()>=8)return;
         it=slots.emplace(cb,Slot{}).first;
         it->second.device=device;
@@ -82,13 +87,15 @@ extern "C" void bs4_wsi_probe_write(VkDevice device,VkPhysicalDevice physical,
     }
     auto& slot=it->second;
     if(slot.submitted||slot.device!=device)return;
+    if(format!=VK_FORMAT_R8G8B8A8_UNORM&&format!=VK_FORMAT_R8G8B8A8_SRGB&&
+       format!=VK_FORMAT_B8G8R8A8_UNORM&&format!=VK_FORMAT_B8G8R8A8_SRGB)return;
     bs4_probe_image(slot.probe,cb,image,layout,extent,format,7);
     if(!(slot.probe.stages&(1u<<7))) {
         release_slot(slot);
         slots.erase(it);
         return;
     }
-    slot.probe.wsiImage=image;
+    slot.probe.wsiImage=image;slot.probe.writeSerial=serial;
     slot.image=image;
     static unsigned shown=0;
     if(shown++<24)std::fprintf(stderr,
@@ -118,7 +125,7 @@ extern "C" void bs4_wsi_probe_poll() {
     std::lock_guard lock{slots_mutex};
     for(auto it=slots.begin();it!=slots.end();) {
         auto& slot=it->second;
-        if(!slot.submitted||!slot.completion||vkGetFenceStatus(slot.device,slot.completion)!=VK_SUCCESS){
+        if(!slot.submitted||!slot.completion||(!slot.probe.presentSequence&&slot.probe.writeSerial)||vkGetFenceStatus(slot.device,slot.completion)!=VK_SUCCESS){
             ++it;continue;
         }
         bs4_probe_resolve(slot.probe,slot.device);
@@ -134,5 +141,19 @@ extern "C" void bs4_wsi_probe_reset_unsubmitted(VkCommandBuffer cb) {
         // and only if there was no successful queue submission.
         release_slot(it->second);
         slots.erase(it);
+    }
+}
+
+
+extern "C" void bs4_wsi_probe_write(VkDevice dev,VkPhysicalDevice physical,VkCommandBuffer cb,
+    VkImage image,VkImageLayout layout,VkExtent2D extent,VkFormat format){
+    bs4_wsi_probe_write_tagged(dev,physical,cb,image,layout,extent,format,0);
+}
+extern "C" void bs4_wsi_probe_present(VkImage image,uint64_t serial,uint64_t seq,uint32_t index,VkResult result){
+    std::lock_guard lock{slots_mutex};
+    for(auto& item:slots){auto& s=item.second;
+        if(!s.submitted||s.image!=image||s.probe.presentSequence)continue;
+        s.probe.presentSequence=seq;s.probe.presentIndex=index;s.probe.presentResult=result;
+        s.probe.finalWriteMatched=s.probe.writeSerial==serial;
     }
 }

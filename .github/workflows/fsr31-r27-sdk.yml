@@ -1,7 +1,7 @@
 name: Validate FSR SDK hooks for existing R27 core025 (no core build)
 on:
   push:
-    branches: [feature/r27-fsr31-existing025, fix/n042-cyan-input]
+    branches: [feature/r27-fsr31-existing025, fix/n042-cyan-input, fix/n050-present-lineage]
     paths:
       - 'tools/fsr31-026/**'
       - '.github/workflows/fsr31-r27-sdk.yml'
@@ -155,8 +155,17 @@ jobs:
           g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include tools/fsr31-026/tests/port_scene_gpu_test.cpp -Lbuild-host -lbachata_fsr31 -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/bs4-fsr-sdk-smoke
           export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name '*lvp*.json' | head -n1)"
           test -n "$VK_ICD_FILENAMES"
-          g++ -std=c++17 -O2 -pthread tools/fsr31-026/wsi_gpu_probe.cpp tools/fsr31-026/gpu_frame_probe.cpp tools/fsr31-026/tests/wsi_probe_gpu_test.cpp -lvulkan -o /tmp/bs4-wsi-probe-test
+          g++ -std=c++17 -O2 -pthread -DBS4_FSR31_TEST_HARNESS=1 tools/fsr31-026/wsi_gpu_probe.cpp tools/fsr31-026/gpu_frame_probe.cpp tools/fsr31-026/tests/wsi_probe_gpu_test.cpp -lvulkan -o /tmp/bs4-wsi-probe-test
           /tmp/bs4-wsi-probe-test 2>&1 | tee wsi-cyan-gpu.txt
+          /tmp/bs4-wsi-probe-test bgra 2>&1 | tee wsi-bgra-gpu.txt
+          grep -q 'swapchain={cyan:576.*mean:0.000,1.000,1.000,1.000' wsi-bgra-gpu.txt
+          /tmp/bs4-wsi-probe-test last-writer 2>&1 | tee wsi-last-writer-gpu.txt
+          grep -q 'swapchain={cyan:576.*mean:0.000,1.000,1.000,1.000' wsi-last-writer-gpu.txt
+          grep -q 'write=9001 present_seq=42 index=2 final_write_matched=1' wsi-last-writer-gpu.txt
+          /tmp/bs4-wsi-probe-test unmatched 2>&1 | tee wsi-unmatched-gpu.txt
+          grep -q 'write=9001 present_seq=42 index=2 final_write_matched=0' wsi-unmatched-gpu.txt
+          BS4_TEST_KEEP_EARLY_WSI_SAMPLE=1 /tmp/bs4-wsi-probe-test last-writer 2>&1 | tee wsi-stale-negative-gpu.txt
+          grep -q 'swapchain={cyan:0.*mean:1.000,1.000,0.000,1.000' wsi-stale-negative-gpu.txt
           grep -q 'WSI_FENCED_PROBE_COMPLETE' wsi-cyan-gpu.txt
           grep -q 'swapchain={cyan:576' wsi-cyan-gpu.txt
           /tmp/bs4-fsr-sdk-smoke | tee port-scene-gpu.txt
@@ -208,6 +217,10 @@ jobs:
         with:
           name: BS4-026-FSR31-GLIBC-BACKEND
           path: |
+            wsi-bgra-gpu.txt
+            wsi-last-writer-gpu.txt
+            wsi-stale-negative-gpu.txt
+            wsi-unmatched-gpu.txt
             build/libbachata_fsr31.so
             sha256.txt
             needed.txt
@@ -235,3 +248,4 @@ jobs:
           retention-days: 7
 
 # n047: validate preserved GPU probes and WSI hooks
+
