@@ -121,7 +121,7 @@ void bs4_probe_resolve(Bs4GpuFrameProbe& p,VkDevice dev){
     std::fprintf(stderr,"[BS4_FSR31] GPU_FRAME_PROBE dispatch=%llu camera=%llu stages=0x%x samples=%u history_reset=%u",
         (unsigned long long)p.frame,(unsigned long long)p.cameraFrame,p.stages,pixels,unsigned(p.historyReset));
     const char* names[]={"native","clone","fsr","ui","motion","depth","post_hud","swapchain"};
-    for(unsigned i=0;i<7;i++)if((i<4||i==6)&&(p.stages&(1u<<i)))std::fprintf(stderr,
+    for(unsigned i=0;i<8;i++)if((i<4||i==6||i==7)&&(p.stages&(1u<<i)))std::fprintf(stderr,
         " %s={cyan:%u white:%u red:%u invalid:%u top:%u bottom:%u mean:%.3f,%.3f,%.3f,%.3f}",
         names[i],s[i].cyan,s[i].white,s[i].red,s[i].invalid,s[i].topCyan,s[i].bottomCyan,s[i].r,s[i].g,s[i].b,s[i].a);
     if(p.stages&16)std::fprintf(stderr," motion={invalid:%u range_x:%.3f,%.3f max_abs_y:%.3f}",s[4].invalid,s[4].min,s[4].max,s[4].maxY);
