@@ -658,6 +658,15 @@ extern "C" void bs4_fsr31_probe_completed(){
     for(auto& f:frames)if(f.submitted&&vkGetFenceStatus(device,f.completion)==VK_SUCCESS)bs4_probe_resolve(f.probe,device);
 }
 
+extern "C" void bs4_fsr31_probe_wsi(VkCommandBuffer cb,VkImage image,VkImageLayout layout,
+        VkExtent2D extent,VkFormat format) {
+    std::lock_guard lock{mutex};
+    for(auto& f:frames)if(f.recorded&&f.recordedBy==cb&&f.probe.pending) {
+        f.probe.wsiImage=image;
+        bs4_probe_image(f.probe,cb,image,layout,extent,format,7);
+        return;
+    }
+}
 extern "C" void bs4_fsr31_probe_post_hud(VkCommandBuffer cb,VkImage image,VkImageLayout layout,VkExtent2D size,VkFormat format){
     std::lock_guard lock{mutex};
     for(auto& f:frames)if(f.recorded&&f.recordedBy==cb&&f.probe.pending&&f.probe.compositeImage==image){
