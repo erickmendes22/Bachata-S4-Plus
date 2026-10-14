@@ -409,7 +409,12 @@ static uint64_t generic_render_impl(
     if(prepare_only)return 1;
     struct RestoreNativeCompute {VkCommandBuffer command;
         explicit RestoreNativeCompute(VkCommandBuffer cb):command(cb){bs4_native_compute_enter_sdk();}
-        ~RestoreNativeCompute(){bs4_native_compute_restore(command);bs4_native_compute_leave_sdk();}} restore_native{cb};
+        ~RestoreNativeCompute(){
+#ifdef BS4_FSR31_TEST_HARNESS
+            if(!std::getenv("BS4_TEST_SKIP_COMPUTE_RESTORE"))
+#endif
+                bs4_native_compute_restore(command);
+            bs4_native_compute_leave_sdk();}} restore_native{cb};
     Frame& f=frames[cursor++%frames.size()];
     transit(cb,f.scene,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     barrier(cb,color.image,VK_IMAGE_ASPECT_COLOR_BIT,color.layout,
@@ -478,7 +483,7 @@ static uint64_t generic_render_impl(
     info.renderSize={internal.width,internal.height};
     info.outputSize={output_extent.width,output_extent.height};
     info.motionVectorScale={1,1};
-    info.jitterOffset=want_port?FfxVkPortableFloat2{-camera.motion.jitter[0],-camera.motion.jitter[1]}:
+    info.jitterOffset=want_port?FfxVkPortableFloat2{camera.motion.jitter[0],camera.motion.jitter[1]}:
                               FfxVkPortableFloat2{0,0};
     const auto now=std::chrono::steady_clock::now();
     float dt=16.6667f;

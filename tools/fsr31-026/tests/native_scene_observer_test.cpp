@@ -10,7 +10,8 @@
 template<class T>T handle(uintptr_t n){return reinterpret_cast<T>(n);}
 template<class T>T wrap(const char* name,T original){return reinterpret_cast<T>(bs4_native_scene_wrap(name,reinterpret_cast<PFN_vkVoidFunction>(original)));}
 std::array<unsigned char,2048> memory{};
-int forwarded=0,viewportCalls=0,viewportCountCalls=0;
+int forwarded=0,viewportCalls=0,viewportCountCalls=0,indirectCalls=0;
+VkViewport indirectViewport{};
 VkViewport actualViewport{};
 bool resourcesReady=true;
 extern "C" bool bs4_fsr31_temporal_resources_ready(VkExtent2D){return resourcesReady;}
@@ -25,11 +26,13 @@ void VKAPI_CALL viewport_count(VkCommandBuffer,uint32_t count,const VkViewport* 
 VkResult VKAPI_CALL name(VkDevice,const VkDebugUtilsObjectNameInfoEXT*){return VK_SUCCESS;}
 void VKAPI_CALL destroy_layout(VkDevice,VkPipelineLayout,const VkAllocationCallbacks*){}
 void VKAPI_CALL draw(VkCommandBuffer,uint32_t n,uint32_t i,uint32_t first,uint32_t base){assert(n==30&&i==1&&first==0&&base==0);forwarded++;}
+void VKAPI_CALL indirect(VkCommandBuffer,VkBuffer,VkDeviceSize,uint32_t,uint32_t){indirectCalls++;indirectViewport=actualViewport;}
 int main(){
  setenv("BACHATA_FSR31_INPUT","port",1);
  auto a=wrap("vkAllocateMemory",&allocate);auto m=wrap("vkMapMemory",&map);
  auto b=wrap("vkBindBufferMemory",&bind);auto p=wrap("vkCmdPushDescriptorSetKHR",&push);
  auto c=wrap("vkCmdPushConstants",&constants);auto v=wrap("vkCmdSetViewport",&viewport);
+ auto di=wrap("vkCmdDrawIndirect",&indirect);auto dix=wrap("vkCmdDrawIndexedIndirect",&indirect);
  auto d=wrap("vkCmdDraw",&draw);auto u=wrap("vkUnmapMemory",&unmap);
  auto vc=wrap("vkCmdSetViewportWithCountEXT",&viewport_count);
  auto named=wrap("vkSetDebugUtilsObjectNameEXT",&name);auto destroyed=wrap("vkDestroyPipelineLayout",&destroy_layout);
@@ -70,6 +73,11 @@ int main(){
  resourcesReady=false;setup();const auto noJitterCalls=viewportCalls;d(cb,30,1,0,0);
  assert(viewportCalls==noJitterCalls&&actualViewport.x==vp.x&&actualViewport.y==vp.y);
  resourcesReady=true;
+ bs4_native_scene_present();bs4_fsr31_port_end_frame();setup();
+ di(cb,buffer,0,1,16);assert(bs4_fsr31_port_camera(cb,depth,{640,360},out));
+ assert(indirectViewport.x==vp.x+out.motion.jitter[0]&&indirectViewport.y==vp.y+out.motion.jitter[1]);
+ assert(actualViewport.x==vp.x&&actualViewport.y==vp.y);
+ dix(cb,buffer,0,1,20);assert(indirectCalls==2&&actualViewport.x==vp.x&&actualViewport.y==vp.y);
  std::array<unsigned char,2048> original=memory;
  // Native viewport field interpretation is validated against the actual
  // recorded viewport, rather than accepting a sign guessed from its size.

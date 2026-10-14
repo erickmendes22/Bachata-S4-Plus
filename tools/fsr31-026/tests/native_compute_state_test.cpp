@@ -6,12 +6,12 @@
 #include <vector>
 template<class T>T h(uintptr_t x){return reinterpret_cast<T>(x);}
 template<class T>T wrap(const char* name,T original){return reinterpret_cast<T>(bs4_native_compute_wrap(name,reinterpret_cast<PFN_vkVoidFunction>(original)));}
-VkPipeline actual{};VkDescriptorSet set{};VkImageView image{};VkBuffer buffer{};uint32_t dynamic{},values[8]{};
+VkPipeline actual{};VkDescriptorSet set{};VkImageView image{};VkBuffer buffer{};uint32_t dynamic{},values[8]{};VkShaderStageFlags lastStages{};
 void VKAPI_CALL pipeline(VkCommandBuffer,VkPipelineBindPoint,VkPipeline p){actual=p;}
 void VKAPI_CALL sets(VkCommandBuffer,VkPipelineBindPoint,VkPipelineLayout,uint32_t,uint32_t count,const VkDescriptorSet* s,uint32_t n,const uint32_t* offsets){assert(count==1);set=*s;if(n)dynamic=*offsets;}
 void VKAPI_CALL push(VkCommandBuffer,VkPipelineBindPoint,VkPipelineLayout,uint32_t,uint32_t count,const VkWriteDescriptorSet* w){
  for(uint32_t i=0;i<count;i++){if(w[i].pImageInfo)image=w[i].pImageInfo[0].imageView;if(w[i].pBufferInfo)buffer=w[i].pBufferInfo[0].buffer;}}
-void VKAPI_CALL constants(VkCommandBuffer,VkPipelineLayout,VkShaderStageFlags,uint32_t offset,uint32_t size,const void* data){std::memcpy(reinterpret_cast<unsigned char*>(values)+offset,data,size);}
+void VKAPI_CALL constants(VkCommandBuffer,VkPipelineLayout,VkShaderStageFlags stages,uint32_t offset,uint32_t size,const void* data){lastStages=stages;std::memcpy(reinterpret_cast<unsigned char*>(values)+offset,data,size);}
 int main(){
  auto p=wrap("vkCmdBindPipeline",&pipeline);auto s=wrap("vkCmdBindDescriptorSets",&sets);auto d=wrap("vkCmdPushDescriptorSetKHR",&push);auto c=wrap("vkCmdPushConstants",&constants);
  const auto cb=h<VkCommandBuffer>(1);const auto layout=h<VkPipelineLayout>(2);auto native=h<VkPipeline>(3);auto nativeSet=h<VkDescriptorSet>(4);uint32_t offset=16;
@@ -29,6 +29,7 @@ int main(){
  bs4_native_compute_restore(cb);bs4_native_compute_leave_sdk();
  assert(actual==native&&set==nativeSet&&image==h<VkImageView>(5)&&buffer==h<VkBuffer>(6)&&dynamic==16);
  for(unsigned i=0;i<8;i++)assert(values[i]==(i==3?55:i+1));
+ c(cb,layout,VK_SHADER_STAGE_ALL,0,32,values);bs4_native_compute_restore(cb);assert(lastStages==VK_SHADER_STAGE_ALL);
  bs4_native_compute_reset(cb);actual={};bs4_native_compute_restore(cb);assert(!actual);
  w[0].pNext=&w[1];d(cb,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,1,w);assert(!bs4_native_compute_can_restore(cb));
  bs4_native_compute_reset(cb);assert(bs4_native_compute_can_restore(cb));

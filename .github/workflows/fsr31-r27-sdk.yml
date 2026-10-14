@@ -158,6 +158,12 @@ jobs:
           /tmp/bs4-fsr-sdk-smoke depth-stencil | tee -a port-scene-gpu.txt
           glslangValidator -V --target-env vulkan1.2 -S comp -o /tmp/native-compute-probe.spv tools/fsr31-026/tests/native_compute_probe.comp
           /tmp/bs4-fsr-sdk-smoke compute-state | tee native-compute-restoration-gpu.txt
+          if BS4_TEST_SKIP_COMPUTE_RESTORE=1 /tmp/bs4-fsr-sdk-smoke compute-state > /tmp/native-no-restore.txt 2>&1; then
+            echo "Native compute probe unexpectedly passed without restoring native bindings"
+            exit 1
+          fi
+          grep 'native compute probe mismatch' /tmp/native-no-restore.txt
+          echo 'PASS negative control: injected AMD work corrupts the next cached native compute dispatch when restoration is disabled (host harness only)' | tee -a native-compute-restoration-gpu.txt
           g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include tools/fsr31-026/tests/r13_composition_gpu_test.cpp -Lbuild-host -lbachata_fsr31 -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/bs4-fsr-sdk-smoke
           /tmp/bs4-fsr-sdk-smoke | tee r13-composition-gpu.txt
           /tmp/bs4-fsr-sdk-smoke shared-target | tee shared-target-preservation-gpu.txt
