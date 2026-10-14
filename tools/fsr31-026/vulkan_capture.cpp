@@ -426,6 +426,20 @@ void scene_rendering_ended(VkCommandBuffer command) {
     }
 }
 } // namespace
+// The temporal renderer runs inside a recording command buffer. It needs
+// the image's state within THAT buffer, not only its last submitted state.
+extern "C" int bs4_fsr31_capture_image_at(VkCommandBuffer cb,
+    VkImageView view, Bs4FsrCaptureImage* out) {
+    if(!bs4_fsr31_capture_image(view,out))return 0;
+    if(!cb)return 1;
+    std::lock_guard lock{mutex};
+    auto it=recorded_layouts.find(cb);
+    if(it!=recorded_layouts.end()) {
+        auto own=it->second.find(out->image);
+        if(own!=it->second.end())out->layout=own->second;
+    }
+    return 1;
+}
 extern "C" int bs4_fsr31_capture_image(VkImageView view, Bs4FsrCaptureImage* out) {
     if (!out || !view) return 0;
     std::lock_guard lock{mutex};
