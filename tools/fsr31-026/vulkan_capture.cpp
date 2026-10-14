@@ -87,12 +87,29 @@ PFN_vkGetDeviceProcAddr next_device_proc_addr() {
     }();
     return original;
 }
-void update_layout(uint32_t count, const VkImageMemoryBarrier2* barriers) {
+void update_layout(VkCommandBuffer cb,uint32_t count, const VkImageMemoryBarrier2* barriers) {
     if (!barriers || !count) return;
     std::lock_guard lock{mutex};
     for (uint32_t i = 0; i < count; ++i) {
         auto it = images.find(barriers[i].image);
         if (it != images.end()) it->second.layout = barriers[i].newLayout;
+        // Compute/transfer passes can overwrite a previously submitted LDR
+        // image without starting any render pass. Retire stale cross-CB
+        // candidates before temporal dispatch (n040 guarded color passes only).
+        if(submitted_owner && submitted_owner!=cb && submitted_scene.color &&
+           (barriers[i].dstAccessMask &
+             (VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT |
+              VK_ACCESS_2_TRANSFER_WRITE_BIT |
+              VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT))) {
+            const auto v=views.find(submitted_scene.color);
+            if(v!=views.end() && v->second.image==barriers[i].image) {
+                submitted_scene={};submitted_owner={};
+                static bool logged=false;
+                if(!logged){logged=true;std::fprintf(stderr,
+                    "[BS4_FSR31] SUBMITTED_LDR_INVALIDATED_OTHER_CB_WRITE command=%p image=%p\\n",
+                    reinterpret_cast<void*>(cb),reinterpret_cast<void*>(barriers[i].image));}
+            }
+        }
     }
 }
 void mirrored_ui_barriers(VkCommandBuffer cb,const VkDependencyInfo* dep,PFN_vkCmdPipelineBarrier2 original) {
@@ -765,7 +782,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_end_rendering(VkCommandBuffer cb) 
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_barrier2(
     VkCommandBuffer cb,const VkDependencyInfo* dep) {
     mirrored_ui_barriers(cb,dep,original_barrier2);
-    if(dep) update_layout(dep->imageMemoryBarrierCount,dep->pImageMemoryBarriers);
+    if(dep) update_layout(cb,dep->imageMemoryBarrierCount,dep->pImageMemoryBarriers);
     if(original_barrier2) original_barrier2(cb,dep);
 }
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_begin_rendering_khr(
@@ -800,7 +817,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_end_rendering_khr(VkCommandBuffer 
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_barrier2_khr(
     VkCommandBuffer cb,const VkDependencyInfo* dep) {
     mirrored_ui_barriers(cb,dep,reinterpret_cast<PFN_vkCmdPipelineBarrier2>(original_barrier2_khr));
-    if(dep)update_layout(dep->imageMemoryBarrierCount,dep->pImageMemoryBarriers);
+    if(dep)update_layout(cb,dep->imageMemoryBarrierCount,dep->pImageMemoryBarriers);
     if(original_barrier2_khr)original_barrier2_khr(cb,dep);
 }
 // Vulkan-hpp may resolve device commands through vkGetInstanceProcAddr,
