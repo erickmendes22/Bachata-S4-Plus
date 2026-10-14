@@ -46,6 +46,7 @@ struct SwapchainDiagnostics {
     VkExtent2D extent{};
     VkImageUsageFlags usage{};
     VkSharingMode sharing=VK_SHARING_MODE_EXCLUSIVE;
+    VkDevice device{};
 };
 std::unordered_map<VkSwapchainKHR,SwapchainDiagnostics> present_swap_metadata;
 std::unordered_map<VkCommandBuffer,PresentTrace> present_active_color;
@@ -57,7 +58,12 @@ void present_trace_begin(VkCommandBuffer cb,const VkRenderingInfo* info) {
     auto v=views.find(info->pColorAttachments[0].imageView);
     if(v!=views.end())present_active_color[cb]={v->second.image,info->pColorAttachments[0].imageView,++present_serial};
 }
-extern "C" void bs4_fsr31_probe_wsi(VkCommandBuffer,VkImage,VkImageLayout,VkExtent2D,VkFormat);
+extern "C" void bs4_wsi_probe_write(VkDevice,VkPhysicalDevice,VkCommandBuffer,VkImage,VkImageLayout,VkExtent2D,VkFormat);
+extern "C" void bs4_wsi_probe_submitted1(VkQueue,uint32_t,const VkSubmitInfo*,PFN_vkQueueSubmit);
+extern "C" void bs4_wsi_probe_submitted2(VkQueue,uint32_t,const VkSubmitInfo2*,PFN_vkQueueSubmit2);
+extern "C" void bs4_wsi_probe_poll();
+extern "C" void bs4_wsi_probe_reset_unsubmitted(VkCommandBuffer);
+extern "C" VkPhysicalDevice bs4_fsr31_physical_device();
 void observe_wsi_write(VkCommandBuffer cb,VkImage image,VkImageLayout layout) {
     SwapchainDiagnostics meta{};bool found=false;
     {
@@ -77,7 +83,7 @@ void observe_wsi_write(VkCommandBuffer cb,VkImage image,VkImageLayout layout) {
         "[BS4_FSR31] WSI_WRITE image=%p cb=%p layout=%d format=%d transfer_src=%d\\n",
         reinterpret_cast<void*>(image),reinterpret_cast<void*>(cb),
         int(layout),int(meta.format),int(readable));
-    if(readable)bs4_fsr31_probe_wsi(cb,image,layout,meta.extent,meta.format);
+    if(readable)bs4_wsi_probe_write(meta.device,bs4_fsr31_physical_device(),cb,image,layout,meta.extent,meta.format);
 }
 void present_trace_end(VkCommandBuffer cb) {
     VkImage image=VK_NULL_HANDLE;
@@ -943,6 +949,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_queue_submit(VkQueue q,uint32_
         observe_submission(q,count,infos);
         if(infos)for(uint32_t i=0;i<count;++i)for(uint32_t n=0;n<infos[i].commandBufferCount;++n)
             bs4_fsr31_temporal_submitted(q,infos[i].pCommandBuffers[n],original_queue_submit,nullptr);
+        bs4_wsi_probe_submitted1(q,count,infos,original_queue_submit);
     }
     return result;
 }
@@ -954,6 +961,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_queue_submit2(VkQueue q,uint32
         observe_submission2(q,count,infos);
         if(infos)for(uint32_t i=0;i<count;++i)for(uint32_t n=0;n<infos[i].commandBufferInfoCount;++n)
             bs4_fsr31_temporal_submitted(q,infos[i].pCommandBufferInfos[n].commandBuffer,nullptr,original_queue_submit2);
+        bs4_wsi_probe_submitted2(q,count,infos,original_queue_submit2);
     }
     return result;
 }
@@ -986,16 +994,28 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_swap_create(
         VkDevice device,const VkSwapchainCreateInfoKHR* info,
         const VkAllocationCallbacks* alloc,VkSwapchainKHR* out) {
     if(!original_swap_create)return VK_ERROR_INITIALIZATION_FAILED;
-    const VkResult result=original_swap_create(device,info,alloc,out);
+    VkSwapchainCreateInfoKHR local{};
+    const VkSwapchainCreateInfoKHR* requested=info;
+    if(info) {
+        const auto physical=bs4_fsr31_physical_device();
+        VkSurfaceCapabilitiesKHR caps{};
+        if(physical && vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical,info->surface,&caps)==VK_SUCCESS &&
+           (caps.supportedUsageFlags&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)) {
+            local=*info;
+            local.imageUsage|=VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            requested=&local;
+        }
+    }
+    const VkResult result=original_swap_create(device,requested,alloc,out);
     if(result==VK_SUCCESS&&info&&out){
         std::lock_guard lock{mutex};
         present_swap_metadata[*out]={info->imageFormat,info->imageColorSpace,
-            info->imageExtent,info->imageUsage,info->imageSharingMode};
+            requested->imageExtent,requested->imageUsage,requested->imageSharingMode,device};
         std::fprintf(stderr,
             "[BS4_FSR31] WSI_IMAGE_PROPERTIES swap=%p format=%d colorspace=%d extent=%ux%u usage=0x%x transfer_src=%u sharing=%d\\n",
             reinterpret_cast<void*>(*out),int(info->imageFormat),
             int(info->imageColorSpace),info->imageExtent.width,info->imageExtent.height,
-            unsigned(info->imageUsage),unsigned(bool(info->imageUsage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)),
+            unsigned(requested->imageUsage),unsigned(bool(requested->imageUsage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)),
             int(info->imageSharingMode));
     }
     return result;
@@ -1030,6 +1050,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_present(VkQueue q,const VkPres
       }
     }
     VkResult result=original_present(q,p);
+    bs4_wsi_probe_poll();
     if(seq<=8192)for(size_t i=0;i<hits.size();++i){
       const auto& t=hits[i];
       std::fprintf(stderr,
@@ -1043,6 +1064,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_present(VkQueue q,const VkPres
 }
 extern "C" void bs4_fsr31_capture_present() {
     bs4_fsr31_probe_completed();
+    bs4_wsi_probe_poll();
     std::lock_guard lock{mutex};
     submitted_scene={};submitted_owner={};submitted_queue={};multiple_queues=false;
 }
@@ -1050,7 +1072,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_begin_command(
         VkCommandBuffer cb,const VkCommandBufferBeginInfo* info) {
     if (!original_begin_command) return VK_ERROR_INITIALIZATION_FAILED;
     const auto status=original_begin_command(cb,info);
-    if(status==VK_SUCCESS){bs4_native_compute_reset(cb);bs4_fsr31_temporal_reset_recording(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);post_hud_targets.erase(cb);
+    if(status==VK_SUCCESS){bs4_wsi_probe_reset_unsubmitted(cb);bs4_native_compute_reset(cb);bs4_fsr31_temporal_reset_recording(cb);bs4_native_ui_reset(cb);bs4_native_scene_reset(cb);std::lock_guard lock{mutex};command_scenes.erase(cb);recorded_layouts.erase(cb);post_hud_targets.erase(cb);
         if(submitted_owner==cb){submitted_owner=VK_NULL_HANDLE;submitted_scene={};}}
     return status;
 }
