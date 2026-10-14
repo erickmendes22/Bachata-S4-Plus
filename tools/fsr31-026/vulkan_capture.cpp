@@ -356,6 +356,11 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
         if(it!=command_scenes.end()&&it->second.ready&&
            it->second.color==completed.color&&it->second.depth==completed.depth)
             it->second={};
+        // Never reuse a previously submitted scene from a different CB.
+        if(submitted_scene.color==completed.color&&
+           submitted_scene.depth==completed.depth){
+            submitted_scene={};submitted_owner={};
+        }
     }
     if(!pre_ui_dispatch_logged){
         pre_ui_dispatch_logged=true;
