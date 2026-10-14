@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+// Cross-command-buffer test preserves actual submission order; no synthetic camera handoff.
 // Actual camera observer -> R13 pre-UI boundary -> AMD dispatch -> original
 // guest UI attachment. GPU clears stand in for scene/HUD draws in this test;
 // it does not execute Bloodborne or prove stability on Adreno.
