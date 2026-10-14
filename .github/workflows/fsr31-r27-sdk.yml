@@ -163,6 +163,7 @@ jobs:
           g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include tools/fsr31-026/tests/r13_composition_gpu_test.cpp -Lbuild-host -lbachata_fsr31 -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/bs4-fsr-sdk-smoke
           /tmp/bs4-fsr-sdk-smoke 2>&1 | tee r13-composition-gpu.txt
           grep -q "GPU_FRAME_PROBE.*stages=0x3f.*native={cyan:0.*clone={cyan:0.*fsr={cyan:0.*ui={cyan:0.*gpu_completed=1" r13-composition-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke patterned-scene 2>&1 | tee patterned-scene-gpu.txt
           /tmp/bs4-fsr-sdk-smoke shared-target | tee shared-target-preservation-gpu.txt
           /tmp/bs4-fsr-sdk-smoke run-scaled-ui | tee native-run-scaled-ui-gpu.txt
           /tmp/bs4-fsr-sdk-smoke owned-ui | tee automatic-native-ui-gpu.txt
@@ -201,6 +202,7 @@ jobs:
             symbols.txt
             port-scene-gpu.txt
             r13-composition-gpu.txt
+            patterned-scene-gpu.txt
             shared-target-preservation-gpu.txt
             native-run-scaled-ui-gpu.txt
             automatic-native-ui-gpu.txt
