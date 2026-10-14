@@ -7,7 +7,7 @@
 #include <cstring>
 namespace {
 constexpr uint32_t side=8,tiles=9,pixels=side*side*tiles;
-constexpr VkDeviceSize stride=pixels*8,total=stride*7;
+constexpr VkDeviceSize stride=pixels*8,total=stride*8;
 unsigned reports=0;
 void transition(VkCommandBuffer cb,VkImage image,VkImageLayout from,VkImageLayout to,VkImageAspectFlags aspects){
     if(from==to)return;
@@ -67,7 +67,7 @@ void bs4_probe_begin(Bs4GpuFrameProbe& p,VkDevice dev,VkPhysicalDevice physical,
     p.frame=frame;p.cameraFrame=camera;p.pending=true;
 }
 void bs4_probe_image(Bs4GpuFrameProbe& p,VkCommandBuffer cb,VkImage image,VkImageLayout layout,VkExtent2D size,VkFormat format,unsigned stage){
-    if(!p.pending||stage>=7||!image||size.width<side||size.height<side)return;
+    if(!p.pending||stage>=8||!image||size.width<side||size.height<side)return;
     const bool fp16=format==VK_FORMAT_R16G16B16A16_SFLOAT;
     const bool motion=stage==4&&format==VK_FORMAT_R16G16_SFLOAT;
     const bool depth=stage==5&&(format==VK_FORMAT_D32_SFLOAT||format==VK_FORMAT_D32_SFLOAT_S8_UINT);
@@ -93,10 +93,10 @@ void bs4_probe_resolve(Bs4GpuFrameProbe& p,VkDevice dev){
     p.pending=false;
     if(!p.coherent){VkMappedMemoryRange r{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};r.memory=p.memory;r.size=VK_WHOLE_SIZE;
         if(vkInvalidateMappedMemoryRanges(dev,1,&r)!=VK_SUCCESS)return;}
-    Summary s[7]{};bool unusual=false,saturated=false;
-    for(unsigned i=0;i<7;i++)if(p.stages&(1u<<i)){
+    Summary s[8]{};bool unusual=false,saturated=false;
+    for(unsigned i=0;i<8;i++)if(p.stages&(1u<<i)){
         const auto* data=static_cast<const unsigned char*>(p.mapped)+stride*i;
-        if(i<4||i==6)s[i]=summarize(data,i==1);
+        if(i<4||i==6||i==7s[i]=summarize(data,i==1);
         else for(unsigned n=0;n<pixels;n++){
             float x{},y{};
             if(i==4){uint16_t h[2]{};std::memcpy(h,data+n*4,4);x=half(h[0]);y=half(h[1]);}
@@ -105,19 +105,20 @@ void bs4_probe_resolve(Bs4GpuFrameProbe& p,VkDevice dev){
             s[i].min=std::min(s[i].min,x);s[i].max=std::max(s[i].max,x);s[i].maxY=std::max(s[i].maxY,std::abs(y));
         }
         unusual|=s[i].cyan>pixels/10||s[i].invalid;
-        saturated|=(i<4||i==6)&&s[i].r>.98&&s[i].g>.98&&s[i].b<.75;
+        saturated|=(i<4||i==6||i==7)&&s[i].r>.98&&s[i].g>.98&&s[i].b<.75;
     }
     if(reports>=96||(!unusual&&p.frame>=4&&p.frame%256&&(!saturated||p.frame%16)))return;
     reports++;
     std::fprintf(stderr,"[BS4_FSR31] GPU_FRAME_PROBE dispatch=%llu camera=%llu stages=0x%x samples=%u history_reset=%u",
         (unsigned long long)p.frame,(unsigned long long)p.cameraFrame,p.stages,pixels,unsigned(p.historyReset));
-    const char* names[]={"native","clone","fsr","ui","motion","depth","post_hud"};
+    const char* names[]={"native","clone","fsr","ui","motion","depth","post_hud","swapchain"};
     for(unsigned i=0;i<7;i++)if((i<4||i==6)&&(p.stages&(1u<<i)))std::fprintf(stderr,
         " %s={cyan:%u white:%u red:%u invalid:%u top:%u bottom:%u mean:%.3f,%.3f,%.3f,%.3f}",
         names[i],s[i].cyan,s[i].white,s[i].red,s[i].invalid,s[i].topCyan,s[i].bottomCyan,s[i].r,s[i].g,s[i].b,s[i].a);
     if(p.stages&16)std::fprintf(stderr," motion={invalid:%u range_x:%.3f,%.3f max_abs_y:%.3f}",s[4].invalid,s[4].min,s[4].max,s[4].maxY);
+    if(p.stages&128)std::fprintf(stderr," swapchain_image=%p",reinterpret_cast<void*>(p.wsiImage));
     if(p.stages&32)std::fprintf(stderr," depth={invalid:%u range:%.6f,%.6f}",s[5].invalid,s[5].min,s[5].max);
-    std::fprintf(stderr," formats=%d,%d,%d,%d,%d,%d,%d gpu_completed=1\n",int(p.formats[0]),int(p.formats[1]),int(p.formats[2]),int(p.formats[3]),int(p.formats[4]),int(p.formats[5]),int(p.formats[6]));
+    std::fprintf(stderr," formats=%d,%d,%d,%d,%d,%d,%d,%d gpu_completed=1\n",int(p.formats[0]),int(p.formats[1]),int(p.formats[2]),int(p.formats[3]),int(p.formats[4]),int(p.formats[5]),int(p.formats[6]),int(p.formats[7]));
 }
 void bs4_probe_release(Bs4GpuFrameProbe& p,VkDevice dev){
     if(p.mapped)vkUnmapMemory(dev,p.memory);if(p.buffer)vkDestroyBuffer(dev,p.buffer,nullptr);
