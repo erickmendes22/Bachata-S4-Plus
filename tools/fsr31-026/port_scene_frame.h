@@ -30,3 +30,6 @@ extern "C" void bs4_fsr31_port_invalidate_after_gpu_drain();
 void bs4_fsr31_port_end_frame();
 bool bs4_fsr31_port_camera(VkCommandBuffer,VkImageView,VkExtent2D,
                            Bs4PortCameraDispatch&);
+// A cross-CB motion handoff requires a previously submitted source.
+void bs4_fsr31_port_authorize_submitted(VkCommandBuffer scene,
+    VkCommandBuffer ui,VkImageView depth);
