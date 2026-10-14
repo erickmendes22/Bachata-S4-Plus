@@ -51,7 +51,14 @@ int main(){
  VkImageView found{};VkExtent2D size{};Bs4PortCameraDispatch out{};
  setup();d(cb,30,1,0,0);assert(bs4_native_scene_camera(cb,&found,&size));assert(found==depth&&size.width==640&&size.height==360);
  assert(!bs4_fsr31_port_camera(cb,depth,size,out));
+ // The native 3D camera belongs to the whole command buffer/frame.
+ // A later single-color LDR pass can omit the G-buffer depth attachment.
+ bs4_native_scene_end(cb);
+ VkRenderingInfo ldr=info;ldr.colorAttachmentCount=1;ldr.pDepthAttachment=nullptr;
+ bs4_native_scene_begin(cb,&ldr);
+ assert(bs4_native_scene_camera(cb,&found,&size)&&found==depth&&size.width==640);
  bs4_native_scene_end(cb);bs4_native_scene_present();bs4_fsr31_port_end_frame();
+ assert(!bs4_native_scene_camera(cb,&found,&size));
  setup();d(cb,30,1,0,0);assert(bs4_fsr31_port_camera(cb,depth,{640,360},out));
  assert(!out.reset&&out.motion.proj[1]==-3&&out.motion.jitter[0]==-.25f);
  assert(std::abs(out.motion.jitter[1]-1.f/6.f)<1e-6f);
