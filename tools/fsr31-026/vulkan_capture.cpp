@@ -235,14 +235,15 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
         // never issue Vulkan commands based on unproven inter-CB ordering.
         if(port&&!bs4_native_scene_ui_boundary(cmd))return false;
         if(w<1280||h<700)return false;
+        ScenePass eligible=stage;
         // A scene on a different CB is eligible only after real submission
         // to the one verified graphics queue. A merely recorded/ended source
         // is NOT synchronized with this UI command buffer.
-        if((!stage.ready||!stage.color||!stage.depth||stage.color==view)&&
+        if((!eligible.ready||!eligible.color||!eligible.depth||eligible.color==view)&&
            submitted_owner&&submitted_owner!=cmd&&submitted_scene.ready&&
            submitted_scene.color&&submitted_scene.depth&&!multiple_queues&&
            bs4_fsr31_single_graphics_queue()) {
-            stage=submitted_scene;
+            eligible=submitted_scene;
             static bool loggedCross=false;
             if(!loggedCross) {
                 loggedCross=true;
@@ -252,7 +253,7 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
                     reinterpret_cast<void*>(submitted_queue));
             }
         }
-        if(!stage.ready||!stage.color||!stage.depth||stage.color==view)
+        if(!eligible.ready||!eligible.color||!eligible.depth||eligible.color==view)
             return false;
         const auto dst_v=views.find(view);
         if(dst_v==views.end())return false;
@@ -265,7 +266,7 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
         dst_previous_layout=dst_i->second.layout;
         dst_w=dst_i->second.size.width;
         dst_h=dst_i->second.size.height;
-        completed=stage;
+        completed=eligible;
     }
     if (!pre_ui_eligible_logged) {
         pre_ui_eligible_logged=true;
@@ -660,7 +661,10 @@ extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_free_commands(
     if(cb&&count){
         for(uint32_t i=0;i<count;++i){bs4_native_ui_reset(cb[i]);bs4_native_scene_reset(cb[i]);}
         std::lock_guard lock{mutex};
-        for(uint32_t i=0;i<count;++i)command_scenes.erase(cb[i]);}
+        for(uint32_t i=0;i<count;++i){
+            command_scenes.erase(cb[i]);
+            if(submitted_owner==cb[i]){submitted_owner={};submitted_scene={};}
+        }}
     if(original_free_commands)original_free_commands(device,pool,count,cb);
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image(
@@ -677,7 +681,13 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image(
 extern "C" VKAPI_ATTR void VKAPI_CALL bs4_cap_destroy_image(
     VkDevice dev,VkImage img,const VkAllocationCallbacks* ac) {
     bs4_native_ui_release(img);
-    {std::lock_guard lock{mutex}; images.erase(img);}
+    {std::lock_guard lock{mutex};
+        if(submitted_scene.color){
+            const auto v=views.find(submitted_scene.color);
+            if(v!=views.end()&&v->second.image==img){submitted_owner={};submitted_scene={};}
+        }
+        images.erase(img);
+    }
     if(original_destroy_image) original_destroy_image(dev,img,ac);
 }
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_create_image_view(
