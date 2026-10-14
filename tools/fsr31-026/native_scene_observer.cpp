@@ -28,7 +28,7 @@ struct DrawState {
     std::array<float,4> raw{};
     std::array<unsigned char,120> pushRaw{};
     VkShaderStageFlags pushStages{};
-    bool rawValid{},inside{},haveCamera{};
+    bool rawValid{},inside{},haveCamera{},cameraLatched{};
     VkViewport viewport{};
     bool viewportValid{},viewportWithCount{};
     VkPipelineLayout graphicsLayout{};
@@ -116,7 +116,7 @@ void observe_draw(VkCommandBuffer cb) {
                 constants.data(),sizeof(constants),
                 std::copysign(1.f,d.raw[2]),std::copysign(1.f,d.raw[3]),0.f,0.f};
             if(!bs4_fsr31_port_scene(&f))continue;
-            d.haveCamera=true;d.cameraDepth=d.depth;
+            d.haveCamera=true;d.cameraLatched=true;d.cameraDepth=d.depth;
             d.cameraSize={camera.width,camera.height};d.cameraArea=d.area;d.constants=constants;
             d.cameraXSign=f.viewportXSign;d.cameraYSign=f.viewportYSign;
             static bool first=true;
@@ -341,7 +341,11 @@ void bs4_native_scene_present() {
 bool bs4_native_scene_camera(VkCommandBuffer cb,VkImageView* depth,VkExtent2D* size) {
     if(!depth||!size)return false;
     std::lock_guard lock{guard};const auto it=commands.find(cb);
-    if(it==commands.end()||!it->second.haveCamera)return false;
+    // The camera is captured during the multi-target G-buffer pass.
+    // The following LDR 640x360 scene pass often uses no depth attachment,
+    // so haveCamera is invalidated for *current* geometry; keep its last
+    // proven camera for this command buffer until reset/present.
+    if(it==commands.end()||!it->second.cameraLatched)return false;
     *depth=it->second.cameraDepth;*size=it->second.cameraSize;return true;
 }
 extern "C" PFN_vkVoidFunction bs4_native_scene_wrap(const char* name,PFN_vkVoidFunction proc) {
