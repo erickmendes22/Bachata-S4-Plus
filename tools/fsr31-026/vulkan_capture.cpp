@@ -3,6 +3,7 @@
 // hashes, no Mesa/Turnip private memory-layout reads.
 #include "vulkan_capture.h"
 #include "native_scene_observer.h"
+#include "port_scene_frame.h"
 #include "native_ui_targets.h"
 extern "C" int bs4_fsr31_owner_requested();
 #include <cstdlib>
@@ -179,6 +180,7 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     const uint32_t h=info->renderArea.extent.height;
     const auto view=info->pColorAttachments[0].imageView;
     ScenePass completed{};
+    VkCommandBuffer accepted_origin{};
     VkImage dst=VK_NULL_HANDLE, src=VK_NULL_HANDLE;
     const VkImageLayout dst_layout=info->pColorAttachments[0].imageLayout;
     VkImageLayout dst_previous_layout=VK_IMAGE_LAYOUT_UNDEFINED;
@@ -244,6 +246,7 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
            submitted_scene.color&&submitted_scene.depth&&!multiple_queues&&
            bs4_fsr31_single_graphics_queue()) {
             eligible=submitted_scene;
+            accepted_origin=submitted_owner;
             static bool loggedCross=false;
             if(!loggedCross) {
                 loggedCross=true;
@@ -280,6 +283,10 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
     // may still be 1080p until the guest's UI resolution is independently
     // decoupled; resample the upscaled background without changing HUD draws.
     const VkExtent2D upscale_extent{1280,720};
+    // Reuse the original G-buffer's real motion, but only after its source
+    // CB was successfully submitted on the sole graphics queue.
+    if(accepted_origin)
+        bs4_fsr31_port_authorize_submitted(accepted_origin,cmd,completed.depth);
     VkImage upscaled=VK_NULL_HANDLE;
     if(!bs4_fsr31_pre_ui_dispatch(cmd,completed.color,completed.depth,
                                     completed.extent,upscale_extent,&upscaled)||!upscaled)
