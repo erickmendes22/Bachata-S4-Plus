@@ -27,8 +27,22 @@
     "maximumReadbackAllocations": 24
   },
   "crashRootCauseProven": false,
-  "libraryStatus": "saved",
+  "libraryStatus": "withdrawn after confirmed device crash",
   "libraryFileId": "libfile_130ab9fd67f8819197a26575d08a32bf",
   "libraryBackingFileId": "file_00000000230482309a897b8c857d587d",
-  "localMetadataApplied": true
+  "localMetadataApplied": true,
+  "deviceResult": {
+    "diagnosticId": "0FCC8FD0",
+    "result": "failed",
+    "userRequestedStop": false,
+    "guestPanic": "DLRegularHeap.cpp(710): improper or already freed block",
+    "guestFaultOffset": "eboot.bin+0x20b56d2",
+    "fsrEnabled": false,
+    "sdkAttachmentSucceeded": false,
+    "sdkAttachError": -2,
+    "realTemporalDispatchObserved": false,
+    "gpuProbeCount": 0,
+    "samePanicAsN051CleanInstall": true,
+    "rootCauseProven": false
+  }
 }
