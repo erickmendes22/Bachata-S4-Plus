@@ -158,6 +158,8 @@ jobs:
           /tmp/bs4-fsr-sdk-smoke abandon-recording | tee abandoned-recording-gpu.txt
           /tmp/bs4-fsr-sdk-smoke skip-temporal 2>&1 | tee skipped-temporal-gpu.txt
           grep -q 'HISTORY_RESET_AFTER_SKIPPED_DISPATCH previous=3 current=5' skipped-temporal-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke record-failure 2>&1 | tee record-failure-gpu.txt
+          grep -q 'PASS partially recorded SDK failure retains resources' record-failure-gpu.txt
           /tmp/bs4-fsr-sdk-smoke quality-1x | tee -a port-scene-gpu.txt
           /tmp/bs4-fsr-sdk-smoke depth-stencil | tee -a port-scene-gpu.txt
           g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include tools/fsr31-026/tests/r13_composition_gpu_test.cpp -Lbuild-host -lbachata_fsr31 -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/bs4-fsr-sdk-smoke
@@ -214,6 +216,7 @@ jobs:
             automatic-native-ui-gpu.txt
             abandoned-recording-gpu.txt
             skipped-temporal-gpu.txt
+            record-failure-gpu.txt
             depth-access-gpu.txt
             depth-clear-gpu.txt
             partial-same-layout-gpu.txt

@@ -453,6 +453,9 @@ static uint64_t generic_render_impl(
         ~RestoreNativeCompute(){bs4_native_compute_restore(cb);bs4_native_compute_leave_sdk();}
     } restore{cb};
     Frame& f=*available;
+    // Copies/motion/probes already record GPU work before AMD can fail.
+    // Reserve the slot now, even if the caller must take the native fallback.
+    f.recordedBy=cb;f.recorded=true;
     bs4_probe_begin(f.probe,device,physical,frame_id,want_port?camera.frameId:0);
     transit(cb,f.scene,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     barrier(cb,color.image,VK_IMAGE_ASPECT_COLOR_BIT,color.layout,
@@ -549,8 +552,14 @@ static uint64_t generic_render_impl(
         (unsigned long long)last_temporal_camera,(unsigned long long)camera.frameId);}
     f.probe.historyReset=info.reset;
     info.frameId=frame_id++;
-    const auto result=ffxVkPortableUpscaleContextRecordDispatch(fsr,&info);
+    auto result=ffxVkPortableUpscaleContextRecordDispatch(fsr,&info);
+#ifdef BS4_FSR31_TEST_HARNESS
+    // Fail after real commands were recorded: exercise partial-recording
+    // ownership, not a validation failure before any GPU work exists.
+    if(result==FFX_VK_PORTABLE_OK&&std::getenv("BS4_TEST_FAIL_AFTER_FSR_RECORD"))result=FFX_VK_PORTABLE_ERROR_INVALID_ARGUMENT;
+#endif
     if(result!=FFX_VK_PORTABLE_OK) {
+        abandoned_history=true;
         if(!once_logged) {
             std::fprintf(stderr,"[BS4_FSR31] FSR3 dispatch failed=%d\n",int(result));
             once_logged=true;

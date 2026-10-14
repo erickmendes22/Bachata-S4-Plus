@@ -12,7 +12,12 @@
 extern "C" int bs4_fsr31_attach(void*,void*,VkDevice,void*,uint32_t);
 extern "C" uint64_t bs4_fsr31_generic_render(const FfxVkPortableDeviceInfo*,VkCommandBuffer,VkImageView,VkExtent2D,VkExtent2D,int,int,int,VkImageView);
 extern "C" VkImage bs4_fsr31_output_image(VkImageView);
-static unsigned validationErrors=0;
+static unsigned validationErrors=0,completionMarkers=0;
+extern "C" PFN_vkVoidFunction bs4_fsr31_wrap_vulkan_proc(const char*,PFN_vkVoidFunction);
+static VkResult VKAPI_CALL originalSubmitCounted(VkQueue q,uint32_t count,const VkSubmitInfo* info,VkFence fence){
+ if(!count&&fence)completionMarkers++;
+ return vkQueueSubmit(q,count,info,fence);
+}
 static VKAPI_ATTR VkBool32 VKAPI_CALL portDebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,VkDebugUtilsMessageTypeFlagsEXT,const VkDebugUtilsMessengerCallbackDataEXT* data,void*) {
  if(severity&VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT){validationErrors++;std::fprintf(stderr,"VALIDATION: %s\n",data->pMessage);}return VK_FALSE;
 }
@@ -23,6 +28,7 @@ static void layout(VkCommandBuffer cb,VkImage image,VkImageAspectFlags aspect,Vk
 }
 int main(int argc,char** argv){
  setenv("BS4_FSR31_TEST_OWNER","025",1);
+ const bool recordFailure=argc>1&&std::strcmp(argv[1],"record-failure")==0;
  const bool skip=argc>1&&std::strcmp(argv[1],"skip-temporal")==0;
  const bool abandon=argc>1&&std::strcmp(argv[1],"abandon-recording")==0;
  const bool quality=argc>1&&std::strcmp(argv[1],"quality-1x")==0;
@@ -41,6 +47,7 @@ int main(int argc,char** argv){
  auto createDevice=(PFN_vkCreateDevice)vkGetInstanceProcAddr(instance,"vkCreateDevice");check(createDevice(choice.device,&dci,nullptr,&device));assert(bs4_fsr31_attach((void*)1,(void*)1,device,nullptr,3)==0);
  VkQueue queue{};vkGetDeviceQueue(device,choice.queueFamily,0,&queue);
  auto hookedSubmit=(PFN_vkQueueSubmit)vkGetDeviceProcAddr(device,"vkQueueSubmit");assert(hookedSubmit);
+ if(recordFailure)hookedSubmit=reinterpret_cast<PFN_vkQueueSubmit>(bs4_fsr31_wrap_vulkan_proc("vkQueueSubmit",reinterpret_cast<PFN_vkVoidFunction>(&originalSubmitCounted)));
  trackedBarrier=(PFN_vkCmdPipelineBarrier2)vkGetDeviceProcAddr(device,"vkCmdPipelineBarrier2");
  auto makeImage=(PFN_vkCreateImage)vkGetDeviceProcAddr(device,"vkCreateImage");auto makeView=(PFN_vkCreateImageView)vkGetDeviceProcAddr(device,"vkCreateImageView");
  TestImage color{},depth{};VkImageView cv{},dv{};
@@ -61,8 +68,11 @@ int main(int argc,char** argv){
   camera[52]=2;camera[57]=3;camera[62]=1.0001f;camera[63]=-.1f;
   Bs4PortSceneFrame handoff{sizeof(handoff),1,frame+1,7,cb,dv,5,{1920,1080},camera.data(),sizeof(camera),1,-1,0,0};assert(bs4_fsr31_port_scene(&handoff));
   FfxVkPortableDeviceInfo owned{};owned.structSize=sizeof(owned);owned.instance=instance;owned.physicalDevice=choice.device;owned.device=device;owned.queue=queue;owned.queueFamilyIndex=choice.queueFamily;owned.getDeviceProcAddr=vkGetDeviceProcAddr;owned.synchronization2Enabled=VK_TRUE;owned.shaderStorageImageWriteWithoutFormatEnabled=VK_TRUE;
+  if(recordFailure&&frame==2)setenv("BS4_TEST_FAIL_AFTER_FSR_RECORD","1",1);
+  const auto beforeMarkers=completionMarkers;
   const auto result=skip&&frame==3?uint64_t(0):bs4_fsr31_generic_render(&owned,cb,cv,{width,height},{1280,720},4,0,1,dv);
-  if(!frame||(skip&&frame==3)){assert(!result);check(vkEndCommandBuffer(cb));VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cb;check(hookedSubmit(queue,1,&submit,nullptr));check(vkQueueWaitIdle(queue));sourceLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;bs4_fsr31_port_end_frame();continue;}
+  if(recordFailure&&frame==2)unsetenv("BS4_TEST_FAIL_AFTER_FSR_RECORD");
+  if(!frame||(skip&&frame==3)||(recordFailure&&frame==2)){assert(!result);check(vkEndCommandBuffer(cb));VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cb;check(hookedSubmit(queue,1,&submit,nullptr));check(vkQueueWaitIdle(queue));if(recordFailure&&frame==2){assert(completionMarkers==beforeMarkers+1);std::puts("PASS partially recorded SDK failure retains resources through an actual GPU completion marker");}sourceLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;bs4_fsr31_port_end_frame();continue;}
   assert(result);if(abandon&&frame==2){check(vkEndCommandBuffer(cb));bs4_fsr31_port_end_frame();continue;}const auto view=reinterpret_cast<VkImageView>(result);VkImage out=bs4_fsr31_output_image(view);assert(out);
   layout(cb,out,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);VkBufferImageCopy copy{};copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.imageExtent={1280,720,1};vkCmdCopyImageToBuffer(cb,out,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,read.buffer,1,&copy);layout(cb,out,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);check(vkEndCommandBuffer(cb));VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cb;check(hookedSubmit(queue,1,&submit,nullptr));check(vkQueueWaitIdle(queue));
   void* mapped{};check(vkMapMemory(device,read.memory,0,read.allocationSize,0,&mapped));if(!(read.memoryProperties&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){VkMappedMemoryRange mr{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};mr.memory=read.memory;mr.size=VK_WHOLE_SIZE;check(vkInvalidateMappedMemoryRanges(device,1,&mr));}auto rgba=(const uint8_t*)mapped;size_t blue=0;for(size_t i=0;i<1280*720;i++)blue+=(rgba[i*4+2]>200&&rgba[i*4]<80);assert(blue>1280*720*99/100);std::printf("PASS frame=%u real FSR3.1 camera dispatch blue_pixels=%zu/921600; upper-left scene/depth crop preserved\n",frame,blue);vkUnmapMemory(device,read.memory);sourceLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;bs4_fsr31_port_end_frame();
