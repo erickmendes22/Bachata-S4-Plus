@@ -1,0 +1,189 @@
+name: Validate FSR SDK hooks for existing R27 core025 (no core build)
+on:
+  push:
+    branches: [feature/r27-fsr31-existing025]
+    paths:
+      - 'tools/fsr31-026/**'
+      - '.github/workflows/fsr31-r27-sdk.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/fsr31-026/**'
+      - '.github/workflows/fsr31-r27-sdk.yml'
+permissions:
+  contents: read
+jobs:
+  bridge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure Ubuntu for ARM64 cross-build
+        run: |
+          set -euxo pipefail
+          sudo dpkg --add-architecture arm64
+          sudo tee /etc/apt/sources.list.d/ubuntu.sources >/dev/null <<'EOF'
+          Types: deb
+          URIs: http://archive.ubuntu.com/ubuntu
+          Suites: noble noble-updates
+          Components: main restricted universe multiverse
+          Architectures: amd64
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+          Types: deb
+          URIs: http://security.ubuntu.com/ubuntu
+          Suites: noble-security
+          Components: main restricted universe multiverse
+          Architectures: amd64
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+          sudo tee /etc/apt/sources.list.d/arm64.sources >/dev/null <<'EOF'
+          Types: deb
+          URIs: http://ports.ubuntu.com/ubuntu-ports
+          Suites: noble noble-updates noble-security
+          Components: main restricted universe multiverse
+          Architectures: arm64
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            git cmake ninja-build python3-mako python3-setuptools pkg-config \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            libvulkan-dev:arm64 libvulkan-dev:amd64 libvulkan1:arm64 libx11-dev:arm64 glslang-tools mesa-vulkan-drivers vulkan-validationlayers:amd64 \
+            libstdc++6:arm64
+      - name: Check out exact portable FSR implementation from Android Bloodborne port
+        run: |
+          set -euxo pipefail
+          git clone --filter=blob:none https://github.com/FireBurn/FSR-Vulkan.git fsr-vulkan
+          git -C fsr-vulkan checkout --detach c64f093404125e960813f95f1996c14780f0dd69
+          for name in 0002-Vulkan-backend-device-local-memory-on-unified-memory-GPUs.patch 0003-Frame-generation-free-per-frame-descriptor-pools-and-constant-buffers.patch; do
+            curl -fLsS "https://raw.githubusercontent.com/ducvd89/Bloodborne-Android/d58769c8ae2f36b4f22db864b68e9bffc21a04d2/gpu/patches/fsr-vulkan/$name" -o "/tmp/$name"
+            git -C fsr-vulkan apply --check "/tmp/$name"
+            git -C fsr-vulkan apply "/tmp/$name"
+          done
+          git -C fsr-vulkan apply --check "$PWD/tools/fsr31-026/patches/0001-combined-depth-stencil-barriers.patch"
+          git -C fsr-vulkan apply "$PWD/tools/fsr31-026/patches/0001-combined-depth-stencil-barriers.patch"
+      - name: Build FSR 3.1 ARM64 glibc SDK as independently loadable shared library
+        run: |
+          set -euxo pipefail
+          cat > fsr-aarch64.ini <<'EOF'
+          set(CMAKE_SYSTEM_NAME Linux)
+          set(CMAKE_SYSTEM_PROCESSOR aarch64)
+          set(CMAKE_C_COMPILER aarch64-linux-gnu-gcc)
+          set(CMAKE_CXX_COMPILER aarch64-linux-gnu-g++)
+          set(CMAKE_FIND_ROOT_PATH /usr/aarch64-linux-gnu /usr)
+          EOF
+          cat > CMakeLists.txt <<'EOF'
+          cmake_minimum_required(VERSION 3.22)
+          project(bs4_fsr3 LANGUAGES C CXX)
+          set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+          set(CMAKE_CXX_STANDARD 17)
+          set(FFX_VK_PORTABLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+          set(FFX_VK_PORTABLE_BUILD_PROBE OFF CACHE BOOL "" FORCE)
+          set(FFX_VK_PORTABLE_BUILD_FSR3_HOST ON CACHE BOOL "" FORCE)
+          set(FFX_VK_PORTABLE_BUILD_FSR3_VK_BACKEND ON CACHE BOOL "" FORCE)
+          set(FFX_VK_PORTABLE_BUILD_FSR3_3_1_5_SCAFFOLD OFF CACHE BOOL "" FORCE)
+          set(FFX_VK_PORTABLE_BUILD_FSR4_V07_VULKAN OFF CACHE BOOL "" FORCE)
+          set(FFX_VK_PORTABLE_INSTALL OFF CACHE BOOL "" FORCE)
+          add_subdirectory(fsr-vulkan)
+          find_package(Vulkan REQUIRED)
+          add_library(bachata_fsr31 SHARED
+            tools/fsr31-026/bridge.cpp
+            tools/fsr31-026/vulkan_capture.cpp
+            tools/fsr31-026/temporal_generic.cpp
+            tools/fsr31-026/port_scene_frame.cpp
+            tools/fsr31-026/native_draw_handoff.cpp
+            tools/fsr31-026/native_scene_observer.cpp
+            tools/fsr31-026/native_ui_targets.cpp)
+          target_compile_features(bachata_fsr31 PRIVATE cxx_std_17)
+          target_include_directories(bachata_fsr31 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/generated")
+          target_compile_definitions(bachata_fsr31 PRIVATE _GNU_SOURCE=1)
+          if(NOT CMAKE_CROSSCOMPILING)
+            target_compile_definitions(bachata_fsr31 PRIVATE BS4_FSR31_TEST_HARNESS=1)
+          endif()
+          target_link_libraries(bachata_fsr31 PRIVATE ffx-vulkan::portable Vulkan::Vulkan)
+          set_target_properties(bachata_fsr31 PROPERTIES OUTPUT_NAME bachata_fsr31)
+          EOF
+          mkdir -p generated
+          glslangValidator -V --target-env vulkan1.2 -S comp -o /tmp/flow.spv tools/fsr31-026/flow.comp
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+          raw=Path('/tmp/flow.spv').read_bytes()
+          assert len(raw)%4==0 and raw[:4] == bytes.fromhex('03022307')
+          words=struct.unpack('<%dI'%(len(raw)//4),raw)
+          content='#pragma once\n#include <stdint.h>\nstatic const uint32_t BS4_FSR31_FLOW_SPV[] = {\n'
+          for i in range(0,len(words),8):
+              content += '    '+', '.join('0x%08x'%v for v in words[i:i+8])+',\n'
+          content+='};\n'
+          Path('generated/flow_spv.h').write_text(content)
+          print('Optical flow shader bytes:',len(raw))
+          PY
+          glslangValidator -V --target-env vulkan1.2 -S comp -o /tmp/camera.spv tools/fsr31-026/camera_motion.comp
+          python3 - <<'PY_SHADER'
+          from pathlib import Path
+          import struct
+          raw=Path('/tmp/camera.spv').read_bytes()
+          words=struct.unpack('<%dI'%(len(raw)//4),raw)
+          Path('generated/camera_motion_spv.h').write_text(
+              '#pragma once\n#include <stdint.h>\nstatic const uint32_t BS4_FSR31_CAMERA_SPV[] = {\n'+
+              ','.join('0x%08x'%v for v in words)+'};\n')
+          PY_SHADER
+          g++ -std=c++17 -Wall -Wextra -Werror -I/usr/include tools/fsr31-026/tests/native_depth_stencil_attachment_test.cpp -o /tmp/r27-depth-stencil-test
+          /tmp/r27-depth-stencil-test
+          python3 tools/fsr31-026/tests/scene_transition_regression.py
+          g++ -std=c++17 -pthread -I/usr/include tools/fsr31-026/port_scene_frame.cpp tools/fsr31-026/tests/port_scene_frame_test.cpp -o /tmp/port-scene-test
+          /tmp/port-scene-test
+          g++ -std=c++17 -pthread -I/usr/include tools/fsr31-026/native_scene_observer.cpp tools/fsr31-026/port_scene_frame.cpp tools/fsr31-026/tests/native_scene_observer_test.cpp -o /tmp/native-observer-test
+          /tmp/native-observer-test
+          g++ -std=c++17 -O2 -Wall -Wextra -Werror tools/fsr31-026/native_draw_handoff.cpp tools/fsr31-026/tests/native_draw_handoff_test.cpp -o /tmp/native-draw-handoff-test
+          /tmp/native-draw-handoff-test
+          g++ -std=c++17 -pthread -I/usr/include tools/fsr31-026/native_scene_observer.cpp tools/fsr31-026/port_scene_frame.cpp tools/fsr31-026/tests/native_ui_scale_test.cpp -o /tmp/native-ui-scale-test
+          /tmp/native-ui-scale-test
+          cmake -S . -B build -GNinja -DCMAKE_TOOLCHAIN_FILE=fsr-aarch64.ini -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target bachata_fsr31 -j 6
+      - name: Validate actual Port motion and AMD dispatch on software Vulkan
+        run: |
+          set -euxo pipefail
+          cmake -S . -B build-host -GNinja -DCMAKE_BUILD_TYPE=Release -DVulkan_LIBRARY=/usr/lib/x86_64-linux-gnu/libvulkan.so
+          cmake --build build-host --target bachata_fsr31 -j 6
+          g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include tools/fsr31-026/tests/port_scene_gpu_test.cpp -Lbuild-host -lbachata_fsr31 -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/bs4-fsr-sdk-smoke
+          export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name '*lvp*.json' | head -n1)"
+          test -n "$VK_ICD_FILENAMES"
+          /tmp/bs4-fsr-sdk-smoke | tee port-scene-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke quality-1x | tee -a port-scene-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke depth-stencil | tee -a port-scene-gpu.txt
+          g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include tools/fsr31-026/tests/r13_composition_gpu_test.cpp -Lbuild-host -lbachata_fsr31 -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/bs4-fsr-sdk-smoke
+          /tmp/bs4-fsr-sdk-smoke | tee r13-composition-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke shared-target | tee shared-target-preservation-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke run-scaled-ui | tee native-run-scaled-ui-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke owned-ui | tee automatic-native-ui-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke cross-cb | tee separate-command-buffers-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke cross-cb-rewrite | tee overwritten-scene-gpu.txt
+      - name: Validate ARM64 and exports
+        run: |
+          set -euxo pipefail
+          test -s build/libbachata_fsr31.so
+          file build/libbachata_fsr31.so | grep -Ei 'aarch64|ARM aarch64'
+          readelf -d build/libbachata_fsr31.so | tee needed.txt
+          readelf -Ws build/libbachata_fsr31.so | grep bs4_fsr31_ | tee symbols.txt
+          nm -D build/libbachata_fsr31.so | grep bs4_fsr31_record
+          nm -D build/libbachata_fsr31.so | grep bs4_fsr31_native_begin
+          sha256sum build/libbachata_fsr31.so | tee sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BS4-026-FSR31-GLIBC-BACKEND
+          path: |
+            build/libbachata_fsr31.so
+            sha256.txt
+            needed.txt
+            symbols.txt
+            port-scene-gpu.txt
+            r13-composition-gpu.txt
+            shared-target-preservation-gpu.txt
+            native-run-scaled-ui-gpu.txt
+            automatic-native-ui-gpu.txt
+            separate-command-buffers-gpu.txt
+            overwritten-scene-gpu.txt
+          if-no-files-found: error
+          retention-days: 7
