@@ -1,0 +1,23 @@
+{
+  "sourceBase": "n044 with stored/full-scene input contract",
+  "retainedAndroidCorePayload": "exact n044 APK unchanged non-SDK payload",
+  "runtimeVersion": "bachata-s4-n045-0.2.6-r",
+  "baseSha256": "f12325d889ddb8a0867121ebf99513810373673cf4f5ba6093c7c5f6fe944282",
+  "sdkSha256": "8416b9f8fd4def050a5d8294c87b5b750261a00df7c3bdfc2e427b9c21af58f4",
+  "native025Sha256": "c1cf8986c2a5f6f9f33d32a073eff797e2717b4848cd475c4d19f26dc7042bb2",
+  "allNonSDKPayloadsIdenticalToRetainedBase": true,
+  "runtimeHashesVerified": 562,
+  "nativeCoreCompiled": false,
+  "deviceValidated": false,
+  "apkName": "Bachata-S4-Plus-v0.2.6-R27-FSR31-CORE025-GLIBC-N045-P36.apk",
+  "apkSha256": "907979dc9543f9519fbc8f226303ab2c051d791b8b373c8a39516684c8482717",
+  "apkSize": 221539809,
+  "sourceCommit": "aa65ddcd42d7bcc53725be3327bc8e48f48aeee0",
+  "workflowRun": 38561341881,
+  "workflowConclusion": "success",
+  "p36V2V3Verified": "SDK24-36",
+  "gpuRegressionHalfCyanOldBehaviorPixels": 1029880,
+  "gpuRegressionHalfCyanFixedBehaviorPixels": 0,
+  "deviceCyanResolutionVerified": false,
+  "deviceCrashResolutionVerified": false
+}

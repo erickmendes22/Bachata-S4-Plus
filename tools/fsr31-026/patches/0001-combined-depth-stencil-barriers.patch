@@ -1,0 +1,14 @@
+--- a/upstream/ffx-1.1.4/sdk/src/backends/vk/ffx_vk.cpp
++++ b/upstream/ffx-1.1.4/sdk/src/backends/vk/ffx_vk.cpp
+@@ -1239,6 +1239,11 @@
+ 
+         VkImageSubresourceRange range;
+         range.aspectMask = getImageAspect(ffxResource.resourceDescription.usage);
++        // Layout transitions cover both aspects for combined depth/stencil.
++        // Sampled image views remain depth-only; separateDepthStencilLayouts
++        // is not required on the existing native Vulkan device.
++        if (FFX_CONTAINS_FLAG(ffxResource.resourceDescription.usage, FFX_RESOURCE_USAGE_DEPTHTARGET) && FFX_CONTAINS_FLAG(ffxResource.resourceDescription.usage, FFX_RESOURCE_USAGE_STENCILTARGET))
++            range.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+         range.baseMipLevel = 0;
+         range.levelCount = VK_REMAINING_MIP_LEVELS;
+         range.baseArrayLayer = 0;

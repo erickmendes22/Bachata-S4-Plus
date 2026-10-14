@@ -1,0 +1,29 @@
+{
+  "runtimeVersion": "bachata-s4-n027-0.2.6-r",
+  "elden024Ids": [
+    "CUSA18723",
+    "CUSA28527",
+    "CUSA28863"
+  ],
+  "core023Removed": true,
+  "old023RoutesRemoved": true,
+  "defaultCore": "025",
+  "driveclub020Retained": true,
+  "core024And025Unmodified": true,
+  "androidDexUnmodified": true,
+  "allPatchCatalogsUnmodified": true,
+  "manifestHashesVerified": true,
+  "dispatcherSha256": "244403fa426965e846a3d5d5bca55344454ae83e035da91b40e06a7f082ba70d",
+  "tests": {
+    "cases": 88,
+    "fullDispatcherExecve": true,
+    "argvAndEnvironmentPreserved": true,
+    "core023Absent": true,
+    "deviceValidated": false
+  },
+  "deviceValidated": false,
+  "apk": "Bachata-S4-Plus-v0.2.6-R27-ELDEN-FEX024-SEM-CORE023-P36.apk",
+  "apkSha256": "400b160cd689e5d8872b12746266c4e1bda8196036c28d752bb51319ced72978",
+  "apkBytes": 220151206,
+  "signature": "P36 V2/V3 verified SDK24-36"
+}
