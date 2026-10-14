@@ -1,0 +1,20 @@
+{
+  "sourceBase": "n049 plus bound graphics pipeline identity and final WSI writer/correlation fixes",
+  "retainedAndroidCorePayload": "exact n049 APK unchanged non-SDK payload",
+  "runtimeVersion": "bachata-s4-n050-0.2.6-r",
+  "baseSha256": "a70651a27a35f0d0fe2201dd1732184ea643ed73f30f182f273ec1010ba87416",
+  "sdkSha256": "af24430ede46a870b735f728bd501a4dddf0135ab2730a1562387d87ecb2749a",
+  "native025Sha256": "c1cf8986c2a5f6f9f33d32a073eff797e2717b4848cd475c4d19f26dc7042bb2",
+  "allNonSDKPayloadsIdenticalToRetainedBase": true,
+  "runtimeHashesVerified": 562,
+  "nativeCoreCompiled": false,
+  "deviceValidated": false,
+  "productionOwnedUIHookPresent": false,
+  "phoneCyanRootCauseProven": false,
+  "apkSha256": "9b0dc0f45df1792517ef0b0f9bdd1858448629b665ee16c995762d87466b551a",
+  "apkSize": 221564401,
+  "sourceCommit": "ef4f3842ec82f60165c4f52f6476710342bc3f50",
+  "buildRun": 38605936737,
+  "allCITestsPassed": true,
+  "p36V2V3Verified": true
+}
