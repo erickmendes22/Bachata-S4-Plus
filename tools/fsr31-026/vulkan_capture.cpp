@@ -80,7 +80,7 @@ void observe_wsi_write(VkCommandBuffer cb,VkImage image,VkImageLayout layout) {
     const bool readable=(meta.usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)!=0;
     static std::atomic<unsigned> shown{0};
     if(shown.fetch_add(1)<48)std::fprintf(stderr,
-        "[BS4_FSR31] WSI_WRITE image=%p cb=%p layout=%d format=%d transfer_src=%d\\n",
+        "[BS4_FSR31] WSI_WRITE image=%p cb=%p layout=%d format=%d transfer_src=%d\n",
         reinterpret_cast<void*>(image),reinterpret_cast<void*>(cb),
         int(layout),int(meta.format),int(readable));
     if(readable)bs4_wsi_probe_write(meta.device,bs4_fsr31_physical_device(),cb,image,layout,meta.extent,meta.format);
@@ -95,7 +95,7 @@ void present_trace_end(VkCommandBuffer cb) {
         present_last_color[image]=it->second.serial;
         static unsigned shown=0;
         if(shown++<128)std::fprintf(stderr,
-            "[BS4_FSR31] POST_UI_COLOR_PASS_END pass=%llu image=%p view=%p cb=%p\\n",
+            "[BS4_FSR31] POST_UI_COLOR_PASS_END pass=%llu image=%p view=%p cb=%p\n",
             (unsigned long long)it->second.serial,reinterpret_cast<void*>(image),
             reinterpret_cast<void*>(it->second.view),reinterpret_cast<void*>(cb));
         present_active_color.erase(it);
@@ -1012,7 +1012,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_swap_create(
         present_swap_metadata[*out]={info->imageFormat,info->imageColorSpace,
             requested->imageExtent,requested->imageUsage,requested->imageSharingMode,device};
         std::fprintf(stderr,
-            "[BS4_FSR31] WSI_IMAGE_PROPERTIES swap=%p format=%d colorspace=%d extent=%ux%u usage=0x%x transfer_src=%u sharing=%d\\n",
+            "[BS4_FSR31] WSI_IMAGE_PROPERTIES swap=%p format=%d colorspace=%d extent=%ux%u usage=0x%x transfer_src=%u sharing=%d\n",
             reinterpret_cast<void*>(*out),int(info->imageFormat),
             int(info->imageColorSpace),info->imageExtent.width,info->imageExtent.height,
             unsigned(requested->imageUsage),unsigned(bool(requested->imageUsage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT)),
@@ -1054,7 +1054,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL bs4_cap_present(VkQueue q,const VkPres
     if(seq<=8192)for(size_t i=0;i<hits.size();++i){
       const auto& t=hits[i];
       std::fprintf(stderr,
-        "[BS4_FSR31] WSI_PRESENT seq=%llu image=%p index=%u mapped=%d last_color_pass=%llu result=%d format=%d colorspace=%d extent=%ux%u transfer_src=%d pixels_captured=0\\n",
+        "[BS4_FSR31] WSI_PRESENT seq=%llu image=%p index=%u mapped=%d last_color_pass=%llu result=%d format=%d colorspace=%d extent=%ux%u transfer_src=%d pixel_readback=async\n",
         (unsigned long long)seq,reinterpret_cast<void*>(t.image),t.index,int(t.mapped),
         (unsigned long long)t.pass,int(p&&p->pResults?p->pResults[i]:result),
         int(t.format),int(t.colorspace),t.extent.width,t.extent.height,
