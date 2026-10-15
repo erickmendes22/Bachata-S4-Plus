@@ -543,17 +543,23 @@ bool first_pre_ui_color(VkCommandBuffer cmd,const VkRenderingInfo* info,
             return false;
         const auto source=views.find(eligible.color);
         if(source==views.end())return false;
-        if(port&&source->second.image!=dst_v->second.image){
+        // A distinct native HUD allocation is the decoupled path used by
+        // the 1080p-UI patch. Image identity is not a scene-validity test.
+        // Storage, camera/depth, rectangle, rewrite and submit checks above
+        // still apply. Prefer the newest validated local final pass before
+        // considering the submitted camera-size scene.
 #ifdef BS4_FSR31_TEST_HARNESS
-            if(!std::getenv("BS4_TEST_ALLOW_DECOUPLED_SCENE"))
+        // Negative control reproduces n052 without a production bypass.
+        if(port&&source->second.image!=dst_v->second.image&&
+           std::getenv("BS4_TEST_N052_SAME_BACKING_ONLY"))return false;
 #endif
-            {
-                static unsigned logs=0;if(logs++<32)std::fprintf(stderr,
-                    "[BS4_FSR31] REJECTED_UNRELATED_LDR source=%p ui=%p scene=%ux%u camera_owner=%p unchanged_native_background=1\n",
-                    reinterpret_cast<void*>(source->second.image),reinterpret_cast<void*>(dst_v->second.image),
-                    eligible.extent.width,eligible.extent.height,reinterpret_cast<void*>(accepted_origin));
-                return false;
-            }
+        if(port&&source->second.image!=dst_v->second.image){
+            static unsigned logs=0;
+            if(logs++<2)std::fprintf(stderr,
+                "[BS4_FSR31] DECOUPLED_SCENE_ACCEPTED source=%p ui=%p scene=%ux%u camera_cb=%p ui_cb=%p submitted=%d final_color_identity_proven=0\n",
+                reinterpret_cast<void*>(source->second.image),reinterpret_cast<void*>(dst_v->second.image),
+                eligible.extent.width,eligible.extent.height,reinterpret_cast<void*>(accepted_origin?accepted_origin:cmd),
+                reinterpret_cast<void*>(cmd),int(bool(accepted_origin)));
         }
         dst=dst_v->second.image;
         const auto cb_l=recorded_layouts.find(cmd);

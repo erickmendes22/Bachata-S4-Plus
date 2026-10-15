@@ -15,6 +15,7 @@
 #include <array>
 #include <cassert>
 extern "C" int bs4_fsr31_attachment_ready();
+extern "C" bool bs4_fsr31_has_real_dispatch();
 extern "C" void bs4_fsr31_probe_completed();
 extern "C" void bs4_fsr31_native_begin(void*,const void*,uintptr_t);
 extern "C" void bs4_fsr31_native_pipeline(const void*);
@@ -29,7 +30,6 @@ static void transition(VkCommandBuffer cb,VkImage image,VkImageAspectFlags aspec
 int main(int argc,char** argv){
  const bool trueLdr=argc==2&&std::strcmp(argv[1],"true-ldr")==0;
  const bool oldLdr=trueLdr&&std::getenv("BS4_TEST_OLD_LDR_SELECTION");
- if(!trueLdr||oldLdr)setenv("BS4_TEST_ALLOW_DECOUPLED_SCENE","1",1);else unsetenv("BS4_TEST_ALLOW_DECOUPLED_SCENE");
  const bool fp16Only=argc==2&&std::strcmp(argv[1],"fp16-only")==0;
  const bool fp16=fp16Only||(argc==2&&std::strcmp(argv[1],"fp16-patterned")==0);
  const bool patterned=fp16||(argc==2&&std::strcmp(argv[1],"patterned-scene")==0);
@@ -227,6 +227,6 @@ int main(int argc,char** argv){
  }
  if(localWrite||depthClear||partial||discarded){assert(cyan==0&&blue==size_t(uiWidth)*uiHeight-5000);}else if(patterned){if(frame){assert(cyan==0&&blue>size_t(uiWidth)*uiHeight*4/10&&orangePixels>size_t(uiWidth)*uiHeight*4/10);}}else if(rewrite)assert(blue==0);else if(frame||shared)assert(blue==size_t(uiWidth)*uiHeight-5000);std::printf("PASS composition frame=%u blue=%zu red=%zu native_UI_image_preserved=1 shared_target=%u\n",frame,blue,redPixels,unsigned(shared));vkUnmapMemory(device,read.memory);bs4_fsr31_port_end_frame();bs4_native_scene_present();if(cross)cb=sceneCb;
  }
- assert(errors==0);if(automatic){std::puts("PASS automatic native025 UI allocation and dispatch, seven temporal frames, HUD preserved, zero Vulkan errors");return 0;}if(runScaled){std::puts("PASS native same-target UI handoff: camera warmup copy and seven real FSR dispatches into prepared 720p UI target, scene and HUD preserved, zero Vulkan errors");return 0;}if(shared){std::puts("PASS shared-target preservation only: existing rendering instance and HUD intact; temporal shared-target composition remains unsupported");return 0;}std::puts("PASS R13 pre-UI composition: native camera producer, bounds, confirmed movie boundary, real AMD FSR, original guest HUD and zero Vulkan errors");return 0;
+ assert(errors==0);if(cross&&!rewrite)assert(bs4_fsr31_has_real_dispatch()&&"decoupled native path must execute real FSR");if(automatic){std::puts("PASS automatic native025 UI allocation and dispatch, seven temporal frames, HUD preserved, zero Vulkan errors");return 0;}if(runScaled){std::puts("PASS native same-target UI handoff: camera warmup copy and seven real FSR dispatches into prepared 720p UI target, scene and HUD preserved, zero Vulkan errors");return 0;}if(shared){std::puts("PASS shared-target preservation only: existing rendering instance and HUD intact; temporal shared-target composition remains unsupported");return 0;}std::puts("PASS R13 pre-UI composition: native camera producer, bounds, confirmed movie boundary, real AMD FSR, original guest HUD and zero Vulkan errors");return 0;
 }
 

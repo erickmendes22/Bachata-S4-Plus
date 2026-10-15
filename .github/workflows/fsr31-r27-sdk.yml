@@ -219,6 +219,15 @@ jobs:
           /tmp/bs4-fsr-sdk-smoke run-scaled-ui | tee native-run-scaled-ui-gpu.txt
           /tmp/bs4-fsr-sdk-smoke owned-ui | tee automatic-native-ui-gpu.txt
           /tmp/bs4-fsr-sdk-smoke cross-cb 2>&1 | tee separate-command-buffers-gpu.txt
+          grep -q 'DECOUPLED_SCENE_ACCEPTED' separate-command-buffers-gpu.txt
+          grep -q 'real FSR3.1 dispatch recorded' separate-command-buffers-gpu.txt
+          if BS4_TEST_N052_SAME_BACKING_ONLY=1 /tmp/bs4-fsr-sdk-smoke cross-cb >/tmp/n052-blocked-fsr.txt 2>&1; then
+            echo 'n052 same-backing regression unexpectedly passed'; exit 1
+          fi
+          if grep -q 'real FSR3.1 dispatch recorded' /tmp/n052-blocked-fsr.txt; then
+            echo 'negative control did not reproduce the n052 dispatch blockade'; exit 1
+          fi
+          grep -q 'Assertion' /tmp/n052-blocked-fsr.txt
           grep -q "stages=0x7f.*post_hud={cyan:0.*red:64.*gpu_completed=1" separate-command-buffers-gpu.txt
           /tmp/bs4-fsr-sdk-smoke depth-access | tee depth-access-gpu.txt
           /tmp/bs4-fsr-sdk-smoke depth-clear | tee depth-clear-gpu.txt
