@@ -78,7 +78,21 @@ reproduces the missing production boundary rather than merely testing that the
 SDK compiles or that a direct test-only native callback can dispatch.
 
 Native observer tests, owned rendering snapshot tests and existing scene
-transition checks also pass. ARM64 CI is requested separately on this branch.
+transition checks also pass. ARM64 and the full existing GPU/WSI regression workflow also passed:
+https://github.com/erickmendes22/Bachata-S4-Plus/actions/runs/38730560673
+Source commit: 1586ddba0c3faa4653a32446553ad34124a6f53d.
+ARM64 SDK SHA256: c68ebe3697661a14b26f2ca10ac7887d4f923180e4b8e6f3a04a7d556f56f304.
+Artifact archive SHA256: 619b05a5b24885f7b47702c10bc4ced4ceab2267f5457d4f74f8a9a9dee953dc.
+The downloaded artifact digest and all four new GPU logs were checked: eight
+frames each, zero Vulkan validation errors. Production ARM64 strings contain
+neither BS4_TEST_NO_DRAW_BOUNDARY nor BS4_TEST_ACCEPT_UNRELATED_SCENE.
+
+The exact n054 APK was recovered and its SHA256 matches releases/n054.json.
+Both embedded Bloodborne catalogs were read. The decoupled 640x360 preset
+contains the 640/360 immediate substitutions and dimension-read hooks; no
+explicit format-replacement operation was identified in that preset. Without
+the actual Bloodborne guest executable, this byte-payload inspection cannot
+establish the complete semantics of every patched guest call site.
 
 ## Remaining release gates
 
