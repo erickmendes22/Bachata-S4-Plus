@@ -14,6 +14,8 @@
 #include "../native_ui_targets.h"
 #include <array>
 #include <cassert>
+#include <algorithm>
+#include <cstddef>
 extern "C" int bs4_fsr31_attachment_ready();
 extern "C" bool bs4_fsr31_has_real_dispatch();
 extern "C" void bs4_fsr31_probe_completed();
@@ -30,8 +32,9 @@ static void transition(VkCommandBuffer cb,VkImage image,VkImageAspectFlags aspec
 int main(int argc,char** argv){
  const bool activeQuery=argc==2&&std::strcmp(argv[1],"same-pass-query")==0;
  const bool retainedDepth=argc==2&&std::strcmp(argv[1],"same-pass-depth-stencil")==0;
- const bool crossFinal=argc==2&&std::strcmp(argv[1],"cross-cb-final")==0;
- const bool samePass=activeQuery||retainedDepth||crossFinal||(argc==2&&std::strcmp(argv[1],"same-pass")==0);
+ const bool windowLdr=argc==2&&(std::strcmp(argv[1],"window-same-pass")==0||std::strcmp(argv[1],"window-cross-cb")==0);
+ const bool crossFinal=argc==2&&(std::strcmp(argv[1],"cross-cb-final")==0||std::strcmp(argv[1],"window-cross-cb")==0);
+ const bool samePass=windowLdr||activeQuery||retainedDepth||crossFinal||(argc==2&&std::strcmp(argv[1],"same-pass")==0);
  const bool explicitLdr=samePass||(argc==2&&std::strcmp(argv[1],"true-ldr")==0);
  const bool oldLdr=explicitLdr&&std::getenv("BS4_TEST_OLD_LDR_SELECTION");
  const bool fp16Only=argc==2&&std::strcmp(argv[1],"fp16-only")==0;
@@ -58,6 +61,9 @@ int main(int argc,char** argv){
  VkDebugUtilsMessengerCreateInfoEXT debug{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};debug.messageSeverity=VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;debug.messageType=VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT|VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT;debug.pfnUserCallback=validate;debug.pNext=&validation;
  VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};ici.pApplicationInfo=&app;ici.pNext=&debug;ici.enabledLayerCount=1;ici.ppEnabledLayerNames=&layer;ici.enabledExtensionCount=2;ici.ppEnabledExtensionNames=extensions;VkInstance instance{};auto createInstance=(PFN_vkCreateInstance)vkGetInstanceProcAddr(nullptr,"vkCreateInstance");checked(createInstance(&ici,nullptr,&instance));assert(std::getenv("BACHATA_FSR31_INPUT")&&std::strcmp(std::getenv("BACHATA_FSR31_INPUT"),"port")==0);debug.pNext=nullptr;VkDebugUtilsMessengerEXT messenger{};auto createDebug=(PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance,"vkCreateDebugUtilsMessengerEXT");checked(createDebug(instance,&debug,nullptr,&messenger));
  const auto choice=choosePhysicalDevice(instance);assert(choice.device);
+ VkPhysicalDeviceProperties properties{};vkGetPhysicalDeviceProperties(choice.device,&properties);
+ const float hardwareWidth=float(std::min(properties.limits.maxViewportDimensions[0],16384u));
+ const float hardwareHeight=float(std::min(properties.limits.maxViewportDimensions[1],16384u));
  VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};f13.synchronization2=f13.dynamicRendering=VK_TRUE;
  VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};f2.pNext=&f13;f2.features.shaderStorageImageWriteWithoutFormat=VK_TRUE;
  VkPhysicalDeviceVulkan12Features enabled12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
@@ -88,6 +94,9 @@ int main(int argc,char** argv){
   VkPipelineShaderStageCreateInfo stages[2]{};
   for(auto& st:stages){st.sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;st.pName="main";}
   stages[0].stage=VK_SHADER_STAGE_VERTEX_BIT;stages[0].module=ldrVs;stages[1].stage=VK_SHADER_STAGE_FRAGMENT_BIT;stages[1].module=ldrFs;
+  struct WindowSpec {VkBool32 enabled;float width,height;} spec{windowLdr?VK_TRUE:VK_FALSE,hardwareWidth,hardwareHeight};
+  VkSpecializationMapEntry entries[]={{0,offsetof(WindowSpec,enabled),sizeof(VkBool32)},{1,offsetof(WindowSpec,width),sizeof(float)},{2,offsetof(WindowSpec,height),sizeof(float)}};
+  VkSpecializationInfo specialization{3,entries,sizeof(spec),&spec};stages[0].pSpecializationInfo=&specialization;
   VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
   VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};ia.topology=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
   VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};vp.viewportCount=vp.scissorCount=1;
@@ -186,7 +195,9 @@ int main(int argc,char** argv){
     transition(cb,ui.image,VK_IMAGE_ASPECT_COLOR_BIT,ui.layout,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     VkRenderingAttachmentInfo finalColor=ldr;finalColor.imageView=ui.view;finalColor.loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;finalColor.clearValue.color={{1,0,1,1}};
     ri.renderArea.extent={1920,1080};ri.pColorAttachments=&finalColor;
-    pushConstants(cb,geometry,VK_SHADER_STAGE_VERTEX_BIT,0,120,raw.data());setViewport(cb,0,1,&viewport);
+    pushConstants(cb,geometry,VK_SHADER_STAGE_VERTEX_BIT,0,120,raw.data());
+    const VkViewport finalViewport=windowLdr?VkViewport{0,0,hardwareWidth,hardwareHeight,0,1}:viewport;
+    setViewport(cb,0,1,&finalViewport);
     VkRect2D sceneRect{{0,0},{640,360}};setScissor(cb,0,1,&sceneRect);
     VkRenderingAttachmentInfo retained{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     if(retainedDepth){transition(cb,hudDepth.image,VK_IMAGE_ASPECT_DEPTH_BIT|VK_IMAGE_ASPECT_STENCIL_BIT,hudDepth.layout,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);hudDepth.layout=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;retained.imageView=hudDepth.view;retained.imageLayout=hudDepth.layout;retained.loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;retained.storeOp=VK_ATTACHMENT_STORE_OP_STORE;retained.clearValue.depthStencil={.25f,7};ri.pDepthAttachment=ri.pStencilAttachment=&retained;}
@@ -197,7 +208,11 @@ int main(int argc,char** argv){
     if(!samePass)end(cb);
     ui.layout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
   }
-  pushConstants(cb,movie,VK_SHADER_STAGE_VERTEX_BIT,0,120,raw.data());assert(bs4_native_scene_ui_boundary(cb));
+  auto hudRaw=raw;
+  if(windowLdr){hudRaw[0]=hudRaw[2]=960;hudRaw[1]=540;hudRaw[3]=-540;}
+  // The forthcoming HUD changes push constants before the callback. The
+  // candidate must retain the preceding scene draw's 640x360 rectangle.
+  pushConstants(cb,movie,VK_SHADER_STAGE_VERTEX_BIT,0,120,hudRaw.data());assert(bs4_native_scene_ui_boundary(cb));
   if(cross&&!crossFinal) {
     // The actual native shader is identified on this second CB. It does
     // not enqueue scheduler callbacks or pretend to record scene pixels.

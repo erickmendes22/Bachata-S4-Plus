@@ -369,6 +369,7 @@ void note_writer(VkCommandBuffer cb,uint32_t vertices,uint32_t instances) {
     if(!vertices||!instances||!it->second.inside)return;
     const auto& d=it->second;
     Bs4SceneWriter writer{};writer.command=cb;writer.frame=frame;writer.area=d.area;
+    std::copy(d.raw.begin(),d.raw.end(),writer.rawViewport);writer.rawViewportValid=d.rawValid;
     writer.viewport=d.viewport;writer.scissor=d.scissor;writer.scissorValid=d.scissorValid;writer.renderEpoch=d.renderEpoch;writer.vertices=vertices;writer.instances=instances;writer.colorCount=d.mrt;
     const auto vs=layoutHashes.find(shader_layout(d)),ps=fragmentHashes.find(shader_layout(d));
     if(vs!=layoutHashes.end())writer.vertexHash=vs->second;

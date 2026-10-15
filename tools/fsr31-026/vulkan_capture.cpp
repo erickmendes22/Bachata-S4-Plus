@@ -8,6 +8,7 @@
 #include "native_ui_targets.h"
 #include "port_ui_composition.h"
 #include "rendering_snapshot.h"
+#include "scene_rect.h"
 extern "C" int bs4_fsr31_owner_requested();
 #include <cstdlib>
 #include <atomic>
@@ -749,12 +750,18 @@ void collect_native_ldr(VkCommandBuffer command){
     const auto& sc=writer.scissor;
     if(!writer.scissorValid||sc.offset.x||sc.offset.y||
        sc.extent.width<render.width||sc.extent.height<render.height)return;
-    if(!depth||render.width<600||render.height<320||render.width>1280||render.height>720||
-       !std::isfinite(vp.width)||!std::isfinite(vp.height)||
-       std::abs(std::abs(vp.width)-render.width)>.01f||
-       std::abs(std::abs(vp.height)-render.height)>.01f||
-       std::abs(std::min(vp.x,vp.x+vp.width))>.01f||
-       std::abs(std::min(vp.y,vp.y+vp.height))>.01f)return;
+    if(!depth||render.width<600||render.height<320||render.width>1280||render.height>720)return;
+    VkExtent2D hardware{};bool window=false;
+    // Keep the ordinary viewport path independent of any device query.
+    if(!bs4_scene_rect(writer,render,{})) {
+        const auto physical=bs4_fsr31_physical_device();
+        if(physical){VkPhysicalDeviceProperties properties{};vkGetPhysicalDeviceProperties(physical,&properties);
+            hardware={properties.limits.maxViewportDimensions[0],properties.limits.maxViewportDimensions[1]};}
+#ifdef BS4_FSR31_TEST_HARNESS
+        if(std::getenv("BS4_TEST_PHYSICAL_VIEWPORT_ONLY"))hardware={};
+#endif
+        if(!bs4_scene_rect(writer,render,hardware,&window))return;
+    }
     std::lock_guard lock{mutex};
     auto view=views.find(pass.view);if(view==views.end())return;
     auto image=images.find(view->second.image);if(image==images.end())return;
@@ -769,11 +776,13 @@ void collect_native_ldr(VkCommandBuffer command){
     auto& scene=command_scenes[command];scene.color=pass.view;scene.depth=depth;
     scene.extent=render;scene.ready=true;scene.inside=false;scene.camera_owner=camera_owner;
     static unsigned logs=0;if(logs++<32)std::fprintf(stderr,
-        "[BS4_FSR31] FINAL_LDR_DRAW image=%p view=%p cb=%p camera_cb=%p frame=%llu vs=0x%llx ps=0x%llx allocation=%ux%u scene_rect=%ux%u viewport=%g,%g,%g,%g stored=1\n",
+        "[BS4_FSR31] FINAL_LDR_DRAW image=%p view=%p cb=%p camera_cb=%p frame=%llu vs=0x%llx ps=0x%llx allocation=%ux%u scene_rect=%ux%u viewport=%g,%g,%g,%g raw=%g,%g,%g,%g raw_valid=%u hardware_window=%u stored=1\n",
         reinterpret_cast<void*>(view->second.image),reinterpret_cast<void*>(pass.view),
         reinterpret_cast<void*>(command),reinterpret_cast<void*>(camera_owner),(unsigned long long)writer.frame,
         (unsigned long long)writer.vertexHash,(unsigned long long)writer.fragmentHash,
-        image->second.size.width,image->second.size.height,render.width,render.height,vp.x,vp.y,vp.width,vp.height);
+        image->second.size.width,image->second.size.height,render.width,render.height,vp.x,vp.y,vp.width,vp.height,
+        writer.rawViewport[0],writer.rawViewport[1],writer.rawViewport[2],writer.rawViewport[3],
+        unsigned(writer.rawViewportValid),unsigned(window));
 }
 void scene_rendering_ended(VkCommandBuffer command) {
     std::lock_guard lock{mutex};
@@ -811,6 +820,14 @@ extern "C" void bs4_fsr31_before_native_draw(VkCommandBuffer cb) {
     auto begin=snapshot.khr?reinterpret_cast<PFN_vkCmdBeginRendering>(original_begin_rendering_khr):original_begin_rendering;
     auto end=snapshot.khr?reinterpret_cast<PFN_vkCmdEndRendering>(original_end_rendering_khr):original_end_rendering;
     if(!begin||!end)return;
+    static std::atomic<unsigned> boundaries{};const auto boundary=++boundaries;
+    if(boundary<=16||!(boundary%1024))std::fprintf(stderr,
+        "[BS4_FSR31] PRE_UI_SCENE_BOUNDARY cb=%p view=%p frame=%llu vs=0x%llx ps=0x%llx viewport=%g,%g,%g,%g raw=%g,%g,%g,%g raw_valid=%u vertices=%u instances=%u\n",
+        reinterpret_cast<void*>(cb),reinterpret_cast<void*>(snapshot.color.imageView),
+        (unsigned long long)writer.frame,(unsigned long long)writer.vertexHash,(unsigned long long)writer.fragmentHash,
+        writer.viewport.x,writer.viewport.y,writer.viewport.width,writer.viewport.height,
+        writer.rawViewport[0],writer.rawViewport[1],writer.rawViewport[2],writer.rawViewport[3],
+        unsigned(writer.rawViewportValid),writer.vertices,writer.instances);
     collect_native_ldr(cb);
     ScenePass scene{};
     {

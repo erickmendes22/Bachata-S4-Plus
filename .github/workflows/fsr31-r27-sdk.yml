@@ -138,6 +138,8 @@ jobs:
           /tmp/native-compute-test
           g++ -std=c++17 -Wall -Wextra -Werror tools/fsr31-026/tests/rendering_snapshot_test.cpp -o /tmp/rendering-snapshot-test
           /tmp/rendering-snapshot-test
+          g++ -std=c++17 -Wall -Wextra -Werror tools/fsr31-026/tests/scene_rect_test.cpp -o /tmp/scene-rect-test
+          /tmp/scene-rect-test
           python3 tools/fsr31-026/tests/scene_transition_regression.py
           g++ -std=c++17 -pthread -I/usr/include tools/fsr31-026/port_scene_frame.cpp tools/fsr31-026/tests/port_scene_frame_test.cpp -o /tmp/port-scene-test
           /tmp/port-scene-test
@@ -205,6 +207,16 @@ jobs:
           g++ -std=c++17 -O2 -Ifsr-vulkan -Ifsr-vulkan/include tools/fsr31-026/tests/r13_composition_gpu_test.cpp -Lbuild-host -lbachata_fsr31 -lvulkan -Wl,-rpath,"$PWD/build-host" -o /tmp/bs4-fsr-sdk-smoke
           /tmp/bs4-fsr-sdk-smoke 2>&1 | tee r13-composition-gpu.txt
           grep -q "GPU_FRAME_PROBE.*stages=0x[37]f.*native={cyan:0.*clone={cyan:0.*fsr={cyan:0.*ui={cyan:0.*gpu_completed=1" r13-composition-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke window-same-pass 2>&1 | tee window-same-pass-gpu.txt
+          /tmp/bs4-fsr-sdk-smoke window-cross-cb 2>&1 | tee window-cross-cb-gpu.txt
+          grep -q 'hardware_window=1' window-cross-cb-gpu.txt
+          grep -q 'real FSR3.1 dispatch recorded' window-cross-cb-gpu.txt
+          for scenario in window-same-pass window-cross-cb; do
+            if BS4_TEST_PHYSICAL_VIEWPORT_ONLY=1 /tmp/bs4-fsr-sdk-smoke "$scenario" > "/tmp/$scenario-negative.txt" 2>&1; then
+              echo 'Physical-only viewport selection unexpectedly passed'; exit 1
+            fi
+            grep -q 'REPRODUCED missing final LDR reconstruction' "/tmp/$scenario-negative.txt"
+          done
           /tmp/bs4-fsr-sdk-smoke same-pass-query 2>&1 | tee same-pass-query-gpu.txt
           /tmp/bs4-fsr-sdk-smoke same-pass-depth-stencil 2>&1 | tee same-pass-depth-stencil-gpu.txt
           /tmp/bs4-fsr-sdk-smoke same-pass 2>&1 | tee same-pass-gpu.txt
@@ -269,6 +281,8 @@ jobs:
             wsi-budget-gpu.txt
             same-pass-query-gpu.txt
             same-pass-depth-stencil-gpu.txt
+            window-same-pass-gpu.txt
+            window-cross-cb-gpu.txt
             same-pass-gpu.txt
             final-color-cross-cb-gpu.txt
             actual-ldr-gpu.txt

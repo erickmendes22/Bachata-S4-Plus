@@ -34,6 +34,8 @@ struct Bs4SceneWriter {
     uint64_t frame{},vertexHash{},fragmentHash{},renderEpoch{};
     VkExtent2D area{};
     VkViewport viewport{};VkRect2D scissor{};bool scissorValid{};
+    // Push data belonging to this completed draw, before the upcoming HUD.
+    float rawViewport[4]{};bool rawViewportValid{};
     uint32_t vertices{},instances{},colorCount{};
     VkImageView sampled[8]{};
     uint32_t sampledCount{};

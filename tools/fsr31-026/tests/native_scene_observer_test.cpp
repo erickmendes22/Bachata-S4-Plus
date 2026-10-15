@@ -129,6 +129,12 @@ int main(){
  assert(bs4_native_scene_writer(colorAtt.imageView,writer)&&writer.fragmentHash==0x12345678&&writer.vertexHash==0xabcdabcd);
  assert(writer.sampledCount==1&&writer.sampled[0]==sampled.imageView&&writer.command==cb&&writer.colorCount==1);
  assert(bs4_native_scene_active_writer(cb,colorAtt.imageView,writer));
+ assert(writer.rawViewportValid&&writer.rawViewport[2]==320&&writer.rawViewport[3]==-180);
+ auto nextRaw=raw;nextRaw[2]=960;nextRaw[3]=-540;
+ c(cb,layout,VK_SHADER_STAGE_VERTEX_BIT,0,120,nextRaw.data());
+ assert(bs4_native_scene_active_writer(cb,colorAtt.imageView,writer));
+ assert(writer.rawViewport[2]==320&&writer.rawViewport[3]==-180);
+ c(cb,layout,VK_SHADER_STAGE_VERTEX_BIT,0,120,raw.data());
  bs4_native_scene_end(cb);bs4_native_scene_begin(cb,&render);
  assert(!bs4_native_scene_active_writer(cb,colorAtt.imageView,writer));
  p(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,layout,0,1,&write);d(cb,30,1,0,0);
