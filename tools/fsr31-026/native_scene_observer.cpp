@@ -3,6 +3,7 @@
 // no render-pass suspension, no global image redirection.
 #include "native_scene_observer.h"
 extern VkImageView bs4_native_ui_sampled_view(VkCommandBuffer,VkImageView) __attribute__((weak));
+extern "C" void bs4_fsr31_before_native_draw(VkCommandBuffer) __attribute__((weak));
 #include "port_scene_frame.h"
 #include "port_ui_composition.h"
 #include <algorithm>
@@ -382,14 +383,17 @@ void note_writer(VkCommandBuffer cb,uint32_t vertices,uint32_t instances) {
     for(const auto color:d.colors)if(color)sceneWriters[color]=writer;
 }
 void VKAPI_CALL draw_hook(VkCommandBuffer cb,uint32_t n,uint32_t i,uint32_t first,uint32_t base) {
+    if(n&&i&&bs4_fsr31_before_native_draw)bs4_fsr31_before_native_draw(cb);
     observe_draw(cb);const auto shift=shift_geometry(cb,n,i);
     draw(cb,n,i,first,base);restore(cb,shift);note_writer(cb,n,i);
 }
 void VKAPI_CALL indexed_hook(VkCommandBuffer cb,uint32_t n,uint32_t i,uint32_t first,int32_t vertex,uint32_t base) {
+    if(n&&i&&bs4_fsr31_before_native_draw)bs4_fsr31_before_native_draw(cb);
     observe_draw(cb);const auto shift=shift_geometry(cb,n,i);
     drawIndexed(cb,n,i,first,vertex,base);restore(cb,shift);note_writer(cb,n,i);
 }
 void VKAPI_CALL indirect_hook(VkCommandBuffer cb,VkBuffer b,VkDeviceSize off,uint32_t n,uint32_t stride) {
+    if(n&&bs4_fsr31_before_native_draw)bs4_fsr31_before_native_draw(cb);
     observe_draw(cb);
     // GPU indirect arguments may not be host-visible. A proven G-buffer
     // geometry pass supplies the contract; do not infer a vertex count from
@@ -400,6 +404,7 @@ void VKAPI_CALL indirect_hook(VkCommandBuffer cb,VkBuffer b,VkDeviceSize off,uin
     drawIndirect(cb,b,off,n,stride);restore(cb,shift);note_writer(cb,UINT32_MAX,n);
 }
 void VKAPI_CALL indexed_indirect_hook(VkCommandBuffer cb,VkBuffer b,VkDeviceSize off,uint32_t n,uint32_t stride) {
+    if(n&&bs4_fsr31_before_native_draw)bs4_fsr31_before_native_draw(cb);
     observe_draw(cb);
     bool geometry=false;{std::lock_guard lock{guard};auto it=commands.find(cb);
         geometry=it!=commands.end()&&it->second.mrt>=5;}
