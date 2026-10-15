@@ -1,0 +1,41 @@
+{
+  "release": "n056",
+  "sourceCommit": "c7e4706a67429c57f3903b76d44e0b511fb97780",
+  "ciRun": 38742235627,
+  "baseApkSha256": "7ee974257197ce983294312bb19612398e2e5a9e9be6e9f393e22079650ac762",
+  "sdkSha256": "2fb954e5de601a38670dcccc678338975d3d430bb66683cebc3cbf84bd397cea",
+  "native025Sha256": "c1cf8986c2a5f6f9f33d32a073eff797e2717b4848cd475c4d19f26dc7042bb2",
+  "runtimeVersion": "bachata-s4-n056-0.2.6-r",
+  "runtimeEntriesVerified": 562,
+  "nativeCoreRecompiled": false,
+  "nativeCoreModified": false,
+  "allNonSDKRuntimePayloadsIdentical": true,
+  "androidDexAndManifestPreserved": true,
+  "storedZipAlignmentVerified": true,
+  "arm64AndGpuValidationPassed": true,
+  "finalColorIdentityAndSamePassDrawCorrectionsIncluded": true,
+  "savedSceneWriterRawViewport": true,
+  "exactHardwareWindowRecognition": true,
+  "deviceRootCauseConfirmed": false,
+  "n055DiagnosticRecordedDispatches": 0,
+  "deviceValidated": false,
+  "phoneCyanEliminationConfirmed": false,
+  "unrelatedR27HookRegressionRepaired": false,
+  "apk": "Bachata-S4-Plus-v0.2.6-R27-FSR31-CORE025-GLIBC-N056-P36.apk",
+  "apkSize": 221572458,
+  "apkSha256": "ca1204db51393cccb7b504d70eeef5d4df06488dcadb22946580dd547b590756",
+  "signedPayloadsIdenticalToValidatedUnsigned": true,
+  "signedZipCrcAndAlignmentVerified": true,
+  "ciArtifact": 11976274382,
+  "ciArtifactSha256": "ce6f457979a19875b6553f968a11c319815e44b24581e6de645cbf50d0703427",
+  "ciUrl": "https://github.com/erickmendes22/Bachata-S4-Plus/actions/runs/38742235627",
+  "signatureSchemes": [
+    "v2",
+    "v3"
+  ],
+  "certificateSha256": "d04ef2a865f8ed5ab8f98321be93ed2881eaa64f844fbaf480e18a8336620a72",
+  "officialApksignerVerifiedSdkRanges": [
+    "24-27 v2",
+    "28-36 v3"
+  ]
+}
