@@ -1,7 +1,7 @@
 # n054 follow-up: final-color identity and the actual HUD draw
 
-This is a source/validation checkpoint, not an APK release or a claim of a
-physical-device fix. Base: 1878b8bb1d0b9fc82dd67e9f1f104a5264de8d1f.
+The tested SDK is packaged as n055 with P36 v2/v3 signatures. This is not a
+claim of physical-device cyan elimination. Base: 1878b8bb1d0b9fc82dd67e9f1f104a5264de8d1f.
 
 ## Evidence recovered from 91F991B9
 
@@ -102,4 +102,8 @@ problem scene, nor whether additional post-processing/format faults remain.
 Thus phone cyan/saturation elimination and continuous temporal gameplay remain
 unverified. The earlier R27 native compatibility-hook regression is documented
 separately in N053-HOOK-REGRESSION.md and is not repaired by this SDK-only work.
-Do not package this as a fully corrected APK on synthetic GPU evidence alone.
+The n055 APK includes these tested source corrections; do not describe physical
+cyan elimination or all R27 stability problems as confirmed by synthetic tests.
+Packaging details and exact APK/SDK/core hashes are recorded in releases/n055.json.
+All 562 runtime entries, unchanged non-SDK payloads, stored ZIP alignment and
+P36 v2/v3 signatures across SDK 24–36 were verified before delivery.
