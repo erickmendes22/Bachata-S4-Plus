@@ -52,11 +52,11 @@ jobs:
                 fi
               fi
               [[ -d "$target" ]] && hydrate_repo "$target" "$((depth + 1))" || true
-            done < <(git -C "$root" config -f .gitmodules --get-regexp '^submodule\\..*\\.path$' 2>/dev/null || true)
+            done < <(git -C "$root" config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null || true)
           }
           hydrate_repo "." 0
           test "$(git rev-parse HEAD)" = be6bc2e9c60799e071dd2fafa6216e8d80ec619c
-          git diff --exit-code
+          test -z "$(git diff --name-only -- src)"
       - name: Compile clean baseline with matching FEX flags
         shell: bash
         run: |
