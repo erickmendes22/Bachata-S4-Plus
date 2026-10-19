@@ -38,7 +38,7 @@ struct PM4CmdCondExec {""", "PM4 GetLodStats")
                 break;
             }""", """            case PM4ItOpcode::GetLodStats: {
                 const auto* stats = reinterpret_cast<const PM4CmdGetLodStats*>(header);
-                if (!rasterizer || !rasterizer->WriteLodStats(stats->Address(),
+                if (count < 3 || !rasterizer || !rasterizer->WriteLodStats(stats->Address(),
                                                               stats->NumBytes())) {
                     LOG_DEBUG(Render_Vulkan, "IT_GET_LOD_STATS skipped");
                 }
@@ -52,6 +52,11 @@ struct PM4CmdCondExec {""", "PM4 GetLodStats")
     impl="""// Approximate GCN T# counter bank feedback for SOTC texture streaming.
 // This intentionally does not change readback mode, DMA or other game behavior.
 bool Rasterizer::WriteLodStats(VAddr addr, u32 bytes) {
+    static const bool enabled = [] {
+        const char* v = std::getenv("BACHATA_SOTC_LOD_STATS");
+        return v && v[0] == '1';
+    }();
+    if (!enabled) return false;
     constexpr u32 HeaderBytes = 0x40;
     constexpr u32 MaxBytes = 16_MB;
     constexpr u64 NotSampled = u64{0xF} << 56;
@@ -78,10 +83,16 @@ bool Rasterizer::WriteLodStats(VAddr addr, u32 bytes) {
 }
 
 """
+    rc=change(rc,"#include <array>\n#include <bit>",
+              "#include <algorithm>\n#include <array>\n#include <bit>\n#include <cstdlib>", "C++ std includes")
     rc=change(rc,"void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindings& binding) {",
               impl+"void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindings& binding) {", "LOD writes")
     rc=change(rc,"        const Shader::MipStorageFallbackMode mip_fallback_mode = image_desc.mip_fallback_mode;",
-"""        if (tsharp.lod_hw_cnt_en) {
+"""        static const bool sotc_lod_enabled = [] {
+            const char* v = std::getenv("BACHATA_SOTC_LOD_STATS");
+            return v && v[0] == '1';
+        }();
+        if (sotc_lod_enabled && tsharp.lod_hw_cnt_en) {
             u32& count = sotc_lod_banks[tsharp.counter_bank_id];
             if (count < 0xFFFFFFu) { ++count; }
         }

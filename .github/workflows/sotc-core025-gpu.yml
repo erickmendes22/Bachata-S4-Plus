@@ -74,6 +74,7 @@ jobs:
         working-directory: source
         run: |
           python3 ../control/tools/sotc-core025/port_sotc_lod.py .
+          python3 ../control/tools/sotc-core025/port_sotc_gpu_sync.py .
           # Never silently replace the user's existing stripped R30 core.
           test "$(git rev-parse HEAD)" = be6bc2e9c60799e071dd2fafa6216e8d80ec619c
           git diff --stat
@@ -108,7 +109,7 @@ jobs:
       - name: Upload experimental core (NOT drop-in replacement)
         uses: actions/upload-artifact@v7
         with:
-          name: SOTC-PM4-LOD-ARM64-EXPERIMENTAL
+          name: SOTC-LOD-UNMAP-LDS-ARM64-EXPERIMENTAL
           path: |
             shadps4-arm64-fex
             SOTC-shadps4-arm64-fex.sha256
