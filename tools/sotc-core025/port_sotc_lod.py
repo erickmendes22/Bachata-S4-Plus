@@ -64,7 +64,10 @@ bool Rasterizer::WriteLodStats(VAddr addr, u32 bytes) {
     std::vector<u64> entries(count);
     for (u32 i = 0; i < count; ++i) {
         const u32 uses = sotc_lod_banks[i % sotc_lod_banks.size()];
-        entries[i] = uses != 0 ? u64{uses} << 32 : NotSampled;
+        // Mip 0/1 can overfill SOTC's streaming pool and corrupt guest heap.
+        // AjncSystem's SOTC port uses a bounded priority and conservative mip 2.
+        const u64 priority = std::min<u64>(u64{uses} * 256, 0xFFFFFF);
+        entries[i] = uses != 0 ? (u64{2} << 56) | (priority << 32) : NotSampled;
     }
     if (!memory->TryWriteBacking(reinterpret_cast<void*>(addr + HeaderBytes),
                                   entries.data(), entries.size() * sizeof(u64))) {
