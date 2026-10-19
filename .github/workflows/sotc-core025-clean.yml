@@ -1,0 +1,98 @@
+name: SOTC Core025 Clean Baseline ARM64
+
+on:
+  push:
+    branches: [feature/sotc-core025-gpu-compat]
+    paths: [.github/workflows/sotc-core025-clean.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-clean:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout pinned clean ARM64 source
+        uses: actions/checkout@v4
+        with:
+          repository: zenithblue-oss/shadps4-arm64
+          ref: be6bc2e9c60799e071dd2fafa6216e8d80ec619c
+          fetch-depth: 0
+          submodules: false
+          path: source
+
+      - name: Hydrate source submodules
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          hydrate_repo() {
+            local root="$1"
+            local depth="$2"
+            (( depth > 5 )) && return 0
+            [[ -f "$root/.gitmodules" ]] || return 0
+            while read -r key path; do
+              local name="${key#submodule.}"
+              name="${name%.path}"
+              local url branch target
+              url="$(git -C "$root" config -f .gitmodules --get "submodule.$name.url" || true)"
+              branch="$(git -C "$root" config -f .gitmodules --get "submodule.$name.branch" || true)"
+              target="$root/$path"
+              [[ -n "$url" ]] || continue
+              git -C "$root" -c submodule.recurse=false submodule sync -- "$path" || true
+              if ! git -C "$root" -c submodule.recurse=false submodule update --init --depth 1 -- "$path"; then
+                rm -rf "$target"
+                if [[ -n "$branch" ]]; then
+                  git clone --depth 1 --branch "$branch" "$url" "$target" ||
+                    git clone --depth 1 "$url" "$target"
+                else
+                  git clone --depth 1 "$url" "$target"
+                fi
+              fi
+              [[ -d "$target" ]] && hydrate_repo "$target" "$((depth + 1))" || true
+            done < <(git -C "$root" config -f .gitmodules --get-regexp '^submodule\\..*\\.path$' 2>/dev/null || true)
+          }
+          hydrate_repo "." 0
+          test "$(git rev-parse HEAD)" = be6bc2e9c60799e071dd2fafa6216e8d80ec619c
+          git diff --exit-code
+      - name: Compile clean baseline with matching FEX flags
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/source:/workspace" \
+            -w /workspace \
+            -e BACHATA_INSIDE_DEBIAN_CONTAINER=1 \
+            debian:trixie bash -lc '
+              set -euo pipefail
+              bash runtime/scripts/install-debian-runtime-deps.sh
+              git config --global --add safe.directory "*"
+              bash runtime/scripts/build-shadps4-arm64.sh
+            '
+      - name: Verify architecture and retain symbols for function comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd source
+          CORE="$(find runtime/build -type f \
+            \( -name 'shadps4-arm64-fex' -o -name 'shadps4-arm64' -o -name 'shadps4' \) \
+            -size +10M | head -n1)"
+          test -n "$CORE"
+          readelf -h "$CORE" | grep -E 'ELF64|AArch64'
+          cp "$CORE" "$GITHUB_WORKSPACE/sotc-core025-clean-arm64"
+          sha256sum "$GITHUB_WORKSPACE/sotc-core025-clean-arm64" |
+            tee "$GITHUB_WORKSPACE/sotc-core025-clean-arm64.sha256"
+          readelf -Ws "$CORE" > "$GITHUB_WORKSPACE/sotc-core025-clean-symbols.txt"
+          readelf -S "$CORE" > "$GITHUB_WORKSPACE/sotc-core025-clean-sections.txt"
+      - name: Upload exact clean binary comparison baseline
+        uses: actions/upload-artifact@v7
+        with:
+          name: SOTC-CLEAN-ARM64-BASE-be6bc2e9
+          path: |
+            sotc-core025-clean-arm64
+            sotc-core025-clean-arm64.sha256
+            sotc-core025-clean-symbols.txt
+            sotc-core025-clean-sections.txt
+          if-no-files-found: error
+          retention-days: 7
