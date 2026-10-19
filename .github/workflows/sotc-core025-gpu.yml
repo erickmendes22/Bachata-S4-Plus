@@ -75,6 +75,8 @@ jobs:
         run: |
           python3 ../control/tools/sotc-core025/port_sotc_lod.py .
           python3 ../control/tools/sotc-core025/port_sotc_gpu_sync.py .
+          # Mandatory CUSA08809/01.00 audio guard; never an optional patch.
+          python3 ../control/tools/sotc-core025/port_sotc_mandatory_sndx.py --source .
           # Never silently replace the user's existing stripped R30 core.
           test "$(git rev-parse HEAD)" = be6bc2e9c60799e071dd2fafa6216e8d80ec619c
           git diff --stat
