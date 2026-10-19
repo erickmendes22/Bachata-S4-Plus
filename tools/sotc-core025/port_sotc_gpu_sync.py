@@ -25,9 +25,13 @@ def patch(root):
     void DropGpuModifiedOnUnmap(VAddr device_addr, u64 size);""","buffer interface")
     b=once(b,"void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write) {",
 """void BufferCache::DropGpuModifiedOnUnmap(VAddr device_addr, u64 size) {
-    if (size == 0) return;
-    // Ordered on Liverpool's GPU command queue; no global change to readback mode.
+    if (size == 0 || device_addr + size < device_addr) return;
+    // This path is for guest memory that is actually being unmapped.
+    // First finish queued GPU work and deferred readbacks before retiring the backing range.
+    // This source baseline uses synchronous ReadMemory() and Scheduler::Finish(), unlike
+    // the newer R30 readback pipeline, which requires separate in-flight cancellation.
     liverpool->SendCommand<true>([this, device_addr, size] {
+        scheduler.Finish();
         gpu_modified_ranges.Subtract(device_addr, size);
         memory_tracker->UnmarkRegionAsGpuModified(device_addr, size);
         memory_tracker->MarkRegionAsCpuModified(device_addr, size);
