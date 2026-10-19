@@ -1,8 +1,6 @@
 name: SOTC ARM64 Clean Baseline (Binary Diff)
 
 on:
-  push:
-    branches: [feature/sotc-core025-gpu-compat]
   workflow_dispatch:
 
 permissions:

@@ -47,8 +47,8 @@ struct PM4CmdCondExec {""", "PM4 GetLodStats")
     rh=change(rh,"#include <memory>","#include <array>\n#include <memory>", "header include")
     rh=change(rh,"    void UnmapMemory(VAddr addr, u64 size);",
               "    void UnmapMemory(VAddr addr, u64 size);\n    bool WriteLodStats(VAddr addr, u32 bytes);", "Rasterizer API")
-    rh=change(rh,"    bool attachment_feedback_loop{};",
-              "    bool attachment_feedback_loop{};\n    std::array<u32, 256> sotc_lod_banks{};", "LOD bank storage")
+    # Never change Rasterizer object size: R30's class layout is not the public branch's.
+    # Counter banks live in static storage (one graphics process per game).
     impl="""// Approximate GCN T# counter bank feedback for SOTC texture streaming.
 // This intentionally does not change readback mode, DMA or other game behavior.
 bool Rasterizer::WriteLodStats(VAddr addr, u32 bytes) {
@@ -83,6 +83,9 @@ bool Rasterizer::WriteLodStats(VAddr addr, u32 bytes) {
 }
 
 """
+    rc=change(rc,"namespace Vulkan {",
+              "namespace Vulkan {\nstatic std::array<u32, 256> sotc_lod_banks{};\n",
+              "Static LOD counters keep Rasterizer ABI unchanged")
     rc=change(rc,"#include <array>\n#include <bit>",
               "#include <algorithm>\n#include <array>\n#include <bit>\n#include <cstdlib>", "C++ std includes")
     rc=change(rc,"void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindings& binding) {",
