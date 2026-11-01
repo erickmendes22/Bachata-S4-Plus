@@ -1,0 +1,59 @@
+name: Decompile matching GameHub A8xx routines with Ghidra
+
+on:
+  push:
+    branches: [experimental/turnip-sotc-barycentrics]
+    paths:
+      - tools/turnip-sotc/DecompileGameHubA8xx.java
+      - .github/workflows/gamehub-a8xx-ghidra.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reverse:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare headless decompiler
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y openjdk-21-jdk unzip python3
+          curl -fL --retry 5 --retry-delay 2 \
+            https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.2_build/ghidra_12.2_PUBLIC_20261016.zip \
+            -o "$RUNNER_TEMP/ghidra.zip"
+          unzip -q "$RUNNER_TEMP/ghidra.zip" -d "$RUNNER_TEMP/"
+          GHIDRA_HOME="$(find "$RUNNER_TEMP" -maxdepth 1 -type d -name 'ghidra_*' | head -1)"
+          test -x "$GHIDRA_HOME/support/analyzeHeadless"
+          echo "GHIDRA_HOME=$GHIDRA_HOME" >> "$GITHUB_ENV"
+      - name: Retrieve unmodified public GameHub binary and verify byte identity
+        run: |
+          curl -fL --retry 5 --retry-delay 2 \
+            https://github.com/The412Banner/Nightlies/releases/download/rutabaga-drivers/Rutabaga-26.10.22.zip \
+            -o "$RUNNER_TEMP/rutabaga.zip"
+          unzip -p "$RUNNER_TEMP/rutabaga.zip" libvulkan_freedreno.so > "$RUNNER_TEMP/gamehub.so"
+          echo "1a109bee1ad087aceee8436479c95c4cd3e66de0778bc79fc3ce9f637f9fe404  $RUNNER_TEMP/gamehub.so" | sha256sum -c -
+          readelf -h "$RUNNER_TEMP/gamehub.so" | grep 'Machine:.*AArch64'
+      - name: Analyze and decompile selected A8xx decisions
+        run: |
+          mkdir -p "$RUNNER_TEMP/ghproj"
+          export GHIDRA_DECOMPILE_OUT="$GITHUB_WORKSPACE/gamehub_a8xx_decompiled.c"
+          "$GHIDRA_HOME/support/analyzeHeadless" \
+            "$RUNNER_TEMP/ghproj" gamehub_arm64 \
+            -import "$RUNNER_TEMP/gamehub.so" \
+            -scriptPath "$GITHUB_WORKSPACE/tools/turnip-sotc" \
+            -postScript DecompileGameHubA8xx.java \
+            -deleteProject \
+            > "$RUNNER_TEMP/ghidra.log" 2>&1 || { tail -150 "$RUNNER_TEMP/ghidra.log"; exit 1; }
+          test -s "$GHIDRA_DECOMPILE_OUT"
+          grep -Fq 'use_sysmem_rendering' "$GHIDRA_DECOMPILE_OUT"
+          mkdir -p dist
+          cp "$GHIDRA_DECOMPILE_OUT" "$RUNNER_TEMP/ghidra.log" dist/
+          wc -lc dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GameHub-26-10-22-Ghidra-Reconstructed-Code
+          path: dist/*
+          if-no-files-found: error
