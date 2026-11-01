@@ -120,7 +120,7 @@ replace_exact("src/freedreno/ir3/ir3_compiler_nir.c",
     "      nir_intrinsic_instr *baryc = nir_def_as_intrinsic(intr->src[0].ssa);\n"
     "      if (nir_intrinsic_interp_mode(baryc) == INTERP_MODE_NONE)\n"
     "         so->inputs[n].rasterflat = true;",
-    "      if (intr->src[0].ssa->parent_instr->type == nir_instr_type_intrinsic) {\n"
+    "      if (nir_def_instr_type(intr->src[0].ssa) == nir_instr_type_intrinsic) {\n"
     "         nir_intrinsic_instr *baryc = nir_def_as_intrinsic(intr->src[0].ssa);\n"
     "         if (nir_intrinsic_has_interp_mode(baryc) &&\n"
     "             nir_intrinsic_interp_mode(baryc) == INTERP_MODE_NONE)\n"
