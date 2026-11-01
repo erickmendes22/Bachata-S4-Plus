@@ -37,6 +37,16 @@ jobs:
              '    configure_variant\n'
              '    python3 "$GITHUB_WORKSPACE/turnip-sotc/patch.py"\n'
              '    apply_android_ndk_fixes',1)
+          marker='    for patch_file in "$REPO_ROOT"/patches/patchs1/000*.patch; do'
+          assert s.count(marker)==1, "Patchset loop changed"
+          s=s.replace(marker, marker+
+              '\n        if [[ "$(basename "$patch_file")" == 0001-* ]]; then'+
+              '\n            log "Skipping unrebased mesh-shader patch (not required for SotC barycentrics)"'+
+              '\n            continue'+
+              '\n        fi',1)
+          old='    [ "$count" -eq 6 ] || die "Expected 6 Patchs1 patches, found $count"'
+          assert s.count(old)==1
+          s=s.replace(old,'    [ "$count" -eq 5 ] || die "Expected 5 compatible patchs1 patches, found $count"',1)
           p.write_text(s)
           PY
 
