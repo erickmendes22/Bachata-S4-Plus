@@ -1,0 +1,74 @@
+name: Build SotC Turnip A8xx native barycentrics
+
+on:
+  push:
+    branches:
+      - experimental/turnip-sotc-barycentrics
+    paths:
+      - tools/turnip-sotc/**
+      - .github/workflows/turnip-sotc-barycentrics.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  turnip-barycentric:
+    name: Compile Adreno 830 Vulkan driver
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    steps:
+      - name: Checkout driver patch
+        uses: actions/checkout@v4
+      - name: Install build tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends ninja-build flex bison glslang-tools pkg-config zip unzip git curl python3-pip python3-venv clang lld llvm
+          python3 -m pip install --user --break-system-packages meson mako pyyaml packaging
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Fetch pinned Mesa 27 Gen8 A8xx source
+        run: |
+          git clone --depth 1 --single-branch --branch codex/turnip/a8xx/initial https://github.com/K11MCH1/DroidDeck-Turnip-Drivers.git "$RUNNER_TEMP/mesa"
+          test "$(git -C "$RUNNER_TEMP/mesa" rev-parse HEAD)" = "37ff426ede7dee7d665421da20a5554e155f9b53"
+          echo "Pinned source is Mesa $(cat "$RUNNER_TEMP/mesa/VERSION")"
+          grep -Fq 'KHR_fragment_shading_rate' "$RUNNER_TEMP/mesa/src/freedreno/vulkan/tu_device.cc"
+      - name: Apply functional NIR and IR3 barycentric patch
+        run: |
+          cd "$RUNNER_TEMP/mesa"
+          python3 "$GITHUB_WORKSPACE/tools/turnip-sotc/patch_barycentric.py"
+          git diff --check
+          git diff --stat
+          grep -Fq 'features->fragmentShaderBarycentric = pdevice->info->chip >= A8XX' src/freedreno/vulkan/tu_device.cc
+          grep -Fq 'nir_intrinsic_load_input_vertex' src/freedreno/ir3/ir3_nir.c
+          git diff > "$RUNNER_TEMP/sotc-turnip-native-barycentric.patch"
+      - name: Fetch Android/KGSL cross-compile helper
+        run: |
+          git clone --depth=1 --branch turnip https://github.com/GameNative/mesa-turnip.git "$RUNNER_TEMP/builder"
+      - name: Cross-compile real Android ARM64 driver
+        env:
+          NDK_VERSION: r28c
+          SDK_VERSION: "34"
+          VARIANT_NAME: "SotC Gen8 A8xx Native Barycentrics Experimental"
+          PACKAGE_VERSION: "1"
+        run: |
+          MESA_SRC="$RUNNER_TEMP/mesa" WORKDIR="$RUNNER_TEMP/work" OUT_DIR="$RUNNER_TEMP/dist" bash "$RUNNER_TEMP/builder/ci/build.sh"
+      - name: Validate driver package
+        run: |
+          set -e
+          ZIP="$(find "$RUNNER_TEMP/dist" -maxdepth 1 -name '*.zip' | head -n 1)"
+          test -n "$ZIP"
+          unzip -t "$ZIP"
+          unzip -p "$ZIP" meta.json | python3 -m json.tool
+          unzip -p "$ZIP" libvulkan_freedreno.so > "$RUNNER_TEMP/driver.so"
+          file "$RUNNER_TEMP/driver.so"
+          readelf -h "$RUNNER_TEMP/driver.so" | grep 'Machine:.*AArch64'
+          sha256sum "$ZIP" "$RUNNER_TEMP/driver.so"
+          mkdir -p "$GITHUB_WORKSPACE/build-out"
+          cp "$ZIP" "$RUNNER_TEMP/sotc-turnip-native-barycentric.patch" "$GITHUB_WORKSPACE/build-out/"
+      - name: Store installable driver and exact source changes
+        uses: actions/upload-artifact@v4
+        with:
+          name: SotC-Turnip-A8xx-IR3-barycentrics
+          path: build-out/*
+          if-no-files-found: error
+          compression-level: 0
