@@ -1,0 +1,96 @@
+name: Build SotC Gen8 V38 A830v1 GMEM/Prefetch fixes
+
+on:
+  push:
+    branches:
+      - experimental/turnip-sotc-barycentrics
+    paths:
+      - .github/workflows/turnip-sotc-v38-a830-coherence.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  v38-pinned:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y ninja-build patchelf unzip flex bison git perl python3-pip glslang-tools curl zip patch clang lld llvm meson
+          python3 -m pip install --user --break-system-packages --upgrade 'meson>=1.4.0' mako pyyaml packaging
+          $HOME/.local/bin/meson --version
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Fetch original StevenMXZ V38 release recipe
+        run: |
+          git clone --depth=1 --branch v27.0.0-R1 https://github.com/StevenMXZ/Adreno-Tools-Drivers.git "$RUNNER_TEMP/v38-builder"
+          test -f "$RUNNER_TEMP/v38-builder/patches/patchs1/android/apply_balance_variant.py"
+      - name: Pin original V38 Mesa source and insert IR3 fix
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          p=Path(os.environ["RUNNER_TEMP"])/"v38-builder/build_turnip.sh"
+          t=p.read_text()
+          old="    configure_variant\n    apply_android_ndk_fixes\n    build_android\n"
+          new=('    configure_variant\n'
+               '    apply_android_ndk_fixes\n'
+               '    python3 "$GITHUB_WORKSPACE/tools/turnip-sotc/patch_barycentric.py"\n'
+               '    python3 "$GITHUB_WORKSPACE/tools/turnip-sotc/patch_a830_memory_coherency.py"\n'
+               '    git diff --check\n'
+               '    git diff > "$RUNNER_TEMP/sotc-v38-barycentric-source.patch"\n'
+               '    build_android\n')
+          assert t.count(old)==1, "source recipe changed"
+          t=t.replace(old,new,1)
+          # Exact upstream Mesa commit embedded in the 2026-10-19 Gen8 V38 patched ELF.
+          # Use a GitHub mirror of the same upstream commit for reproducible fetch.
+          oldurl="https://gitlab.freedesktop.org/mesa/mesa.git"
+          assert t.count(oldurl)==1, "upstream URL changed"
+          t=t.replace(oldurl,"https://github.com/K11MCH1/DroidDeck-Turnip-Drivers.git",1)
+          # The post-release mesh-shader patchset 0001-0006 does not apply
+          # to the exact Mesa f28352d117 from original V38. It is unrelated
+          # to SotC barycentrics; retain WinNative Android, UBWC, A8xx, GMEM,
+          # KGSL tweaks, but do not merge the later mesh patch by force.
+          extra='            apply_patchs1_extra_patches\n'
+          assert t.count(extra)==1, 'patch recipe changed'
+          t=t.replace(extra,'            # 0001-0006 omitted for pinned Mesa V38 compatibility\n')
+          # Later zero-timeout KGSL patch also targets a post-V38 function
+          # layout. Original behavior is retained in this pinned build.
+          marker='            log "A8xx Patchs1: applying KGSL zero-timeout poll fix..."'
+          assert t.count(marker)==1, 'KGSL anchor changed'
+          i=t.index(marker)
+          j=t.index('            ;;',i)
+          t=t[:i]+'            # later KGSL poll patch omitted for original pinned Mesa\n'+t[j:]
+          p.write_text(t)
+          PY
+      - name: Build pinned 19 October Mesa with original performance patch recipe
+        env:
+          MESA_COMMIT: f28352d1179a4a85b4be286a883747bae2d3786b
+          VARIANT: a8xx-patchs1
+          BUILD_VERSION: "38-sotc-barycentric"
+        run: |
+          cd "$RUNNER_TEMP/v38-builder"
+          bash ./build_turnip.sh
+      - name: Validate Android ARM64 and ZIP
+        run: |
+          set -e
+          ZIP="$(find "$RUNNER_TEMP/v38-builder/turnip_workdir" -maxdepth 1 -name 'Turnip_*.zip' | head -n 1)"
+          test -n "$ZIP"
+          unzip -t "$ZIP"
+          unzip -p "$ZIP" meta.json | python3 -m json.tool
+          unzip -p "$ZIP" libvulkan_freedreno.so > "$RUNNER_TEMP/native.so"
+          file "$RUNNER_TEMP/native.so"
+          readelf -h "$RUNNER_TEMP/native.so" | grep 'Machine:.*AArch64'
+          strings "$RUNNER_TEMP/native.so" | grep -F 'VK_KHR_fragment_shader_barycentric'
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          cp "$ZIP" "$RUNNER_TEMP/sotc-v38-barycentric-source.patch" "$GITHUB_WORKSPACE/dist/"
+          sha256sum "$GITHUB_WORKSPACE/dist/"*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SotC-Gen8-V38-A830-SYSMEM-Prefetch-Barycentrics
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
