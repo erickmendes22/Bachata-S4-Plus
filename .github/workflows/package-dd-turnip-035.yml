@@ -1,0 +1,71 @@
+name: Package DD-Turnip v0.3.5 Android AdrenoTools
+
+on:
+  push:
+    branches: [experimental/turnip-sotc-barycentrics]
+    paths: [.github/workflows/package-dd-turnip-035.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch exact upstream release archive
+        run: |
+          set -euo pipefail
+          curl -fL --retry 4 --retry-delay 2 \
+            "https://github.com/Droid-Deck/Drivers/releases/download/DD-Turnip-v0.3.5/DD-Turnip-v0.3.5.zip" \
+            -o "$RUNNER_TEMP/original.zip"
+          unzip -t "$RUNNER_TEMP/original.zip"
+          unzip -l "$RUNNER_TEMP/original.zip" | head -50
+          sha256sum "$RUNNER_TEMP/original.zip"
+      - name: Extract Android-only driver into correct import format
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          python3 - <<'PY'
+          from pathlib import Path
+          import os,zipfile,json,hashlib,io
+          src=Path(os.environ["RUNNER_TEMP"])/"original.zip"
+          out=Path("dist/DD-Turnip-v0.3.5-Android-AdrenoTools.zip")
+          with zipfile.ZipFile(src) as z:
+              names=z.namelist()
+              print("Official archive members:",names)
+              so=[n for n in names if n.startswith("android/") and n.endswith("/libvulkan_freedreno.so")]
+              if not so:
+                  so=[n for n in names if n == "android/libvulkan_freedreno.so"]
+              meta=[n for n in names if n.startswith("android/") and n.endswith("/meta.json")]
+              if not meta:
+                  meta=[n for n in names if n == "android/meta.json"]
+              assert len(so)==1 and len(meta)==1, (so,meta)
+              lib=z.read(so[0]); raw_meta=z.read(meta[0])
+              data=json.loads(raw_meta)
+              assert data["libraryName"]=="libvulkan_freedreno.so"
+              assert int(data["schemaVersion"])==1
+              assert lib[:4]==b"\x7fELF"
+              assert int.from_bytes(lib[18:20],"little")==183, "not AArch64"
+              # Strictly preserve exact upstream Android lib + metadata bytes.
+              with zipfile.ZipFile(out,"w",compression=zipfile.ZIP_DEFLATED,compresslevel=9) as w:
+                  w.writestr("meta.json",raw_meta)
+                  w.writestr("libvulkan_freedreno.so",lib)
+              assert set(zipfile.ZipFile(out).namelist())=={"meta.json","libvulkan_freedreno.so"}
+              info={"release":"DD-Turnip-v0.3.5","android_library_sha256":hashlib.sha256(lib).hexdigest(),"meta":data,"root_members":zipfile.ZipFile(out).namelist(),"binary_unmodified":True}
+              Path("dist/driver-verification.json").write_text(json.dumps(info,indent=2)+"\n")
+              print(json.dumps(info,indent=2))
+          PY
+          unzip -t dist/DD-Turnip-v0.3.5-Android-AdrenoTools.zip
+          unzip -p dist/DD-Turnip-v0.3.5-Android-AdrenoTools.zip libvulkan_freedreno.so > "$RUNNER_TEMP/android-lib.so"
+          readelf -h "$RUNNER_TEMP/android-lib.so" | grep -E 'Class:|Machine:|Type:'
+          sha256sum dist/DD-Turnip-v0.3.5-Android-AdrenoTools.zip
+      - name: Upload validated Android package
+        uses: actions/upload-artifact@v4
+        with:
+          name: DD-Turnip-v0.3.5-Android-AdrenoTools
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
