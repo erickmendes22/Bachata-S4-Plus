@@ -1,4 +1,4 @@
-name: Build Gen8 V38 GameHub A8xx Bindless Coherence
+name: Build V38 A830 Bindless Exact Drawstate Fix
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
       - fix/turnip-v38-a8xx-bindless-sotc-20261101
     paths:
       - .github/workflows/turnip-v38-gamehub-bindless.yml
+      - tools/turnip-sotc/patch_a8xx_bindless_coherence.py
   workflow_dispatch:
 
 permissions:
@@ -70,7 +71,7 @@ jobs:
         env:
           MESA_COMMIT: f28352d1179a4a85b4be286a883747bae2d3786b
           VARIANT: a8xx-patchs1
-          BUILD_VERSION: "38-sotc-gamehub-bindless"
+          BUILD_VERSION: "38-sotc-bindless-exactdraw-v2"
         run: |
           cd "$RUNNER_TEMP/v38-builder"
           bash ./build_turnip.sh
@@ -90,7 +91,7 @@ jobs:
           import zipfile,sys,json,os
           from pathlib import Path
           original=Path(sys.argv[1])
-          out=Path(os.environ["GITHUB_WORKSPACE"])/"dist/Turnip_Gen8_V38_GameHub_A8xx_Bindless_SotC.zip"
+          out=Path(os.environ["GITHUB_WORKSPACE"])/"dist/Turnip_Gen8_V38_A830_Bindless_DrawstateFix_v2.zip"
           with zipfile.ZipFile(original) as z:
               names=z.namelist()
               assert set(names)=={"meta.json","libvulkan_freedreno.so"},names
@@ -98,8 +99,8 @@ jobs:
               binary=z.read("libvulkan_freedreno.so")
           meta.update({
             "schemaVersion":1,
-            "name":"Turnip Gen8 V38 GameHub A8xx Bindless SotC",
-            "description":"Mesa 27.0.0 A830; WinNative Android/UBWC/GMEM + IR3 barycentric + GameHub dedicated A8xx descriptor cache invalidation",
+            "name":"Turnip Gen8 V38 A830 Bindless Drawstate Fix v2",
+            "description":"Mesa 27.0.0 A830; WinNative Android/UBWC/GMEM + IR3 barycentrics + A8xx dedicated invalidation with exact GPU draw-state length",
             "author":"StevenMXZ / SotC backport",
             "vendor":"Mesa",
             "minApi":28,
@@ -114,13 +115,13 @@ jobs:
           print("Installable Android AdrenoTools ZIP:",out)
           PY
           cp "$RUNNER_TEMP/sotc-v38-barycentric-source.patch" "$GITHUB_WORKSPACE/dist/turnip-v38-a8xx-bindless-source.patch"
-          unzip -t "$GITHUB_WORKSPACE/dist/Turnip_Gen8_V38_GameHub_A8xx_Bindless_SotC.zip"
-          unzip -p "$GITHUB_WORKSPACE/dist/Turnip_Gen8_V38_GameHub_A8xx_Bindless_SotC.zip" meta.json | python3 -m json.tool
+          unzip -t "$GITHUB_WORKSPACE/dist/Turnip_Gen8_V38_A830_Bindless_DrawstateFix_v2.zip"
+          unzip -p "$GITHUB_WORKSPACE/dist/Turnip_Gen8_V38_A830_Bindless_DrawstateFix_v2.zip" meta.json | python3 -m json.tool
           grep -Fq 'A8XX_BINDLESS_COHERENCE_PATCH_COMPLETE' /dev/null || true
           sha256sum "$GITHUB_WORKSPACE/dist/"*
       - uses: actions/upload-artifact@v4
         with:
-          name: SotC-Gen8-V38-GameHub-Bindless-Coherence
+          name: SotC-Gen8-V38-Bindless-Exact-Drawstate-V2
           path: dist/*
           if-no-files-found: error
           compression-level: 0
