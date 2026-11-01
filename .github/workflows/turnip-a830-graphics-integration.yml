@@ -1,0 +1,72 @@
+name: Turnip A830 pinned source integration
+on:
+  push:
+    branches: [fix/turnip-gamehub-a830-sotc]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build patchelf unzip flex bison git perl python3-pip glslang-tools curl zip patch clang lld llvm
+          sudo python3 -m pip install --break-system-packages 'meson>=1.5' mako pyyaml packaging
+      - name: Pinned StevenMXZ V38 recipe
+        run: |
+          git clone --depth=1 -b A8xx https://github.com/StevenMXZ/Adreno-Tools-Drivers.git turnip-recipe
+          git -C turnip-recipe fetch --depth=1 origin b3b32ad30e7d7b4bd897e678af064036eeb9df09
+          git -C turnip-recipe checkout --detach b3b32ad30e7d7b4bd897e678af064036eeb9df09
+      - name: Integrate A830 fix with source guards
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('turnip-recipe/build_turnip.sh')
+          s=p.read_text()
+          needle="    apply_android_ndk_fixes\n    build_android\n"
+          assert s.count(needle)==1, "Recipe mismatch; no modifications allowed"
+          hook="""    if ! grep -Fq 'tu6_write_lrz_cntl<CHIP>(cmd, cs, {});' src/freedreno/vulkan/tu_lrz.cc; then
+                  git apply --check "$GITHUB_WORKSPACE/tools/turnip-a830/0001-tu-lrz-a8xx-reset.patch"
+                  git apply "$GITHUB_WORKSPACE/tools/turnip-a830/0001-tu-lrz-a8xx-reset.patch"
+              fi
+              grep -Fq 'tu6_write_lrz_cntl<CHIP>(cmd, cs, {});' src/freedreno/vulkan/tu_lrz.cc
+              grep -Fq 'cube_coord_hang_quirk' src/freedreno/ir3/ir3_nir.c
+              grep -Fq 'kgsl_bo_create_alias' src/freedreno/vulkan/tu_knl_kgsl.cc
+              grep -Fq 'kgsl_bo_destroy_alias' src/freedreno/vulkan/tu_knl_kgsl.cc
+              grep -Fq 'A6XX_SP_CS_BINDLESS_INVALIDATE' src/freedreno/vulkan/tu_cmd_buffer.cc
+              grep -Fq 'A6XX_SP_GFX_BINDLESS_INVALIDATE' src/freedreno/vulkan/tu_cmd_buffer.cc
+          """
+          p.write_text(s.replace(needle,hook+needle))
+          PY
+          bash -n turnip-recipe/build_turnip.sh
+      - name: Compile Android KGSL driver
+        env:
+          VARIANT: a8xx-patchs1
+          MESA_COMMIT: f28352d1179a4a85b4be286a883747bae2d3786b
+          BUILD_VERSION: a830-lrz-1
+        run: |
+          cd turnip-recipe
+          bash build_turnip.sh
+      - name: Check ELF and no regressions
+        run: |
+          set -euo pipefail
+          test "$(find turnip-recipe/turnip_workdir -maxdepth 1 -name 'Turnip_*.zip' -type f | wc -l)" -eq 1
+          driver_zip=$(find turnip-recipe/turnip_workdir -maxdepth 1 -name 'Turnip_*.zip' -type f -print -quit)
+          unzip -t "$driver_zip"
+          unzip -p "$driver_zip" libvulkan_freedreno.so > /tmp/a830.so
+          readelf -h /tmp/a830.so | grep -q AArch64
+          strings /tmp/a830.so | grep -q cube_coord_hang_quirk
+          strings /tmp/a830.so | grep -q 'binding IB alias failed'
+          sha256sum /tmp/a830.so "$driver_zip" > turnip-sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: turnip-a830-lrz-graphics-integration
+          path: |
+            turnip-recipe/turnip_workdir/Turnip_*.zip
+            turnip-sha256.txt
+          if-no-files-found: error
+          retention-days: 14
