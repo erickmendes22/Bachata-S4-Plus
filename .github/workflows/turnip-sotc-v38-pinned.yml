@@ -21,7 +21,8 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y ninja-build patchelf unzip flex bison git perl python3-pip glslang-tools curl zip patch clang lld llvm meson
-          python3 -m pip install --user --break-system-packages meson mako pyyaml packaging
+          python3 -m pip install --user --break-system-packages --upgrade 'meson>=1.4.0' mako pyyaml packaging
+          $HOME/.local/bin/meson --version
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Fetch original StevenMXZ V38 release recipe
         run: |
