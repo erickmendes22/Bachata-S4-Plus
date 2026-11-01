@@ -1,0 +1,79 @@
+name: Turnip A8xx SotC barycentrics experiment
+
+on:
+  push:
+    branches:
+      - work/turnip-sotc-ir3-20261101
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout isolated experiment
+        uses: actions/checkout@v4
+
+      - name: Install native Mesa build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build patchelf unzip flex bison git perl \
+            python3-pip glslang-tools curl zip patch clang lld llvm pkg-config
+          pip3 install --break-system-packages meson mako pyyaml packaging
+
+      - name: Fetch the original Gen8 V38 performance build recipe
+        run: |
+          git clone --depth=1 --branch A8xx \
+            https://github.com/StevenMXZ/Adreno-Tools-Drivers.git vendor
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("vendor/build_turnip.sh")
+          s=p.read_text()
+          anchor="    configure_variant\n    apply_android_ndk_fixes"
+          assert s.count(anchor)==1, "Build recipe changed; refusing silent no-op"
+          s=s.replace(anchor,
+             '    configure_variant\n'
+             '    python3 "$GITHUB_WORKSPACE/turnip-sotc/patch.py"\n'
+             '    apply_android_ndk_fixes',1)
+          p.write_text(s)
+          PY
+
+      - name: Build A8xx patched Turnip with native barycentric lowering
+        env:
+          VARIANT: a8xx-patchs1
+          BUILD_VERSION: SotC-IR3-1
+        run: |
+          cd vendor
+          chmod +x build_turnip.sh
+          ./build_turnip.sh
+
+      - name: Verify installable driver and source features
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob,zipfile,json,hashlib
+          zips=glob.glob("vendor/turnip_workdir/Turnip_*.zip")
+          assert len(zips)==1,zips
+          p=zips[0]
+          with zipfile.ZipFile(p) as z:
+              assert z.testzip() is None
+              so=z.read("libvulkan_freedreno.so")
+              assert so[:4]==b"\x7fELF"
+              assert so[4]==2 and so[5]==1
+              assert int.from_bytes(so[18:20],"little")==183 # AArch64
+              meta=json.loads(z.read("meta.json"))
+              assert meta["libraryName"]=="libvulkan_freedreno.so"
+              print("Validated",p,"ELF",len(so),"SHA256",hashlib.sha256(so).hexdigest())
+          PY
+          grep -q 'BARYCENTRIC_IMPLEMENTATION_PATCHED' vendor/turnip_workdir/mesa/src/freedreno/ir3/ir3_nir.c || \
+             grep -q 'ir3_nir_lower_khr_fs_barycentrics' vendor/turnip_workdir/mesa/src/freedreno/ir3/ir3_nir.c
+
+      - name: Upload installable driver ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Turnip-Gen8-V38-SotC-IR3-Barycentric-Experimental
+          path: vendor/turnip_workdir/Turnip_*.zip
+          if-no-files-found: error
+          compression-level: 0
