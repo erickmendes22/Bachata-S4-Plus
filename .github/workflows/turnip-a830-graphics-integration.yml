@@ -39,7 +39,21 @@ jobs:
           p=Path("turnip-recipe/build_turnip.sh")
           s=p.read_text()
           assert s.count('[ "$count" -eq 6 ]')==1
-          p.write_text(s.replace('[ "$count" -eq 6 ]','[ "$count" -eq 5 ]'))
+          s=s.replace('[ "$count" -eq 6 ]','[ "$count" -eq 5 ]')
+          old='''            log "A8xx Patchs1: applying KGSL zero-timeout poll fix..."
+            local poll_patch="$REPO_ROOT/patches/patchs2/common/kgsl-zero-timeout-poll.patch"
+            if ! git apply --check "$poll_patch"; then
+                die "KGSL zero-timeout poll patch does not apply cleanly"
+            fi
+            git apply "$poll_patch"
+            grep -Fq 'kgsl_timestamp_retired(fd, context_id, timestamp) ? VK_SUCCESS : VK_TIMEOUT' src/freedreno/vulkan/tu_knl_kgsl.cc ||
+                die "KGSL zero-timeout poll fix not found in final source"'''
+          new='''            # Mesa f28352d already has the zero-timeout KGSL polling fix.
+            grep -Fq 'return kgsl_poll_timestamp(device, context_id, timestamp);' src/freedreno/vulkan/tu_knl_kgsl.cc ||
+                die "KGSL zero-timeout polling fix missing from pinned Mesa"'''
+          assert s.count(old)==1,"zero-timeout hook changed in pinned recipe"
+          s=s.replace(old,new)
+          p.write_text(s)
           PY
       - name: Integrate A830 fix with source guards
         run: |
