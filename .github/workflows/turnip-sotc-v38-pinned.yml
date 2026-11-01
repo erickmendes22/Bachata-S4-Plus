@@ -1,0 +1,80 @@
+name: Build SotC Turnip Gen8 V38-pinned Native Barycentrics
+
+on:
+  push:
+    branches:
+      - experimental/turnip-sotc-barycentrics
+    paths:
+      - .github/workflows/turnip-sotc-v38-pinned.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  v38-pinned:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y ninja-build patchelf unzip flex bison git perl python3-pip glslang-tools curl zip patch clang lld llvm meson
+          python3 -m pip install --user --break-system-packages meson mako pyyaml packaging
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Fetch original StevenMXZ V38 release recipe
+        run: |
+          git clone --depth=1 --branch v27.0.0-R1 https://github.com/StevenMXZ/Adreno-Tools-Drivers.git "$RUNNER_TEMP/v38-builder"
+          test -f "$RUNNER_TEMP/v38-builder/patches/patchs1/android/apply_balance_variant.py"
+      - name: Pin original V38 Mesa source and insert IR3 fix
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          p=Path(os.environ["RUNNER_TEMP"])/"v38-builder/build_turnip.sh"
+          t=p.read_text()
+          old="    configure_variant\n    apply_android_ndk_fixes\n    build_android\n"
+          new=('    configure_variant\n'
+               '    apply_android_ndk_fixes\n'
+               '    python3 "$GITHUB_WORKSPACE/tools/turnip-sotc/patch_barycentric.py"\n'
+               '    git diff --check\n'
+               '    git diff > "$RUNNER_TEMP/sotc-v38-barycentric-source.patch"\n'
+               '    build_android\n')
+          assert t.count(old)==1, "source recipe changed"
+          t=t.replace(old,new,1)
+          # Exact upstream Mesa commit embedded in the 2026-10-19 Gen8 V38 patched ELF.
+          # Use a GitHub mirror of the same upstream commit for reproducible fetch.
+          oldurl="https://gitlab.freedesktop.org/mesa/mesa.git"
+          assert t.count(oldurl)==1, "upstream URL changed"
+          t=t.replace(oldurl,"https://github.com/K11MCH1/DroidDeck-Turnip-Drivers.git",1)
+          p.write_text(t)
+          PY
+      - name: Build pinned 19 October Mesa with original performance patch recipe
+        env:
+          MESA_COMMIT: f28352d1179a4a85b4be286a883747bae2d3786b
+          VARIANT: a8xx-patchs1
+          BUILD_VERSION: "38-sotc-barycentric"
+        run: |
+          cd "$RUNNER_TEMP/v38-builder"
+          bash ./build_turnip.sh
+      - name: Validate Android ARM64 and ZIP
+        run: |
+          set -e
+          ZIP="$(find "$RUNNER_TEMP/v38-builder/turnip_workdir" -maxdepth 1 -name 'Turnip_*.zip' | head -n 1)"
+          test -n "$ZIP"
+          unzip -t "$ZIP"
+          unzip -p "$ZIP" meta.json | python3 -m json.tool
+          unzip -p "$ZIP" libvulkan_freedreno.so > "$RUNNER_TEMP/native.so"
+          file "$RUNNER_TEMP/native.so"
+          readelf -h "$RUNNER_TEMP/native.so" | grep 'Machine:.*AArch64'
+          strings "$RUNNER_TEMP/native.so" | grep -F 'VK_KHR_fragment_shader_barycentric'
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          cp "$ZIP" "$RUNNER_TEMP/sotc-v38-barycentric-source.patch" "$GITHUB_WORKSPACE/dist/"
+          sha256sum "$GITHUB_WORKSPACE/dist/"*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SotC-Gen8-V38-Pinned-Performance-Barycentric
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
