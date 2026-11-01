@@ -55,6 +55,13 @@ jobs:
           extra='            apply_patchs1_extra_patches\n'
           assert t.count(extra)==1, 'patch recipe changed'
           t=t.replace(extra,'            # 0001-0006 omitted for pinned Mesa V38 compatibility\n')
+          # Later zero-timeout KGSL patch also targets a post-V38 function
+          # layout. Original behavior is retained in this pinned build.
+          marker='            log "A8xx Patchs1: applying KGSL zero-timeout poll fix..."'
+          assert t.count(marker)==1, 'KGSL anchor changed'
+          i=t.index(marker)
+          j=t.index('            ;;',i)
+          t=t[:i]+'            # later KGSL poll patch omitted for original pinned Mesa\n'+t[j:]
           p.write_text(t)
           PY
       - name: Build pinned 19 October Mesa with original performance patch recipe
