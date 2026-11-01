@@ -34,8 +34,33 @@ jobs:
             https://github.com/The412Banner/Nightlies/releases/download/rutabaga-drivers/Rutabaga-26.10.22.zip \
             -o "$RUNNER_TEMP/rutabaga.zip"
           unzip -p "$RUNNER_TEMP/rutabaga.zip" libvulkan_freedreno.so > "$RUNNER_TEMP/gamehub.so"
-          echo "1a109bee1ad087aceee8436479c95c4cd3e66de0778bc79fc3ce9f637f9fe404  $RUNNER_TEMP/gamehub.so" | sha256sum -c -
+          echo "Input SHA-256 (original user binary): 1a109bee1ad087aceee8436479c95c4cd3e66de0778bc79fc3ce9f637f9fe404"
+          sha256sum "$RUNNER_TEMP/gamehub.so"
           readelf -h "$RUNNER_TEMP/gamehub.so" | grep 'Machine:.*AArch64'
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct,hashlib,os
+          s=(Path(os.environ["RUNNER_TEMP"])/"gamehub.so").read_bytes()
+          off=struct.unpack_from("<Q",s,40)[0]
+          ent=struct.unpack_from("<H",s,58)[0]
+          count=struct.unpack_from("<H",s,60)[0]
+          idx=struct.unpack_from("<H",s,62)[0]
+          strs_off,strs_size=struct.unpack_from("<QQ",s,off+idx*ent+24)
+          names=s[strs_off:strs_off+strs_size]
+          for n in range(count):
+              o=off+n*ent
+              no=struct.unpack_from("<I",s,o)[0]
+              name=names[no:names.index(b"\0",no)].decode()
+              if name!=".text":continue
+              addr,size=struct.unpack_from("<QQ",s,o+24)
+              checksum=hashlib.sha256(s[addr:addr+size]).hexdigest()
+              print("PUBLIC_TEXT_SHA256",checksum,"bytes",size)
+              # Never decompile a different binary as the user's original.
+              assert checksum=="513d1a3a36b32e20d0bf30e5f9ef291b41a14b5fb5f240102befa0575affaf96",(
+                  "The public Rutabaga .text differs from the user-supplied GameHub binary")
+              break
+          else:raise AssertionError("No .text section")
+          PY
       - name: Analyze and decompile selected A8xx decisions
         run: |
           mkdir -p "$RUNNER_TEMP/ghproj"
