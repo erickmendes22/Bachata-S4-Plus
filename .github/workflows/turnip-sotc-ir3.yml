@@ -44,6 +44,7 @@ jobs:
         env:
           VARIANT: a8xx-patchs1
           BUILD_VERSION: SotC-IR3-1
+          MESA_COMMIT: c823a83e8f373a5c36c2b9ed1d7dc98a4f3360ee
         run: |
           cd vendor
           chmod +x build_turnip.sh
