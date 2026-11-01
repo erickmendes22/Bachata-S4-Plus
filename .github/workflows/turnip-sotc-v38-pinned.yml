@@ -48,6 +48,13 @@ jobs:
           oldurl="https://gitlab.freedesktop.org/mesa/mesa.git"
           assert t.count(oldurl)==1, "upstream URL changed"
           t=t.replace(oldurl,"https://github.com/K11MCH1/DroidDeck-Turnip-Drivers.git",1)
+          # The post-release mesh-shader patchset 0001-0006 does not apply
+          # to the exact Mesa f28352d117 from original V38. It is unrelated
+          # to SotC barycentrics; retain WinNative Android, UBWC, A8xx, GMEM,
+          # KGSL tweaks, but do not merge the later mesh patch by force.
+          extra='            apply_patchs1_extra_patches\n'
+          assert t.count(extra)==1, 'patch recipe changed'
+          t=t.replace(extra,'            # 0001-0006 omitted for pinned Mesa V38 compatibility\n')
           p.write_text(t)
           PY
       - name: Build pinned 19 October Mesa with original performance patch recipe
