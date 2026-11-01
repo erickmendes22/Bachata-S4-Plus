@@ -1,7 +1,7 @@
 name: Turnip A830 pinned source integration
 on:
   push:
-    branches: [fix/turnip-gamehub-a830-sotc]
+    branches: [fix/a830-recover-native-barycentric-20261101]
   workflow_dispatch:
 permissions:
   contents: read
@@ -59,6 +59,12 @@ jobs:
                   git apply "$GITHUB_WORKSPACE/tools/turnip-a830/0001-tu-lrz-a8xx-reset.patch"
               fi
               grep -Fq 'tu6_write_lrz_cntl<CHIP>(cmd, cs, {});' src/freedreno/vulkan/tu_lrz.cc
+              # Restore the previously shipped native A830 barycentric path;
+              # never advertise the Vulkan extension without the IR3 conversion.
+              python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_native_barycentrics.py"
+              grep -Fq 'ir3_lower_khr_barycentrics_cb' src/freedreno/ir3/ir3_nir.c
+              grep -Fq 'nir_intrinsic_has_interp_mode(baryc)' src/freedreno/ir3/ir3_compiler_nir.c
+              grep -Fq 'features->fragmentShaderBarycentric = pdevice->info->chip >= A8XX;' src/freedreno/vulkan/tu_device.cc
               grep -Fq 'cube_coord_hang_quirk' src/freedreno/ir3/ir3_nir.c
               grep -Fq 'kgsl_bo_create_alias' src/freedreno/vulkan/tu_knl_kgsl.cc
               grep -Fq 'kgsl_bo_destroy_alias' src/freedreno/vulkan/tu_knl_kgsl.cc
@@ -67,12 +73,13 @@ jobs:
           """
           p.write_text(s.replace(needle,hook+needle))
           PY
+          python3 -m py_compile tools/turnip-a830/apply_native_barycentrics.py
           bash -n turnip-recipe/build_turnip.sh
       - name: Compile Android KGSL driver
         env:
           VARIANT: a8xx-patchs1
           MESA_COMMIT: f28352d1179a4a85b4be286a883747bae2d3786b
-          BUILD_VERSION: a830-lrz-1
+          BUILD_VERSION: a830-lrz-native-barycentric-2
         run: |
           cd turnip-recipe
           bash build_turnip.sh
@@ -89,7 +96,7 @@ jobs:
           sha256sum /tmp/a830.so "$driver_zip" > turnip-sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: turnip-a830-lrz-graphics-integration
+          name: turnip-a830-lrz-native-barycentrics-source-verified
           path: |
             turnip-recipe/turnip_workdir/Turnip_*.zip
             turnip-sha256.txt
