@@ -19,10 +19,12 @@ replace_exact("src/freedreno/vulkan/tu_device.cc",
     "      .KHR_fragment_shading_rate = device->info->props.has_attachment_shading_rate,",
     "advertise VK_KHR_fragment_shader_barycentric for A8xx")
 replace_exact("src/freedreno/vulkan/tu_device.cc",
-    "   /* VK_KHR_fragment_shading_rate */\n",
+    "   /* VK_KHR_fragment_shading_rate */\n"
+    "   features->pipelineFragmentShadingRate",
     "   /* VK_KHR_fragment_shader_barycentric requires IR3 lowering below. */\n"
     "   features->fragmentShaderBarycentric = pdevice->info->chip >= A8XX;\n\n"
-    "   /* VK_KHR_fragment_shading_rate */\n",
+    "   /* VK_KHR_fragment_shading_rate */\n"
+    "   features->pipelineFragmentShadingRate",
     "enable barycentric feature for A8xx")
 
 lowering=r'''/* A8xx KHR_fragment_shader_barycentric implementation.
