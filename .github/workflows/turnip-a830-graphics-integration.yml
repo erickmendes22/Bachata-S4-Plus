@@ -21,6 +21,26 @@ jobs:
           git clone --depth=1 -b A8xx https://github.com/StevenMXZ/Adreno-Tools-Drivers.git turnip-recipe
           git -C turnip-recipe fetch --depth=1 origin b3b32ad30e7d7b4bd897e678af064036eeb9df09
           git -C turnip-recipe checkout --detach b3b32ad30e7d7b4bd897e678af064036eeb9df09
+      - name: Use rebased A8xx patches without retired IB cache
+        run: |
+          git clone --depth=1 -b A8xx https://github.com/The412Banner/Banners-Turnip.git rebased
+          git -C rebased fetch --depth=1 origin 7fffd01ddb5651d72a05dd0b12b84977cb95d397
+          git -C rebased checkout --detach 7fffd01ddb5651d72a05dd0b12b84977cb95d397
+          for n in 1 2 3 4 5; do
+            old=$(find turnip-recipe/patches/patchs1 -maxdepth 1 -name "000$n-*.patch" -type f)
+            new=$(find rebased/patches/a8xx-winnative -maxdepth 1 -name "000$n-*.patch" -type f)
+            test -n "$old" && test -n "$new"
+            rm "$old"
+            cp "$new" turnip-recipe/patches/patchs1/
+          done
+          rm turnip-recipe/patches/patchs1/0006-*.patch
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("turnip-recipe/build_turnip.sh")
+          s=p.read_text()
+          assert s.count('[ "$count" -eq 6 ]')==1
+          p.write_text(s.replace('[ "$count" -eq 6 ]','[ "$count" -eq 5 ]'))
+          PY
       - name: Integrate A830 fix with source guards
         run: |
           python3 - <<'PY'
