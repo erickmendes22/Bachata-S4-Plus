@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """GameHub A830 RGB96 linear image transfers: a complete CP_MEMCPY fallback.
 
-The hardware texture format table already has RGB32 UINT/SINT/FLOAT TEX,
+The hardware texture format table already has RGB32 FLOAT TEX,
 but the 2D blitter cannot output 12-byte (RGB96) pixels and the V38
 format feature gate denies sampled and TRANSFER_SRC/DST to these formats.
 These operations use the CP_MEMCPY command packet used by Mesa's
@@ -23,9 +23,7 @@ tu_gamehub_a830_rgb96(struct tu_cmd_buffer *cmd, VkFormat format)
    return (chip_id == 0xffff44050000ull ||
            chip_id == 0xffff44050001ull ||
            chip_id == 0x44050001ull) &&
-          (format == VK_FORMAT_R32G32B32_SFLOAT ||
-           format == VK_FORMAT_R32G32B32_UINT ||
-           format == VK_FORMAT_R32G32B32_SINT);
+          (format == VK_FORMAT_R32G32B32_SFLOAT);
 }
 
 static void
