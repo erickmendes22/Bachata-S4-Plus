@@ -12,19 +12,27 @@ The V38 requiredSubgroupSizeStages conditional remains untouched.
 from pathlib import Path
 import sys
 
-OLD = """   p->minSubgroupSize = pdevice->info->threadsize_base;
-   p->maxSubgroupSize = tu_subgroup_size(pdevice);"""
-NEW = """   p->maxSubgroupSize = tu_subgroup_size(pdevice);
-   // Original GameHub A830 reports fixed 64-wide subgroups, whereas the
-   // WinNative wave32 compatibility layer in this V38 exposed 32..64.
-   // This avoids selecting half-wave paths for the A830 PS4 renderer.
+# These anchors are from the actual A8xx WinNative patch 0002 which is
+# applied BEFORE this script. The upstream unpatched V38 has a different
+# subgroup advertisement (pdevice->info->threadsize_base).
+OLD = """   p->minSubgroupSize = tu_min_subgroup_size(pdevice);
+   p->maxSubgroupSize = tu_subgroup_size(pdevice);
+   p->maxComputeWorkgroupSubgroups = pdevice->info->max_waves *
+      pdevice->info->threadsize_base / p->minSubgroupSize;"""
+
+NEW = """   // GameHub A830 reports fixed 64-thread subgroups. WinNative's
+   // half-wave emulation remains available for other Adreno devices, but
+   // should not be exposed to applications selecting this A830 profile.
    const uint64_t chip_id = pdevice->dev_id.chip_id;
    const bool gamehub_a830_wave64 =
       chip_id == 0xffff44050000ull ||
       chip_id == 0xffff44050001ull ||
       chip_id == 0x44050001ull;
+   p->maxSubgroupSize = tu_subgroup_size(pdevice);
    p->minSubgroupSize = gamehub_a830_wave64 ?
-      p->maxSubgroupSize : pdevice->info->threadsize_base;"""
+      p->maxSubgroupSize : tu_min_subgroup_size(pdevice);
+   p->maxComputeWorkgroupSubgroups = pdevice->info->max_waves *
+      pdevice->info->threadsize_base / p->minSubgroupSize;"""
 
 def apply(path: Path):
     src=path.read_text()
