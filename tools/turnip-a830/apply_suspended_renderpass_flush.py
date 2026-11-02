@@ -48,8 +48,6 @@ def apply(path: Path = SOURCE) -> None:
         raise RuntimeError("Pinned V38 suspend/resume anchor changed; refuse unsafe patch")
     if "if (suspending && !resuming)" in body:
         raise RuntimeError("Suspended chain already handles pre-chain flush; inspect before applying")
-    if "tu_insert_dynamic_cmdbufs" not in text:
-        raise RuntimeError("Expected deferred dynamic rendering implementation absent")
     rewritten = text[:start] + body.replace(BEFORE, AFTER, 1) + text[stop:]
     assert rewritten.count(MARKER) == 1
     assert rewritten[start:stop+len(AFTER)].count("if (suspending && !resuming)") == 1
