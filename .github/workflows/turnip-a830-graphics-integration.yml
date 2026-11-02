@@ -61,8 +61,11 @@ jobs:
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_native_barycentrics.py"
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_selective_renderpass.py"
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_depth_range_unrestricted.py"
+              python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_a830_fdm_full_density.py"
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_gpu_properties.py" src/freedreno/common/freedreno_devices.py
               grep -Fq "prim_alloc_threshold = 0xF" src/freedreno/common/freedreno_devices.py
+              grep -Fq 'gamehub_a830_full_density' src/freedreno/vulkan/tu_tile_config.cc
+              grep -Fq 'if (fdm && !gamehub_a830_full_density)' src/freedreno/vulkan/tu_tile_config.cc
               grep -Fq '.EXT_depth_range_unrestricted =' src/freedreno/vulkan/tu_device.cc
               grep -Fq 'device->dev_id.chip_id == 0xffff44050001ull' src/freedreno/vulkan/tu_device.cc
               grep -Fq 'tu_gamehub_a8xx_msaa8_needs_sysmem' src/freedreno/vulkan/tu_cmd_buffer.cc
@@ -81,13 +84,13 @@ jobs:
           """
           p.write_text(s.replace(needle,hook+needle))
           PY
-          python3 -m py_compile tools/turnip-a830/apply_native_barycentrics.py tools/turnip-a830/apply_gamehub_selective_renderpass.py tools/turnip-a830/apply_gamehub_depth_range_unrestricted.py tools/turnip-a830/apply_gamehub_gpu_properties.py tools/turnip-a830/verify_gamehub_gpu_threshold.py
+          python3 -m py_compile tools/turnip-a830/apply_native_barycentrics.py tools/turnip-a830/apply_gamehub_selective_renderpass.py tools/turnip-a830/apply_gamehub_depth_range_unrestricted.py tools/turnip-a830/apply_gamehub_a830_fdm_full_density.py tools/turnip-a830/apply_gamehub_gpu_properties.py tools/turnip-a830/verify_gamehub_gpu_threshold.py
           bash -n turnip-recipe/build_turnip.sh
       - name: Compile Android KGSL driver
         env:
           VARIANT: a8xx-patchs1
           MESA_COMMIT: f28352d1179a4a85b4be286a883747bae2d3786b
-          BUILD_VERSION: a830-gamehub-depth-range-r1
+          BUILD_VERSION: a830-gamehub-depth-fdm-r2
         run: |
           cd turnip-recipe
           bash build_turnip.sh
@@ -105,7 +108,7 @@ jobs:
           sha256sum /tmp/a830.so "$driver_zip" > turnip-sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: turnip-a830-gamehub-depth-range-r1
+          name: turnip-a830-gamehub-depth-fdm-r2
           path: |
             turnip-recipe/turnip_workdir/Turnip_*.zip
             turnip-sha256.txt
