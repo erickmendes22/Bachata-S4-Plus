@@ -1,0 +1,26 @@
+name: Audit pinned V38 A830 GPU ABI for GameHub reconstruction
+on:
+  push:
+    branches: [analysis/gamehub-a830-ubwc-abi-reconstruction-20261102]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned freedreno ABI header, compile field map
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 3 https://raw.githubusercontent.com/whitebelyash/mesa-unified/f28352d1179a4a85b4be286a883747bae2d3786b/src/freedreno/common/freedreno_dev_info.h -o /tmp/freedreno_dev_info.h
+          cc -std=c11 -Wall -Wextra -Werror -O2 -I/tmp tools/turnip-a830/audit_fd_dev_info_abi.c -o /tmp/abi-map
+          /tmp/abi-map | tee gpu-v38-a830-props-abi.txt
+          grep -Fq props.has_coherent_ubwc_flag_caches gpu-v38-a830-props-abi.txt
+          grep -Fq props.ubwc_coherency_quirk gpu-v38-a830-props-abi.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GameHub_A830_V38_UBWC_GPUProps_ABI_Map
+          path: gpu-v38-a830-props-abi.txt
+          if-no-files-found: error
