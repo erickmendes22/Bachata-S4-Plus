@@ -30,7 +30,7 @@ def fmt(path):
     * clearing them because they're not renderable.
     */
    if (supported_tex && !is_npot) {"""
-    after = """   // GameHub A830 exposes sampled RGB96 and transfer, backed by a
+    after = """   {\n   // GameHub A830 exposes sampled RGB96 and transfer, backed by a
    // linear 12-byte-pixel layout and CP_MEMCPY for buffer/image transfers.
    // RGB96 remains intentionally NON-renderable; there is no RGB96 RB format.
    const bool gamehub_a830_rgb96 =
@@ -41,6 +41,7 @@ def fmt(path):
                  VK_FORMAT_FEATURE_2_TRANSFER_SRC_BIT |
                  VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT |
                  VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_FILTER_MINMAX_BIT;
+   }
    }
 
    /* Don't support anything but texel buffers for other non-power-of-two
