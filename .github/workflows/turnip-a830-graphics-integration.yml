@@ -1,7 +1,7 @@
 name: Turnip A830 pinned source integration
 on:
   push:
-    branches: [fix/a830-gamehub-depth-range-parity-20261102]
+    branches: [fix/a830-gamehub-depth-range-parity-20261102, fix/a830-v38-suspended-renderpass-flush-20261102]
   workflow_dispatch:
 permissions:
   contents: read
@@ -63,7 +63,10 @@ jobs:
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_depth_range_unrestricted.py"
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_a830_fdm_full_density.py"
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_gpu_properties.py" src/freedreno/common/freedreno_devices.py
+              python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_suspended_renderpass_flush.py"
               grep -Fq "prim_alloc_threshold = 0xF" src/freedreno/common/freedreno_devices.py
+              grep -Fq "A830 suspended-renderpass pre-chain cache flush (Droid-Deck)" src/freedreno/vulkan/tu_cmd_buffer.cc
+              grep -Fq "if (suspending && !resuming)" src/freedreno/vulkan/tu_cmd_buffer.cc
               grep -Fq 'gamehub_a830_full_density' src/freedreno/vulkan/tu_tile_config.cc
               grep -Fq 'if (fdm && !gamehub_a830_full_density)' src/freedreno/vulkan/tu_tile_config.cc
               grep -Fq '.EXT_depth_range_unrestricted =' src/freedreno/vulkan/tu_device.cc
@@ -84,13 +87,13 @@ jobs:
           """
           p.write_text(s.replace(needle,hook+needle))
           PY
-          python3 -m py_compile tools/turnip-a830/apply_native_barycentrics.py tools/turnip-a830/apply_gamehub_selective_renderpass.py tools/turnip-a830/apply_gamehub_depth_range_unrestricted.py tools/turnip-a830/apply_gamehub_a830_fdm_full_density.py tools/turnip-a830/apply_gamehub_gpu_properties.py tools/turnip-a830/verify_gamehub_gpu_threshold.py
+          python3 -m py_compile tools/turnip-a830/apply_native_barycentrics.py tools/turnip-a830/apply_gamehub_selective_renderpass.py tools/turnip-a830/apply_gamehub_depth_range_unrestricted.py tools/turnip-a830/apply_gamehub_a830_fdm_full_density.py tools/turnip-a830/apply_gamehub_gpu_properties.py tools/turnip-a830/apply_suspended_renderpass_flush.py tools/turnip-a830/verify_gamehub_gpu_threshold.py
           bash -n turnip-recipe/build_turnip.sh
       - name: Compile Android KGSL driver
         env:
           VARIANT: a8xx-patchs1
           MESA_COMMIT: f28352d1179a4a85b4be286a883747bae2d3786b
-          BUILD_VERSION: a830-gamehub-depth-fdm-r2
+          BUILD_VERSION: a830-suspended-flush-r3
         run: |
           cd turnip-recipe
           bash build_turnip.sh
@@ -108,7 +111,7 @@ jobs:
           sha256sum /tmp/a830.so "$driver_zip" > turnip-sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: turnip-a830-gamehub-depth-fdm-r2
+          name: turnip-a830-v38-suspended-flush-r3
           path: |
             turnip-recipe/turnip_workdir/Turnip_*.zip
             turnip-sha256.txt
