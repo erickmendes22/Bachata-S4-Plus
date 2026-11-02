@@ -39,7 +39,7 @@ def apply(path: Path):
     if src.count(OLD) != 1 or "gamehub_a830_wave64" in src:
         raise ValueError("Unexpected pinned Mesa 1.3 subgroup path or already patched")
     for needle in ("p->requiredSubgroupSizeStages =",
-                   "p->minSubgroupSize == p->maxSubgroupSize",
+                   "!pdevice->expose_double_threadsize",
                    "VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT"):
         if needle not in src:
             raise ValueError("Missing existing subgroup constraint: "+needle)
