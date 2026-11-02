@@ -1,7 +1,7 @@
 name: Turnip A830 pinned source integration
 on:
   push:
-    branches: [fix/a830-recover-native-barycentric-20261101]
+    branches: [fix/a830-driver-sysmem-safety-20261102]
   workflow_dispatch:
 permissions:
   contents: read
@@ -62,6 +62,8 @@ jobs:
               # Restore the previously shipped native A830 barycentric path;
               # never advertise the Vulkan extension without the IR3 conversion.
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_native_barycentrics.py"
+              python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_a830_sysmem_safety.py" src/freedreno/vulkan/tu_cmd_buffer.cc
+              grep -Fq "A830 GMEM page-write workaround: use SYSMEM" src/freedreno/vulkan/tu_cmd_buffer.cc
               grep -Fq 'ir3_lower_khr_barycentrics_cb' src/freedreno/ir3/ir3_nir.c
               grep -Fq 'nir_intrinsic_has_interp_mode(baryc)' src/freedreno/ir3/ir3_compiler_nir.c
               grep -Fq 'features->fragmentShaderBarycentric = pdevice->info->chip >= A8XX;' src/freedreno/vulkan/tu_device.cc
@@ -73,13 +75,13 @@ jobs:
           """
           p.write_text(s.replace(needle,hook+needle))
           PY
-          python3 -m py_compile tools/turnip-a830/apply_native_barycentrics.py
+          python3 -m py_compile tools/turnip-a830/apply_native_barycentrics.py tools/turnip-a830/apply_a830_sysmem_safety.py
           bash -n turnip-recipe/build_turnip.sh
       - name: Compile Android KGSL driver
         env:
           VARIANT: a8xx-patchs1
           MESA_COMMIT: f28352d1179a4a85b4be286a883747bae2d3786b
-          BUILD_VERSION: a830-lrz-native-barycentric-2
+          BUILD_VERSION: a830-sysmem-safe-3
         run: |
           cd turnip-recipe
           bash build_turnip.sh
@@ -96,7 +98,7 @@ jobs:
           sha256sum /tmp/a830.so "$driver_zip" > turnip-sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: turnip-a830-lrz-native-barycentrics-source-verified
+          name: turnip-a830-sysmem-safe-native-barycentric
           path: |
             turnip-recipe/turnip_workdir/Turnip_*.zip
             turnip-sha256.txt
