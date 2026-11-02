@@ -233,9 +233,13 @@ def apply(path: Path):
     if s.count(before)!=1: raise ValueError("RGB96 image->image anchor mismatch")
     s=s.replace(before,after,1)
 
-    before="""   bool use_generic_clear = use_generic_clear_for_image_clear(cmd, image);
+    before="""   trace_start_clear_color_image(&cmd->trace, &cmd->cs, cmd, image->vk.format);
+
+   bool use_generic_clear = use_generic_clear_for_image_clear(cmd, image);
    if (use_generic_clear) {"""
-    after="""   if (tu_gamehub_a830_rgb96(cmd, image->vk.format)) {
+    after="""   trace_start_clear_color_image(&cmd->trace, &cmd->cs, cmd, image->vk.format);
+
+   if (tu_gamehub_a830_rgb96(cmd, image->vk.format)) {
       tu_gamehub_a830_rgb96_clear(cmd, image, pColor, rangeCount, pRanges);
       trace_end_clear_color_image(&cmd->trace, &cmd->cs);
       return;
