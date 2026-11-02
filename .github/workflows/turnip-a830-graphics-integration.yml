@@ -69,7 +69,7 @@ jobs:
               grep -Fq 'gamehub_a830_legacy_subpass' src/freedreno/vulkan/tu_cmd_buffer.cc
               grep -Fq 'tu_emit_event_write<CHIP>(cmd_buffer, cs, FD_CACHE_INVALIDATE);' src/freedreno/vulkan/tu_cmd_buffer.cc
               grep -Fq 'gamehub_a830_wave64' src/freedreno/vulkan/tu_device.cc
-              grep -Fq 'p->maxSubgroupSize : pdevice->info->threadsize_base' src/freedreno/vulkan/tu_device.cc
+              grep -Fq 'p->maxSubgroupSize : tu_min_subgroup_size(pdevice)' src/freedreno/vulkan/tu_device.cc
               grep -Fq 'gamehub_a830_full_density' src/freedreno/vulkan/tu_tile_config.cc
               grep -Fq 'if (fdm && !gamehub_a830_full_density)' src/freedreno/vulkan/tu_tile_config.cc
               grep -Fq '.EXT_depth_range_unrestricted =' src/freedreno/vulkan/tu_device.cc
