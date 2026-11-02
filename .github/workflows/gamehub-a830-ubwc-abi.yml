@@ -15,7 +15,8 @@ jobs:
         run: |
           set -euo pipefail
           curl -fLsS --retry 3 https://raw.githubusercontent.com/whitebelyash/mesa-unified/f28352d1179a4a85b4be286a883747bae2d3786b/src/freedreno/common/freedreno_dev_info.h -o /tmp/freedreno_dev_info.h
-          cc -std=c11 -Wall -Wextra -Werror -O2 -I/tmp tools/turnip-a830/audit_fd_dev_info_abi.c -o /tmp/abi-map
+          python3 tools/turnip-a830/gen_full_fd_dev_info_abi.py /tmp/freedreno_dev_info.h > /tmp/fd_dev_info_full_abi.c
+          cc -std=c11 -Wall -Wextra -Werror -O2 -I/tmp /tmp/fd_dev_info_full_abi.c -o /tmp/abi-map
           /tmp/abi-map | tee gpu-v38-a830-props-abi.txt
           grep -Fq props.has_coherent_ubwc_flag_caches gpu-v38-a830-props-abi.txt
           grep -Fq props.ubwc_coherency_quirk gpu-v38-a830-props-abi.txt
