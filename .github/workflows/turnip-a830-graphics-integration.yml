@@ -1,7 +1,7 @@
 name: Turnip A830 pinned source integration
 on:
   push:
-    branches: [fix/gamehub-a830-verified-gpu-profile-20261102]
+    branches: [fix/a830-gamehub-indexed-draw-split-20261102]
   workflow_dispatch:
 permissions:
   contents: read
@@ -60,8 +60,10 @@ jobs:
               # never advertise the Vulkan extension without the IR3 conversion.
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_native_barycentrics.py"
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_selective_renderpass.py"
+              python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_a830_indexed_draw_split.py"
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_gpu_properties.py" src/freedreno/common/freedreno_devices.py
               grep -Fq "prim_alloc_threshold = 0xF" src/freedreno/common/freedreno_devices.py
+              grep -Fq 'Original GameHub A830 (ELF 0x94c42c..0x94c93c)' src/freedreno/vulkan/tu_cmd_buffer.cc
               grep -Fq 'tu_gamehub_a8xx_msaa8_needs_sysmem' src/freedreno/vulkan/tu_cmd_buffer.cc
               grep -Fq 'tu_gamehub_a8xx_multipass_msaa_needs_sysmem' src/freedreno/vulkan/tu_cmd_buffer.cc
               grep -Fq 'tu_gamehub_a8xx_d32s8_msaa_input_prefers_gmem' src/freedreno/vulkan/tu_cmd_buffer.cc
@@ -78,13 +80,13 @@ jobs:
           """
           p.write_text(s.replace(needle,hook+needle))
           PY
-          python3 -m py_compile tools/turnip-a830/apply_native_barycentrics.py tools/turnip-a830/apply_gamehub_selective_renderpass.py tools/turnip-a830/apply_gamehub_gpu_properties.py tools/turnip-a830/verify_gamehub_gpu_threshold.py
+          python3 -m py_compile tools/turnip-a830/apply_native_barycentrics.py tools/turnip-a830/apply_gamehub_selective_renderpass.py tools/turnip-a830/apply_gamehub_a830_indexed_draw_split.py tools/turnip-a830/apply_gamehub_gpu_properties.py tools/turnip-a830/verify_gamehub_gpu_threshold.py
           bash -n turnip-recipe/build_turnip.sh
       - name: Compile Android KGSL driver
         env:
           VARIANT: a8xx-patchs1
           MESA_COMMIT: f28352d1179a4a85b4be286a883747bae2d3786b
-          BUILD_VERSION: a830-gamehub-primitive-allocation-r1
+          BUILD_VERSION: a830-gamehub-indexed-draw-arm64-r1
         run: |
           cd turnip-recipe
           bash build_turnip.sh
@@ -102,7 +104,7 @@ jobs:
           sha256sum /tmp/a830.so "$driver_zip" > turnip-sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: turnip-a830-gamehub-renderpass-gpu-props-reconstructed
+          name: turnip-a830-gamehub-indexed-draw-arm64-r1
           path: |
             turnip-recipe/turnip_workdir/Turnip_*.zip
             turnip-sha256.txt
