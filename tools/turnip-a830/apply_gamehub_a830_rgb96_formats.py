@@ -21,9 +21,7 @@ def a830_expr(pdev):
             "         " + pdev + "->dev_id.chip_id == 0xffff44050001ull ||\n"
             "         " + pdev + "->dev_id.chip_id == 0x44050001ull)")
 
-RGB = """(vk_format == VK_FORMAT_R32G32B32_UINT ||
-      vk_format == VK_FORMAT_R32G32B32_SINT ||
-      vk_format == VK_FORMAT_R32G32B32_SFLOAT)"""
+RGB = """(vk_format == VK_FORMAT_R32G32B32_SFLOAT)"""
 
 def fmt(path):
     s=path.read_text()
@@ -59,9 +57,7 @@ def fmt(path):
    // images only. Never advertise unsupported 3D/array sparse or MSAA.
    const bool gamehub_a830_rgb96_image =
       """+a830_expr("physical_device")+""" &&
-      (info->format == VK_FORMAT_R32G32B32_UINT ||
-       info->format == VK_FORMAT_R32G32B32_SINT ||
-       info->format == VK_FORMAT_R32G32B32_SFLOAT);
+      (info->format == VK_FORMAT_R32G32B32_SFLOAT);
    if (gamehub_a830_rgb96_image &&
        (info->type != VK_IMAGE_TYPE_2D ||
         (info->flags & (VK_IMAGE_CREATE_SPARSE_BINDING_BIT |
@@ -92,9 +88,7 @@ def img(path):
    const bool gamehub_a830_rgb96 =
       (chip_id == 0xffff44050000ull || chip_id == 0xffff44050001ull ||
        chip_id == 0x44050001ull) &&
-      (image->vk.format == VK_FORMAT_R32G32B32_UINT ||
-       image->vk.format == VK_FORMAT_R32G32B32_SINT ||
-       image->vk.format == VK_FORMAT_R32G32B32_SFLOAT);
+      (image->vk.format == VK_FORMAT_R32G32B32_SFLOAT);
    if (gamehub_a830_rgb96)
       force_linear_tile = true;
 
