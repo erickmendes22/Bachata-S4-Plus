@@ -1,0 +1,43 @@
+name: Analyze public Rutabaga comparable ELF reference
+on:
+  push:
+    branches: [analysis/gamehub-a830-ubwc-abi-reconstruction-20261102]
+    paths: [.github/workflows/gamehub-rutabaga-comparable-elf.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch public comparable and report identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 4 --retry-delay 2 \
+            https://github.com/The412Banner/Nightlies/releases/download/rutabaga-drivers/Rutabaga-26.10.22.zip \
+            -o "$RUNNER_TEMP/reference.zip"
+          unzip -l "$RUNNER_TEMP/reference.zip" > /tmp/archive_manifest.txt
+          unzip -p "$RUNNER_TEMP/reference.zip" libvulkan_freedreno.so > /tmp/rutabaga-reference.so
+          sha256sum /tmp/rutabaga-reference.so
+          readelf -h /tmp/rutabaga-reference.so | grep -E 'AArch64|Machine'
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          d=Path("/tmp/rutabaga-reference.so").read_bytes()
+          exact=hashlib.sha256(d).hexdigest()=="1a109bee1ad087aceee8436479c95c4cd3e66de0778bc79fc3ce9f637f9fe404"
+          print("BYTE_IDENTICAL_TO_ORIGINAL",exact)
+          Path("rutabaga-reference-metadata.txt").write_text(f"sha256={hashlib.sha256(d).hexdigest()}\nsize={len(d)}\nidentical_to_original={exact}\n")
+          PY
+          cp /tmp/rutabaga-reference.so rutabaga-reference.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Rutabaga_Public_Reference_Not_Original
+          path: |
+            rutabaga-reference.so
+            rutabaga-reference-metadata.txt
+          compression-level: 6
+          retention-days: 2
+          if-no-files-found: error
