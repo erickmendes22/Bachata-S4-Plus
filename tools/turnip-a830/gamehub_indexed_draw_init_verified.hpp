@@ -9,7 +9,10 @@ constexpr IndexedDrawInit reconstruct_indexed_draw_init(
     uint8_t split_quirk, uint8_t gpu_generation, uint8_t runtime_0x326) noexcept {
     if (split_quirk != 1) return {0x600u, 0u};
     const uint8_t enabled = gpu_generation > 7 ? runtime_0x326 : 0u;
-    return {enabled ? 0x1800u : 0x600u, enabled};
+    // ARM64 at 0x99bde0 compares runtime_0x326 against zero. The AND at
+    // 0x99bde4 does NOT alter condition flags, so CSEL at 0x99bde8
+    // chooses the limit based on the unmasked byte, not `enabled`.
+    return {runtime_0x326 != 0 ? 0x1800u : 0x600u, enabled};
 }
 // This is a verified init policy, not a complete implementation of
 // vkCmdDrawIndexed splitting. Unidentified runtime fields must not be
