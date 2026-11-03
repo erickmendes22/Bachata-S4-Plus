@@ -23,6 +23,20 @@ jobs:
           git -C upstream remote add origin https://github.com/The412Banner/Banners-Turnip.git
           git -C upstream fetch --depth=1 origin 7fffd01ddb5651d72a05dd0b12b84977cb95d397
           git -C upstream checkout --detach FETCH_HEAD
+          git init recipe
+          git -C recipe remote add origin https://github.com/StevenMXZ/Adreno-Tools-Drivers.git
+          git -C recipe fetch --depth=1 origin b3b32ad30e7d7b4bd897e678af064036eeb9df09
+          git -C recipe checkout --detach FETCH_HEAD
+          # The real V38 recipe creates u_gralloc_aimapper.c in its Android
+          # staging phase; raw Mesa does not contain this generated backend.
+          (
+            cd mesa
+            for script in fix_gralloc_flushall.py fix_a8xx_dev_info.py apply_a8xx_gpus.py apply_a7xx_gen1_quirks.py apply_a7xx_gen2_ubwc_hint.py add_aimapper_gralloc.py add_ubwc_swapchain_usage.py; do
+              python3 "$GITHUB_WORKSPACE/recipe/patches/patchs1/android/$script"
+            done
+            python3 "$GITHUB_WORKSPACE/recipe/patches/patchs1/android/apply_balance_variant.py"
+            test -s src/util/u_gralloc/u_gralloc_aimapper.c
+          )
           for n in 1 2 3 4 5; do
             patchfile=$(find upstream/patches/a8xx-winnative -maxdepth 1 -name "000$n-*.patch" -type f -print -quit)
             test -s "$patchfile"
