@@ -21,6 +21,8 @@ certain QTI metadata planes, a concrete divergence in UBWC import.
 This patch restores GameHub's layout source while retaining V38's existing
 IMapper parser as a fallback for devices whose legacy gralloc fails. Legacy
 fourcc/modifier are overwritten only if both modern metadata values exist.
+A successful legacy import must still return success if metadata lookup
+fails (ELF 0xCA313C), and a legacy failure propagates its error (0xCA2F08).
 Also ports the original libui getInstance/getPixelFormatFourCC/
 getPixelFormatModifier fallback without linking a private Android library.
 """
@@ -58,38 +60,40 @@ AFTER_BASIC="""   // GameHub's basic-info assembly first calls the LEGACY grallo
       struct u_gralloc_buffer_basic_info inherited = {0};
       int ret = gr->gamehub_legacy->ops.get_buffer_basic_info(
          gr->gamehub_legacy, hnd, &inherited);
-      if (ret == 0) {
-         uint32_t mapped_fourcc = 0;
-         uint64_t mapped_modifier = DRM_FORMAT_MOD_INVALID;
-         bool got_metadata = false;
-         if (gr->mapper) {
-            got_metadata =
-               md_scalar(gr, hnd->handle, SMT_PIXEL_FORMAT_FOURCC,
-                         &mapped_fourcc, sizeof(mapped_fourcc)) &&
-               md_scalar(gr, hnd->handle, SMT_PIXEL_FORMAT_MODIFIER,
-                         &mapped_modifier, sizeof(mapped_modifier));
-         } else if (gr->gamehub_gbm && gr->gamehub_fourcc &&
-                    gr->gamehub_modifier) {
-            got_metadata =
-               gr->gamehub_fourcc(gr->gamehub_gbm, hnd->handle,
-                                  &mapped_fourcc) == 0 &&
-               gr->gamehub_modifier(gr->gamehub_gbm, hnd->handle,
-                                    &mapped_modifier) == 0;
-         }
-         if (got_metadata) {
-            if (!mapped_fourcc) {
-               const int hal_fourcc = get_fourcc_from_hal_format(hnd->hal_format);
-               if (hal_fourcc != -1)
-                  mapped_fourcc = (uint32_t)hal_fourcc;
-            }
-            if (mapped_fourcc) {
-               *out = inherited;
-               out->drm_fourcc = mapped_fourcc;
-               out->modifier = mapped_modifier;
-               return 0;
-            }
-         }
+      // GameHub ELF 0xCA2F08: on a LEGACY failure branch directly to
+      // 0xCA3140, returning the original error. Do not re-parse layouts.
+      if (ret != 0)
+         return ret;
+
+      // Legacy success is authoritative for DMA-BUF FDs, offsets, strides,
+      // and the default FourCC/modifier. The original ELF returns success
+      // at 0xCA313C on ANY metadata decoding failure without replacing
+      // them. V38 R7-R9 accidentally discarded this valid legacy result.
+      *out = inherited;
+      uint32_t mapped_fourcc = 0;
+      uint64_t mapped_modifier = DRM_FORMAT_MOD_INVALID;
+      bool got_metadata = false;
+      if (gr->mapper) {
+         got_metadata =
+            md_scalar(gr, hnd->handle, SMT_PIXEL_FORMAT_FOURCC,
+                      &mapped_fourcc, sizeof(mapped_fourcc)) &&
+            md_scalar(gr, hnd->handle, SMT_PIXEL_FORMAT_MODIFIER,
+                      &mapped_modifier, sizeof(mapped_modifier));
+      } else if (gr->gamehub_gbm && gr->gamehub_fourcc &&
+                 gr->gamehub_modifier) {
+         got_metadata =
+            gr->gamehub_fourcc(gr->gamehub_gbm, hnd->handle,
+                               &mapped_fourcc) == 0 &&
+            gr->gamehub_modifier(gr->gamehub_gbm, hnd->handle,
+                                 &mapped_modifier) == 0;
       }
+      if (got_metadata) {
+         // Original 0xCA316C / 0xCA3170 overwrite ONLY these two
+         // values, even when the returned FourCC is zero. No HAL fallback.
+         out->drm_fourcc = mapped_fourcc;
+         out->modifier = mapped_modifier;
+      }
+      return 0;
    }
 
    // Keep V38 IMapper5 plane-layout decoding only if the original
@@ -273,6 +277,9 @@ def apply(path:Path):
             raise RuntimeError(f"Pinned GameHub A830 gralloc {name} anchor drift: {s.count(old)}")
         s=s.replace(old,new,1)
     for need in ("SMT_PIXEL_FORMAT_FOURCC", "SMT_PIXEL_FORMAT_MODIFIER",
+                 "if (ret != 0)", "*out = inherited;",
+                 "out->drm_fourcc = mapped_fourcc;",
+                 "out->modifier = mapped_modifier;",
                  "u_gralloc_fallback_create()", "gr->gamehub_legacy",
                  "gr->gamehub_gbm", "libui.so", "AIMapper_loadIMapper"):
         if need not in s:
