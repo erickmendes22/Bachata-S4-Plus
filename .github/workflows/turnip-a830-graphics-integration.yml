@@ -1,6 +1,9 @@
 name: Turnip A830 pinned source integration
 on:
-  # No automatic driver builds until GameHub parity investigation completes.
+  # Internal compilation check only; no tester release or claim of visual fix.
+  push:
+    branches: [build/a830-native-ldlv-compilecheck-20261103]
+    paths: [.github/workflows/turnip-a830-graphics-integration.yml]
   workflow_dispatch:
 permissions:
   contents: read
