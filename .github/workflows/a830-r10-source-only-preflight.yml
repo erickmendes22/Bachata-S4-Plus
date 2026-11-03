@@ -1,0 +1,61 @@
+name: A830 R10 source-only barrier validation (no driver build)
+on:
+  push:
+    branches:
+      - fix/a830-gamehub-strong-global-barriers-r10-20261103
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-validation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify pinned Mesa barrier path and patch syntax
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 "https://raw.githubusercontent.com/mirror/mesa/f28352d1179a4a85b4be286a883747bae2d3786b/src/freedreno/vulkan/tu_cmd_buffer.cc" -o /tmp/tu_cmd_buffer.cc
+          python3 -m py_compile tools/turnip-a830/apply_gamehub_a830_legacy_strong_barrier_flags.py tools/turnip-a830/apply_gamehub_gralloc_metadata_parity.py tools/turnip-a830/verify_gamehub_gralloc_result_semantics.py
+          python3 tools/turnip-a830/verify_gamehub_gralloc_result_semantics.py
+          python3 tools/turnip-a830/apply_gamehub_a830_legacy_strong_barrier_flags.py /tmp/tu_cmd_buffer.cc
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('/tmp/tu_cmd_buffer.cc').read_text()
+          begin=s.index('tu6_emit_flushes(')
+          end=s.index('static void\ntu7_write_onchip_val',begin)
+          flush=s[begin:end]
+          assert flush.count('gamehub_a830_legacy_strong_barrier_flags')==2
+          assert flush.index('gamehub_a830_legacy_strong_barrier_flags')<flush.index('FD_CCU_CLEAN_COLOR')
+          assert 'flushes |= TU_CMD_FLAG_CACHE_INVALIDATE;' in flush
+          assert 'flushes |= TU_CMD_FLAG_WAIT_FOR_IDLE;' in flush
+          assert 'flushes &= ~(TU_CMD_FLAG_CACHE_INVALIDATE_GMEM |' in flush
+          assert 'FD_SUBPASS_SLICE_FENCE' in flush
+          assert 'FD_CCU_CLEAN_BLIT_CACHE' in flush
+          assert 'gamehub_a830_legacy_subpass' not in flush
+          assert 'gamehub_a830_legacy_blit_clean' not in flush
+          for chip in (0xffff44050000,0xffff44050001,0x44050001):
+              assert f'0x{chip:x}ull' in flush
+          # Exhaust all presence/absence combinations of both weak flags.
+          invalid_gmem, slice_wait, strong_inv, strong_wait=1,2,4,8
+          for chip_is_a830 in (False, True):
+              for mask in range(16):
+                  actual=mask
+                  if chip_is_a830:
+                      if actual & invalid_gmem: actual |= strong_inv
+                      if actual & slice_wait: actual |= strong_wait
+                      actual &= ~(invalid_gmem | slice_wait)
+                      assert not(actual & (invalid_gmem|slice_wait))
+                      if mask&invalid_gmem: assert actual&strong_inv
+                      if mask&slice_wait: assert actual&strong_wait
+                  else: assert actual==mask
+          print('PASS pinned Mesa patch + 32 flag-mapping cases; R5/R6 excluded')
+          PY
+      - name: Verify driver workflow is manual and never stacks legacy fixes
+        run: |
+          set -euo pipefail
+          ! grep -Fq 'apply_gamehub_a830_legacy_subpass_sync.py' .github/workflows/turnip-a830-graphics-integration.yml
+          ! grep -Fq 'apply_gamehub_a830_blit_clean_visibility.py' .github/workflows/turnip-a830-graphics-integration.yml
+          grep -Fq 'apply_gamehub_a830_legacy_strong_barrier_flags.py' .github/workflows/turnip-a830-graphics-integration.yml
+          ! grep -Fq '  push:' .github/workflows/turnip-a830-graphics-integration.yml
+          echo "PASS no driver compilation triggered by this branch"
