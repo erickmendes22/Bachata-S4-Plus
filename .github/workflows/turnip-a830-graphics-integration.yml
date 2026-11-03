@@ -1,7 +1,6 @@
 name: Turnip A830 pinned source integration
 on:
-  push:
-    branches: [fix/a830-gamehub-regular-indexed-guards-r9-20261103]
+  # No automatic driver builds until GameHub parity investigation completes.
   workflow_dispatch:
 permissions:
   contents: read
@@ -70,8 +69,7 @@ jobs:
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_depth_range_unrestricted.py"
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_a830_fdm_full_density.py"
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_a830_subgroup64.py"
-              python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_a830_legacy_subpass_sync.py"
-              python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_a830_blit_clean_visibility.py"
+              python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_a830_legacy_strong_barrier_flags.py"
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_a830_rgb96_formats.py"
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_a830_rgb96_copy.py"
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_gralloc_metadata_parity.py" src/util/u_gralloc/u_gralloc_aimapper.c
@@ -99,8 +97,8 @@ jobs:
               grep -Fq 'tu6_emit_shared_consts_enable<CHIP>(crb, shared_consts_enable);' src/freedreno/vulkan/tu_pipeline.cc
               grep -Fq '.gfx_shared_const = CHIP == A6XX' src/freedreno/vulkan/tu_pipeline.cc
               grep -Fq '.cs_shared_const = CHIP == A6XX' src/freedreno/vulkan/tu_shader.cc
-              grep -Fq 'gamehub_a830_legacy_blit_clean' src/freedreno/vulkan/tu_cmd_buffer.cc
-              grep -Fq 'gamehub_a830_legacy_subpass' src/freedreno/vulkan/tu_cmd_buffer.cc
+              grep -Fq 'gamehub_a830_legacy_strong_barrier_flags' src/freedreno/vulkan/tu_cmd_buffer.cc
+              grep -Fq 'flushes &= ~(TU_CMD_FLAG_CACHE_INVALIDATE_GMEM' src/freedreno/vulkan/tu_cmd_buffer.cc
               grep -Fq 'tu_emit_event_write<CHIP>(cmd_buffer, cs, FD_CACHE_INVALIDATE);' src/freedreno/vulkan/tu_cmd_buffer.cc
               grep -Fq 'gamehub_a830_wave64' src/freedreno/vulkan/tu_device.cc
               grep -Fq 'p->maxSubgroupSize : tu_min_subgroup_size(pdevice)' src/freedreno/vulkan/tu_device.cc
@@ -124,7 +122,7 @@ jobs:
           """
           p.write_text(s.replace(needle,hook+needle))
           PY
-          python3 -m py_compile tools/turnip-a830/apply_native_barycentrics.py tools/turnip-a830/apply_gamehub_selective_renderpass.py tools/turnip-a830/apply_gamehub_depth_range_unrestricted.py tools/turnip-a830/apply_gamehub_a830_fdm_full_density.py tools/turnip-a830/apply_gamehub_a830_subgroup64.py tools/turnip-a830/apply_gamehub_a830_legacy_subpass_sync.py tools/turnip-a830/apply_gamehub_a830_blit_clean_visibility.py tools/turnip-a830/apply_gamehub_a830_rgb96_formats.py tools/turnip-a830/apply_gamehub_a830_rgb96_copy.py tools/turnip-a830/apply_gamehub_gralloc_metadata_parity.py tools/turnip-a830/apply_gamehub_gralloc_qti_loader.py tools/turnip-a830/apply_gamehub_regular_indexed_guarded_r9.py tools/turnip-a830/apply_gamehub_gpu_properties.py tools/turnip-a830/verify_gamehub_gpu_threshold.py
+          python3 -m py_compile tools/turnip-a830/apply_native_barycentrics.py tools/turnip-a830/apply_gamehub_selective_renderpass.py tools/turnip-a830/apply_gamehub_depth_range_unrestricted.py tools/turnip-a830/apply_gamehub_a830_fdm_full_density.py tools/turnip-a830/apply_gamehub_a830_subgroup64.py tools/turnip-a830/apply_gamehub_a830_legacy_strong_barrier_flags.py tools/turnip-a830/apply_gamehub_a830_rgb96_formats.py tools/turnip-a830/apply_gamehub_a830_rgb96_copy.py tools/turnip-a830/apply_gamehub_gralloc_metadata_parity.py tools/turnip-a830/apply_gamehub_gralloc_qti_loader.py tools/turnip-a830/apply_gamehub_regular_indexed_guarded_r9.py tools/turnip-a830/apply_gamehub_gpu_properties.py tools/turnip-a830/verify_gamehub_gpu_threshold.py
           bash -n turnip-recipe/build_turnip.sh
           # Validate reconstructed source contract without generating a driver.
           python3 tools/turnip-a830/verify_gamehub_gralloc_result_semantics.py
@@ -132,7 +130,7 @@ jobs:
         env:
           VARIANT: a8xx-patchs1
           MESA_COMMIT: f28352d1179a4a85b4be286a883747bae2d3786b
-          BUILD_VERSION: a830-gamehub-regular-indexed-r9
+          BUILD_VERSION: a830-gamehub-strong-global-barriers-r10
         run: |
           cd turnip-recipe
           bash build_turnip.sh
@@ -152,7 +150,7 @@ jobs:
           sha256sum /tmp/a830.so "$driver_zip" > turnip-sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: turnip-a830-gamehub-regular-indexed-r9
+          name: turnip-a830-gamehub-global-barriers-r10
           path: |
             turnip-recipe/turnip_workdir/Turnip_*.zip
             turnip-sha256.txt
