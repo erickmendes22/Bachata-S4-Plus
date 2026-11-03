@@ -110,3 +110,28 @@ com 13.595.168 bytes. Contagem das instruções ARM64
 `mov w1,#0x31f`: R11=1, com backport=2,
 GameHub original=4 (duas dessas quatro estão em outros caminhos);
 a diferença de contagem não é métrica de correção visual.
+
+## Verificação de cache de pipelines Vulkan
+
+Os ELFs compilados têm identificadores GNU Build ID distintos:
+
+- R11 original: `09daa885bd4ca34e44db788b8caae933bee8ff84`
+- Backport nativo PerVertex: `642477ab09789241b737e2180b3a8f68e6101351`
+
+Na fonte Mesa V38 `src/freedreno/vulkan/tu_device.cc`,
+`tu_device_get_cache_uuid` calcula o UUID de pipeline a partir de
+`tu_device_get_build_id`, chip ID e opções do compilador. Com a
+compilação por Build ID ELF e sem `TU_BUILD_ID_OVERRIDE` no recipe
+StevenMXZ pinado, esta revisão gera outro namespace de cache.
+O cache interno da R11 não deveria ser reutilizado no backport.
+Essa verificação **não substitui** a comparação do cache SPIR-V
+gerenciado separadamente pelo emulador, cuja contagem diferia
+nos logs GameHub e R11.
+
+**Artefato experimental de importação de driver:**
+`Turnip_A830_GameHub_Native_PerVertex_IR3_Experimental.zip`,
+contendo `libvulkan_freedreno.so` e `meta.json`, SHA256 do ZIP
+`975a4e25123ed2ee4c0c162b1e7e8d18d97df7f6c8b4f4108e1890c422d766e0`.
+É uma versão **de teste fundamentado**, ainda sem evidência de
+correção gráfica no A830. Não constitui engenharia reversa integral
+nem release estável.
