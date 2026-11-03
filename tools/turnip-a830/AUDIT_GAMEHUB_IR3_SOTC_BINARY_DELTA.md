@@ -122,3 +122,37 @@ exatamente nessa interpolação. Uma integração correta requer:
 
 Sem essas três condições, a R11 continua sendo **driver funcionalmente
 diferente** da GameHub; **nenhuma correção gráfica final foi demonstrada**.
+
+## Verificação independente contra a especificação Vulkan
+
+O capítulo [Primitive Rasterization de Vulkan-Docs](https://github.com/KhronosGroup/Vulkan-Docs/blob/main/chapters/primsrast.adoc)
+define os pesos `BaryCoordKHR`: pontos `(1,0,0)`; linhas interpolam de
+`(1,0,0)` para `(0,1,0)`; triângulos interpolam os pesos dos três vértices.
+Isso coincide com **a interpretação de 1/2/3 vértices** dos três ramos
+encontrados na função `0xADE7C4`, inclusive os pesos reconstruídos
+`(1-(I+J),I+J,0)` para linha. É forte evidência semântica sobre o campo
+`variant[0x43]`, ainda que não determine seu preenchimento pelo TU pipeline.
+
+Também reconstruí o caminho que **armazena** o shader key no GameHub:
+`0xAC7DB0–0xAC7E58` copia sequencialmente os 120 bytes de
+`key` para `variant+0x18`. `0xAC5CE0..0xAC5CF8` compara
+explicitamente os bytes `variant+0x42/0x43` com `key+0x2a/0x2b`.
+O compilador `0xADE7C4` lê precisamente `variant+0x43`.
+A estrutura não pode ser portável por mera cópia de offset: no layout
+publicado da Mesa R11, o byte `key+0x2b` pertence ao bloco de swizzles.
+
+### Alcance sobre o defeito observado
+
+A transformação do Intel BRW
+(`src/intel/compiler/brw/brw_nir_lower_fs_barycentrics.c`) também usa
+`(1-I-J,I,J)` para triângulos, uma transformação
+legítima conforme a especificação. Portanto **não basta** apontar que
+o GameHub usa entradas nativas e a R11 usa cálculo NIR para afirmar
+que o personagem verde é consequência: ambos podem ser numericamente
+equivalentes no caso mais comum (triângulos).
+
+Os ramos de pontos/linhas e a especialização separada do GameHub
+**são diferenças reais**, mas a causalidade com as falhas visuais da
+cena precisa ser demonstrada por shader de material real ou por
+diferença nos valores interpolados. Nenhum patch ou APK foi gerado
+a partir desta análise sem essa comprovação.
