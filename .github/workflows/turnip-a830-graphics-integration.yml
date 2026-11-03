@@ -1,7 +1,7 @@
 name: Turnip A830 pinned source integration
 on:
   push:
-    branches: [fix/a830-gamehub-gralloc-ubwc-parity-20261103]
+    branches: [fix/a830-upstream-ir3-drawstate-parity-20261103]
   workflow_dispatch:
 permissions:
   contents: read
@@ -58,6 +58,13 @@ jobs:
               # Don't stack the unrelated experimental LRZ patch again.
               # Restore the previously shipped native A830 barycentric path;
               # never advertise the Vulkan extension without the IR3 conversion.
+              # Backport actual upstream Mesa fixes newer than pin f28352d (2026-10-19).
+              # These are NOT the older experimental indexed-draw split patch.
+              for p in shared-const-invalidate a8xx-indirect-split a8xx-indirect-count-split; do
+                fix="$GITHUB_WORKSPACE/tools/turnip-a830/upstream/${p}.patch"
+                git apply --check "$fix" || die "Upstream patch mismatch: $p"
+                git apply "$fix" || die "Upstream patch apply failed: $p"
+              done
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_native_barycentrics.py"
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_selective_renderpass.py"
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_depth_range_unrestricted.py"
@@ -78,6 +85,12 @@ jobs:
               grep -Fq 'gamehub_a830_rgb96_buffer_image' src/freedreno/vulkan/tu_clear_blit.cc
               grep -Fq 'gamehub_a830_rgb96_image' src/freedreno/vulkan/tu_formats.cc
               grep -Fq 'force_linear_tile = true;' src/freedreno/vulkan/tu_image.cc
+              # Fail closed if any of the three upstream shader/draw fixes vanish.
+              grep -Fq 'tu_indirect_draw_max_count(' src/freedreno/vulkan/tu_cmd_buffer.cc
+              grep -Fq 'tu6_emit_indirect_count_split(' src/freedreno/vulkan/tu_cmd_buffer.cc
+              grep -Fq 'tu6_emit_shared_consts_enable<CHIP>(crb, shared_consts_enable);' src/freedreno/vulkan/tu_pipeline.cc
+              grep -Fq '.gfx_shared_const = CHIP == A6XX' src/freedreno/vulkan/tu_pipeline.cc
+              grep -Fq '.cs_shared_const = CHIP == A6XX' src/freedreno/vulkan/tu_shader.cc
               grep -Fq 'gamehub_a830_legacy_blit_clean' src/freedreno/vulkan/tu_cmd_buffer.cc
               grep -Fq 'gamehub_a830_legacy_subpass' src/freedreno/vulkan/tu_cmd_buffer.cc
               grep -Fq 'tu_emit_event_write<CHIP>(cmd_buffer, cs, FD_CACHE_INVALIDATE);' src/freedreno/vulkan/tu_cmd_buffer.cc
@@ -109,7 +122,7 @@ jobs:
         env:
           VARIANT: a8xx-patchs1
           MESA_COMMIT: f28352d1179a4a85b4be286a883747bae2d3786b
-          BUILD_VERSION: a830-gamehub-gralloc-ubwc-r7
+          BUILD_VERSION: a830-gamehub-upstream-drawstate-r8
         run: |
           cd turnip-recipe
           bash build_turnip.sh
@@ -129,7 +142,7 @@ jobs:
           sha256sum /tmp/a830.so "$driver_zip" > turnip-sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: turnip-a830-gamehub-gralloc-ubwc-r7
+          name: turnip-a830-gamehub-upstream-drawstate-r8
           path: |
             turnip-recipe/turnip_workdir/Turnip_*.zip
             turnip-sha256.txt
