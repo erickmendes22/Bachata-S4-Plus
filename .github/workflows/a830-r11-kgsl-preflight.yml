@@ -1,0 +1,35 @@
+name: A830 R11 GameHub KGSL source-only parity (no driver build)
+on:
+  push:
+    branches:
+      - fix/a830-gamehub-kgsl-4gb-parity-r11-20261103
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  kgsl-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve exact Mesa source and WinNative alias patch
+        run: |
+          set -euo pipefail
+          base="https://raw.githubusercontent.com/mirror/mesa/f28352d1179a4a85b4be286a883747bae2d3786b/src/freedreno/vulkan"
+          mkdir -p /tmp/a830/src/freedreno/vulkan
+          curl -fsSL --retry 3 "$base/tu_knl_kgsl.cc" -o /tmp/a830/src/freedreno/vulkan/tu_knl_kgsl.cc
+          curl -fsSL --retry 3 "$base/tu_knl.h" -o /tmp/a830/src/freedreno/vulkan/tu_knl.h
+          curl -fsSL --retry 3 "$base/msm_kgsl.h" -o /tmp/a830/src/freedreno/vulkan/msm_kgsl.h
+          curl -fsSL --retry 3 "https://raw.githubusercontent.com/The412Banner/Banners-Turnip/7fffd01ddb5651d72a05dd0b12b84977cb95d397/patches/a8xx-winnative/0005-tu-kgsl-Fetch-A8XX-command-streams-through-a-virtual.patch" -o /tmp/0005.patch
+          grep -Fq '#define KGSL_MEMFLAGS_FORCE_32BIT  (1ULL << 32)' /tmp/a830/src/freedreno/vulkan/msm_kgsl.h
+          ( cd /tmp/a830 && patch -p1 --forward < /tmp/0005.patch )
+      - name: Apply original-ELF KGSL 4GiB alias retry and verify
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/turnip-a830/apply_gamehub_kgsl_alias_4gb.py tools/turnip-a830/verify_gamehub_kgsl_alias.py
+          python3 tools/turnip-a830/apply_gamehub_kgsl_alias_4gb.py /tmp/a830/src/freedreno/vulkan/tu_knl_kgsl.cc
+          python3 tools/turnip-a830/verify_gamehub_kgsl_alias.py --source /tmp/a830/src/freedreno/vulkan/tu_knl_kgsl.cc
+          grep -Fq 'KGSL_MEMFLAGS_FORCE_32BIT' /tmp/a830/src/freedreno/vulkan/tu_knl_kgsl.cc
+          grep -Fq 'IB alias crosses a 4GB boundary' /tmp/a830/src/freedreno/vulkan/tu_knl_kgsl.cc
+          grep -Fq 'kgsl_bo_destroy_alias' /tmp/a830/src/freedreno/vulkan/tu_knl_kgsl.cc
+          echo 'PASS pin-based KGSL source-level parity; no driver compilation'
