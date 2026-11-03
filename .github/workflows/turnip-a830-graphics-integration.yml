@@ -1,6 +1,6 @@
 name: Turnip A830 pinned source integration
 on:
-  # Single consolidated R11 compilation, explicitly gated by four-path source preflight.
+  # Consolidated R12 compilation: original R11 parity plus native PerVertexKHR OPC_LDLV.
   push:
     branches: [build/a830-gamehub-r11-integrated-20261103]
     paths: [.github/workflows/turnip-a830-graphics-integration.yml]
@@ -68,6 +68,7 @@ jobs:
                 git apply "$fix" || die "Upstream patch apply failed: $p"
               done
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_native_barycentrics.py"
+              python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_ir3_native_pervertex.py" src/freedreno/ir3/ir3_compiler_nir.c
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_selective_renderpass.py"
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_depth_range_unrestricted.py"
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_a830_fdm_full_density.py"
@@ -116,6 +117,10 @@ jobs:
               grep -Fq 'multi-subpass MSAA without input attachments requires sysmem' src/freedreno/vulkan/tu_cmd_buffer.cc
               ! grep -Fq 'A830 GMEM page-write workaround' src/freedreno/vulkan/tu_cmd_buffer.cc
               grep -Fq 'ir3_lower_khr_barycentrics_cb' src/freedreno/ir3/ir3_nir.c
+              grep -Fq 'gamehub_vertex ? create_frag_input_vertex' src/freedreno/ir3/ir3_compiler_nir.c
+              grep -Fq 'ir3_LDLV(build, offset, 0, vertex, 0)' src/freedreno/ir3/ir3_compiler_nir.c
+              grep -Fq 'nir_intrinsic_has_interp_mode(baryc)' src/freedreno/ir3/ir3_compiler_nir.c
+              grep -Fq 'features->fragmentShaderBarycentric = pdevice->info->chip >= A8XX;' src/freedreno/vulkan/tu_device.cc
               grep -Fq 'nir_intrinsic_has_interp_mode(baryc)' src/freedreno/ir3/ir3_compiler_nir.c
               grep -Fq 'features->fragmentShaderBarycentric = pdevice->info->chip >= A8XX;' src/freedreno/vulkan/tu_device.cc
               grep -Fq 'cube_coord_hang_quirk' src/freedreno/ir3/ir3_nir.c
@@ -128,7 +133,7 @@ jobs:
           """
           p.write_text(s.replace(needle,hook+needle))
           PY
-          python3 -m py_compile tools/turnip-a830/apply_native_barycentrics.py tools/turnip-a830/apply_gamehub_selective_renderpass.py tools/turnip-a830/apply_gamehub_depth_range_unrestricted.py tools/turnip-a830/apply_gamehub_a830_fdm_full_density.py tools/turnip-a830/apply_gamehub_a830_subgroup64.py tools/turnip-a830/apply_gamehub_a830_legacy_strong_barrier_flags.py tools/turnip-a830/apply_gamehub_a830_rgb96_formats.py tools/turnip-a830/apply_gamehub_a830_rgb96_copy.py tools/turnip-a830/apply_gamehub_gralloc_metadata_parity.py tools/turnip-a830/apply_gamehub_gralloc_qti_loader.py tools/turnip-a830/apply_gamehub_regular_indexed_guarded_r9.py tools/turnip-a830/apply_gamehub_gpu_properties.py tools/turnip-a830/apply_gamehub_kgsl_alias_4gb.py tools/turnip-a830/verify_gamehub_gpu_threshold.py
+          python3 -m py_compile tools/turnip-a830/apply_native_barycentrics.py tools/turnip-a830/apply_gamehub_ir3_native_pervertex.py tools/turnip-a830/apply_gamehub_selective_renderpass.py tools/turnip-a830/apply_gamehub_depth_range_unrestricted.py tools/turnip-a830/apply_gamehub_a830_fdm_full_density.py tools/turnip-a830/apply_gamehub_a830_subgroup64.py tools/turnip-a830/apply_gamehub_a830_legacy_strong_barrier_flags.py tools/turnip-a830/apply_gamehub_a830_rgb96_formats.py tools/turnip-a830/apply_gamehub_a830_rgb96_copy.py tools/turnip-a830/apply_gamehub_gralloc_metadata_parity.py tools/turnip-a830/apply_gamehub_gralloc_qti_loader.py tools/turnip-a830/apply_gamehub_regular_indexed_guarded_r9.py tools/turnip-a830/apply_gamehub_gpu_properties.py tools/turnip-a830/apply_gamehub_kgsl_alias_4gb.py tools/turnip-a830/verify_gamehub_gpu_threshold.py
           bash -n turnip-recipe/build_turnip.sh
           # Validate reconstructed source contract without generating a driver.
           python3 tools/turnip-a830/verify_gamehub_gralloc_result_semantics.py
@@ -136,7 +141,7 @@ jobs:
         env:
           VARIANT: a8xx-patchs1
           MESA_COMMIT: f28352d1179a4a85b4be286a883747bae2d3786b
-          BUILD_VERSION: a830-gamehub-kgsl4gb-parity-r11
+          BUILD_VERSION: a830-gamehub-native-ldlv-r12
         run: |
           cd turnip-recipe
           bash build_turnip.sh
@@ -157,7 +162,7 @@ jobs:
           sha256sum /tmp/a830.so "$driver_zip" > turnip-sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: turnip-a830-gamehub-kgsl4gb-parity-r11
+          name: turnip-a830-gamehub-native-ldlv-r12
           path: |
             turnip-recipe/turnip_workdir/Turnip_*.zip
             turnip-sha256.txt
