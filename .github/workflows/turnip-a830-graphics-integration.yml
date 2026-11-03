@@ -60,7 +60,7 @@ jobs:
               # never advertise the Vulkan extension without the IR3 conversion.
               # Backport actual upstream Mesa fixes newer than pin f28352d (2026-10-19).
               # These are NOT the older experimental indexed-draw split patch.
-              for p in shared-const-invalidate a8xx-indirect-split a8xx-indirect-count-split; do
+              for p in shared-const-invalidate hull-shader a8xx-indirect-split a8xx-indirect-count-split nir-drawid-offset ir3-drawid-offset vsparams-rename vsparams-split drawid-ubo; do
                 fix="$GITHUB_WORKSPACE/tools/turnip-a830/upstream/${p}.patch"
                 git apply --check "$fix" || die "Upstream patch mismatch: $p"
                 git apply "$fix" || die "Upstream patch apply failed: $p"
@@ -88,6 +88,9 @@ jobs:
               # Fail closed if any of the three upstream shader/draw fixes vanish.
               grep -Fq 'tu_indirect_draw_max_count(' src/freedreno/vulkan/tu_cmd_buffer.cc
               grep -Fq 'tu6_emit_indirect_count_split(' src/freedreno/vulkan/tu_cmd_buffer.cc
+              grep -Fq 'draw_id_offset = draw_id_offset' src/freedreno/vulkan/tu_cmd_buffer.cc
+              grep -Fq 'nir_intrinsic_load_draw_id_offset_ir3' src/freedreno/ir3/ir3_nir.c
+              grep -Fq 'PC_HS_PARAM_0(CHIP, MAX2(' src/freedreno/vulkan/tu_pipeline.cc
               grep -Fq 'tu6_emit_shared_consts_enable<CHIP>(crb, shared_consts_enable);' src/freedreno/vulkan/tu_pipeline.cc
               grep -Fq '.gfx_shared_const = CHIP == A6XX' src/freedreno/vulkan/tu_pipeline.cc
               grep -Fq '.cs_shared_const = CHIP == A6XX' src/freedreno/vulkan/tu_shader.cc
