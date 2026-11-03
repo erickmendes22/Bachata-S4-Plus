@@ -24,6 +24,33 @@ O aviso de `Cached permutation ... conflicts` aparece no log R8 (08:41)
 e não no posterior; ele pertence a `vk_pipeline_serialization.cpp`
 do **emulador**, não comprova bug de cache IR3 da Turnip.
 
+## Critério de relevância revisado após comparação visual
+
+A execução R8 (08:41) e a execução GameHub (08:55) contêm ambas:
+- exatamente 1 aviso de `IT_SET_PREDICATION`;
+- exatamente 8 avisos de `not fully GPU mapped`;
+- a mesma lista de 9 formatos Vulkan não plenamente suportados.
+
+Esses avisos **não discriminam** o driver que apresenta a falha daquele
+que renderiza corretamente. O usuário confirma que o GameHub não perde a
+geometria. A mensagem genérica do launcher dizendo que *async graphics*
+**pode** descartar desenhos está presente em ambos os logs, mas não
+demonstra que isso ocorreu em ambos. Portanto, não atribuir os defeitos
+específicos da Turnip ao renderer ou à predicação sem uma diferença mensurável
+entre drivers.
+
+A única distinção visível nessa família de avisos é o conflito de
+permutação de shader na R8 (1) versus GameHub (0); isso continua sendo
+uma observação, não uma causalidade estabelecida. O foco seguinte deve ser
+a paridade executável e de GPU entre os dois drivers: compilação IR3,
+descriptors/draw state, sincronização/cache e blits/resolves, priorizando
+diferenças comprovadas.
+
+A branch experimental do renderer SotC para evitar perda de draws
+(`fix/sotc-async-graphics-draw-completeness-20261103`) foi criada
+separadamente e não deve ser apresentada nem mesclada como solução para
+estes problemas específicos do driver.
+
 ## Conclusão técnica
 
 Uma discrepância **comprovada** de gralloc FourCC/modifier da R9 foi corrigida
