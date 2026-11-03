@@ -31,7 +31,7 @@ ORIGINAL_OPCODES = {
 }
 
 def elf_word_at_vaddr(buf: bytes, addr: int) -> int:
-    if buf[:4] != b"\\x7fELF" or buf[4] != 2 or buf[5] != 1:
+    if buf[:4] != b"\x7fELF" or buf[4] != 2 or buf[5] != 1:
         raise AssertionError("Expected little-endian ELF64")
     phoff = struct.unpack_from("<Q", buf, 0x20)[0]
     phentsize, phnum = struct.unpack_from("<HH", buf, 0x36)
