@@ -41,9 +41,7 @@ jobs:
       - name: Exact Mesa source for published DD 0.4.0
         run: |
           set -euo pipefail
-          git init -q mesa
-          git -C mesa fetch -q --depth=1 https://github.com/mirror/mesa.git b1a8996cb336f8398b06583c399fae821523152d
-          git -C mesa -c advice.detachedHead=false checkout -q FETCH_HEAD
+          bash dd-src/scripts/fetch_mesa.sh mesa b1a8996cb336f8398b06583c399fae821523152d
           test "$(git -C mesa rev-parse HEAD)" = b1a8996cb336f8398b06583c399fae821523152d
       - name: Apply Linux patches and compile Android KGSL Turnip
         env:
