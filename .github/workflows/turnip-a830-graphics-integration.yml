@@ -1,6 +1,6 @@
 name: Turnip A830 pinned source integration
 on:
-  # Consolidated R12 compilation: original R11 parity plus native PerVertexKHR OPC_LDLV.
+  # R12: require immediate-only native OPC_LDLV and safe fallback for dynamic vertex index.
   push:
     branches: [build/a830-gamehub-r11-integrated-20261103]
     paths: [.github/workflows/turnip-a830-graphics-integration.yml]
@@ -119,6 +119,9 @@ jobs:
               grep -Fq 'ir3_lower_khr_barycentrics_cb' src/freedreno/ir3/ir3_nir.c
               grep -Fq 'gamehub_vertex ? create_frag_input_vertex' src/freedreno/ir3/ir3_compiler_nir.c
               grep -Fq 'ir3_LDLV(build, offset, 0, vertex, 0)' src/freedreno/ir3/ir3_compiler_nir.c
+              grep -Fq 'create_immed(&ctx->build, nir_src_as_uint(intr->src[0]))' src/freedreno/ir3/ir3_compiler_nir.c
+              grep -Fq 'so->inputs[n].flat = !coord && !gamehub_vertex;' src/freedreno/ir3/ir3_compiler_nir.c
+              grep -Fq 'nir_src_as_uint(intr->src[0]) < 3' src/freedreno/ir3/ir3_nir.c
               grep -Fq 'nir_intrinsic_has_interp_mode(baryc)' src/freedreno/ir3/ir3_compiler_nir.c
               grep -Fq 'features->fragmentShaderBarycentric = pdevice->info->chip >= A8XX;' src/freedreno/vulkan/tu_device.cc
               grep -Fq 'nir_intrinsic_has_interp_mode(baryc)' src/freedreno/ir3/ir3_compiler_nir.c
@@ -141,7 +144,7 @@ jobs:
         env:
           VARIANT: a8xx-patchs1
           MESA_COMMIT: f28352d1179a4a85b4be286a883747bae2d3786b
-          BUILD_VERSION: a830-gamehub-native-ldlv-r12
+          BUILD_VERSION: a830-gamehub-ldlv-imm-r12
         run: |
           cd turnip-recipe
           bash build_turnip.sh
@@ -162,7 +165,7 @@ jobs:
           sha256sum /tmp/a830.so "$driver_zip" > turnip-sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: turnip-a830-gamehub-native-ldlv-r12
+          name: turnip-a830-gamehub-ldlv-imm-r12
           path: |
             turnip-recipe/turnip_workdir/Turnip_*.zip
             turnip-sha256.txt
