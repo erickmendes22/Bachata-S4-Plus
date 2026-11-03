@@ -77,3 +77,36 @@ recuperação; pontos/linhas exigem cuidado adicional.
 A compilação AArch64 e a verificação em hardware da mudança nativa
 ainda não demonstraram a eliminação de ghosts, flicker e cores incorretas.
 **Não apresentar a integração como correção visual garantida.**
+
+## Fechamento da seleção do índice na rota Vulkan do GameHub
+
+O fluxo `0x9E775C–0x9E776C` zera a chave nativa de 120 bytes.
+A chamada `0x9E77B8` recebe a chave em `x3`, mas o trecho
+`0xA216B0–0xA21BC0` não grava no campo `key[0x2B]`
+nessa rota (o campo chega com valor 0).
+
+A etapa IR3 lê esse campo em `0xAD70DC`, subtrai 1 em registro
+de **32 bits** em `0xAD70E0`, e usa `csel ... lo` em
+`0xAD70E8`. Para `mode=0`, a subtração unsigned produz
+`0xffffffff`: todo índice de vértice válido permanece inalterado.
+
+O comportamento do patch `create_frag_input_vertex`, que passa
+diretamente o índice NIR para `OPC_LDLV`, corresponde a **essa
+rota Vulkan com modo 0**. Isso resolve a incerteza sobre precisar
+hardcodar número 3 de triângulo para a compilação observada. As
+variantes que trazem `mode=1`, `2` ou `3` são alternativas
+e não devem ser reproduzidas alterando todo fragment shader Vulkan.
+
+O verificador `verify_gamehub_native_ldlv_elf.py` agora testa
+a subtração unsigned, as entradas do modo 0 e os limites dos
+modos 1/2/3 além das oito instruções ARM64 do GameHub original
+e do DD funcional.
+
+**Validação do executável Turnip experimental:**
+CI [#41701283063](https://github.com/erickmendes22/Bachata-S4-Plus/actions/runs/41701283063)
+aprovou compilação Android AArch64, integridade do ELF e ZIP.
+O novo ELF é `d694fefbc49b161af3d22cfb50569a0cfcbbfb9eefdbdea359c1055b5db7a28c`
+com 13.595.168 bytes. Contagem das instruções ARM64
+`mov w1,#0x31f`: R11=1, com backport=2,
+GameHub original=4 (duas dessas quatro estão em outros caminhos);
+a diferença de contagem não é métrica de correção visual.
