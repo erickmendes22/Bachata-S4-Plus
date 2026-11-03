@@ -1,0 +1,104 @@
+name: DD-Turnip v0.4.0 Linux backports on Android
+on:
+  push:
+    branches: [build/dd-turnip-v040-linux-backports-android-20261103]
+    paths:
+      - .github/workflows/dd-turnip-v040-linux-android.yml
+      - tools/dd-turnip/enable_linux_patches_android.py
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  android-a830:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host build tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build flex bison glslang-tools pkg-config python3-pip git binutils zip
+          sudo python3 -m pip install --break-system-packages --quiet 'meson>=1.5' mako pyyaml packaging
+      - name: Android NDK r26d
+        id: ndk
+        uses: nttld/setup-ndk@afb4c9964b521afb97c864b7d40b11e6911bd410
+        with:
+          ndk-version: r26d
+          add-to-path: false
+          local-cache: true
+      - name: Exact Droid-Deck v0.4.0 recipe
+        run: |
+          set -euo pipefail
+          git clone -q --filter=blob:none https://github.com/Droid-Deck/Drivers.git dd-src
+          git -C dd-src checkout --detach c437d891164c5e31a65219a5451005875fab74ac
+          test "$(git -C dd-src rev-parse HEAD)" = c437d891164c5e31a65219a5451005875fab74ac
+      - name: Restore all five Linux-only patches to Android build
+        run: |
+          set -euo pipefail
+          python3 tools/dd-turnip/enable_linux_patches_android.py dd-src/patches/series.json
+          python3 -m json.tool dd-src/patches/series.json > /dev/null
+      - name: Exact Mesa source for published DD 0.4.0
+        run: |
+          set -euo pipefail
+          git init -q mesa
+          git -C mesa fetch -q --depth=1 https://github.com/mirror/mesa.git b1a8996cb336f8398b06583c399fae821523152d
+          git -C mesa -c advice.detachedHead=false checkout -q FETCH_HEAD
+          test "$(git -C mesa rev-parse HEAD)" = b1a8996cb336f8398b06583c399fae821523152d
+      - name: Apply Linux patches and compile Android KGSL Turnip
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          BUILD_JOBS: "4"
+        run: |
+          set -euo pipefail
+          bash dd-src/scripts/build_android.sh "$GITHUB_WORKSPACE/mesa"
+      - name: Verify patch coverage and build AdrenoTools ZIP
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, subprocess, zipfile
+          from pathlib import Path
+          root=Path("dd-src")
+          lib=(root/"out/android/libvulkan_freedreno.so").read_bytes()
+          assert lib[:4]==b"\x7fELF" and lib[4]==2 and int.from_bytes(lib[18:20],"little")==183
+          dynamic=subprocess.check_output(["readelf","-d",str(root/"out/android/libvulkan_freedreno.so")],text=True)
+          assert "Shared library: [libc.so]" in dynamic and "libc.so.6" not in dynamic
+          patchlog=(root/"work/android/patch.log").read_text()
+          cfg=json.loads((root/"patches/series.json").read_text())
+          linux_only=[e["file"] for e in cfg if e["file"].startswith("linux/")]
+          assert len(linux_only)==5
+          for name in linux_only:
+              assert name in patchlog and "android" in next(x for x in cfg if x["file"]==name)["targets"]
+          assert b"Failed to set initial PWR_MAX constraint" in lib
+          meta={
+             "schemaVersion":1,"name":"DD-Turnip v0.4.0 Linux Backports A830",
+             "description":"Mesa 27.0.0-devel b1a8996 | Droid-Deck 0.4.0 + five Linux-only patches on Android",
+             "author":"Droid-Deck + Daedalus","packageVersion":"dd-0.4.0-linux-backports-a830-1",
+             "vendor":"Mesa","driverVersion":"DD-Turnip-v0.4.0-LinuxBackports",
+             "minApi":29,"libraryName":"libvulkan_freedreno.so"
+          }
+          dst=Path("DD_Turnip_v0.4.0_Android_Linux_Backports_A830.zip")
+          notice=(root/"LICENSE").read_bytes()
+          with zipfile.ZipFile(dst,"w",zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+              z.writestr("libvulkan_freedreno.so",lib)
+              z.writestr("meta.json",json.dumps(meta,indent=2)+"\n")
+              z.writestr("LICENSES/GPL-3.0.txt",notice)
+              z.writestr("SOURCE.txt",
+                         "Upstream recipe: https://github.com/Droid-Deck/Drivers/tree/c437d891164c5e31a65219a5451005875fab74ac\n"
+                         "Mesa: https://github.com/mirror/mesa/tree/b1a8996cb336f8398b06583c399fae821523152d\n"
+                         "Port rules: https://github.com/erickmendes22/Bachata-S4-Plus/blob/build/dd-turnip-v040-linux-backports-android-20261103/tools/dd-turnip/enable_linux_patches_android.py\n")
+          with zipfile.ZipFile(dst) as z:
+              assert z.testzip() is None
+              assert sorted(z.namelist()) == ["LICENSES/GPL-3.0.txt","SOURCE.txt","libvulkan_freedreno.so","meta.json"]
+          Path("build-sha256.txt").write_text(f"{hashlib.sha256(lib).hexdigest()}  libvulkan_freedreno.so\n{hashlib.sha256(dst.read_bytes()).hexdigest()}  {dst}\n")
+          print(Path("build-sha256.txt").read_text())
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DD-Turnip-v0.4.0-Android-Linux-Backports-A830
+          path: |
+            DD_Turnip_v0.4.0_Android_Linux_Backports_A830.zip
+            build-sha256.txt
+            dd-src/work/android/patch.log
+          if-no-files-found: error
+          retention-days: 14
