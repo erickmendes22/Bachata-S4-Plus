@@ -218,7 +218,11 @@ u_gralloc_aimapper_create(void)
    }
 
    gr->base.ops.get_buffer_basic_info = aimapper_get_buffer_basic_info;
-   gr->base.ops.get_buffer_color_info = aimapper_get_buffer_color_info;
+   // GameHub wrapper @0xCA2E24 sets basic_info and destroy, but leaves
+   // the color-info callback NULL. Mesa then returns Rec601/narrow defaults.
+   // Only preserve V38's mapper color parsing when no legacy backend exists.
+   gr->base.ops.get_buffer_color_info =
+      gr->gamehub_legacy ? NULL : aimapper_get_buffer_color_info;
    gr->base.ops.destroy = destroy;
 
    mesa_logi("GameHub A830 gralloc: legacy FD/stride + IMapper5/libui format/modifier");
