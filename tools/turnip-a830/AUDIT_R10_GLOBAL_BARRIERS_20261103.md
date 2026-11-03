@@ -33,3 +33,12 @@ Esta revisão reproduz o **subset** básico de sincronização verificado no ELF
 Os avisos do emulador `IT_SET_PREDICATION`, memória GPU parcialmente mapeada e formatos Vulkan não suportados aparecem no **GameHub funcional também**. Esses avisos compartilhados não são tratados como causa dos defeitos exclusivos da Turnip, conforme pedido do usuário.
 
 **Status correto:** correção source-level integrada e validação independente dos comandos básicos; ainda não demonstrada a remoção de ghosts/piscadas/texturas ausentes no aparelho.
+
+## Exclusões adicionais por equivalência semântica de flags
+
+Duas propriedades que aparecem como exclusivas por **nome**, mas não por função, foram verificadas na fonte pinada:
+
+- `r8g8_faulty_fast_clear_quirk` = 1 no GameHub original; V38 A830 herda `QCTDD12766770 = True` de `a7xx_gen3`, consultada em `tu_clear_blit.cc` para desabilitar o fast clear inadequado de R8G8. Não reaplicar essa correção.
+- `has_salu_int_narrowing_quirk` = 1 no GameHub original; V38 A830 herda `has_salu_int_narrowing_quirk = True` de `a8xx_gen1`. Não alterar a geração IR3 por essa propriedade.
+
+Essas equivalências são identificadas **na fonte e na configuração A830**, não validadas quanto a cada comando executado no aparelho.
