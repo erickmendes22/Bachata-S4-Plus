@@ -204,6 +204,18 @@ u_gralloc_aimapper_create(void)
       dlsym(ui, "_ZN7android19GraphicBufferMapper20getPixelFormatFourCCEPK13native_handlePj");
    gr->gamehub_modifier = (int32_t (*)(void *, const native_handle_t *, uint64_t *))
       dlsym(ui, "_ZN7android19GraphicBufferMapper22getPixelFormatModifierEPK13native_handlePm");
+   // The GameHub ELF tries dlsym(handle) and then dlsym(RTLD_DEFAULT)
+   // separately for every libui method (0xca2d64 / 0xca2da0 / 0xca2dd0).
+   if (!get_instance)
+      get_instance = (get_instance_fn)dlsym(
+         RTLD_DEFAULT, "_ZN7android9SingletonINS_19GraphicBufferMapperEE11getInstanceEv");
+   if (!gr->gamehub_fourcc)
+      gr->gamehub_fourcc = (int32_t (*)(void *, const native_handle_t *, uint32_t *))
+         dlsym(RTLD_DEFAULT, "_ZN7android19GraphicBufferMapper20getPixelFormatFourCCEPK13native_handlePj");
+   if (!gr->gamehub_modifier)
+      gr->gamehub_modifier = (int32_t (*)(void *, const native_handle_t *, uint64_t *))
+         dlsym(RTLD_DEFAULT, "_ZN7android19GraphicBufferMapper22getPixelFormatModifierEPK13native_handlePm");
+
    if (get_instance && gr->gamehub_fourcc && gr->gamehub_modifier)
       gr->gamehub_gbm = get_instance();
 
