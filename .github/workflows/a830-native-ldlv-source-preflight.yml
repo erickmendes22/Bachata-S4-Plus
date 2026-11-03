@@ -1,0 +1,59 @@
+name: GameHub A830 native PerVertexKHR IR3 source parity (no driver)
+on:
+  push:
+    branches:
+      - fix/a830-native-ldlv-pervertex-sotc-20261103
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-ldlv-preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve pinned Mesa IR3 sources
+        run: |
+          set -euo pipefail
+          base="https://raw.githubusercontent.com/mirror/mesa/f28352d1179a4a85b4be286a883747bae2d3786b"
+          for path in src/freedreno/ir3/ir3_compiler_nir.c \
+                      src/freedreno/ir3/ir3_nir.c \
+                      src/freedreno/vulkan/tu_device.cc; do
+            mkdir -p "mesa/$(dirname "$path")"
+            curl -fsSL --retry 3 "$base/$path" -o "mesa/$path"
+          done
+      - name: Apply both A830 barycentric stages (never compile a driver)
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/turnip-a830/apply_native_barycentrics.py \
+            tools/turnip-a830/apply_gamehub_ir3_native_pervertex.py
+          (
+            cd mesa
+            python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_native_barycentrics.py"
+            python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_ir3_native_pervertex.py" \
+               src/freedreno/ir3/ir3_compiler_nir.c
+          )
+      - name: Verify native instruction and NIR dispatch replace synthetic input
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          patch=Path("tools/turnip-a830/apply_native_barycentrics.py").read_text()
+          comp=Path("mesa/src/freedreno/ir3/ir3_compiler_nir.c").read_text()
+          nir=Path("mesa/src/freedreno/ir3/ir3_nir.c").read_text()
+          # Synthetic interpolated vertex fetch MUST be gone.
+          assert "case nir_intrinsic_load_input_vertex:" not in patch
+          assert "nir_ieq_imm(b, v, 2)" not in patch
+          # Native GameHub uses OPC_LDLV, op 0x31f (6*128+31), not BARY_F.
+          assert "case nir_intrinsic_load_input_vertex:" in comp
+          assert comp.count("create_frag_input_vertex(")==2
+          assert "ir3_LDLV(build, offset, 0, vertex, 0)" in comp
+          assert "gamehub_vertex ? create_frag_input_vertex" in comp
+          assert "nir_src_is_const(intr->src[offset_src])" in comp
+          # Ordinary interpolated input remains BARY_F, without regressions.
+          assert "ir3_BARY_F_rpt(build, ncomp, inloc" in comp
+          assert "ir3_lower_khr_barycentrics_cb" in nir
+          assert "nir_intrinsic_load_barycentric_coord_pixel" in nir
+          # No APK/driver compilation in this preflight.
+          print("PASS native PerVertexKHR OPC_LDLV and preserved ordinary BARY_F")
+          PY
