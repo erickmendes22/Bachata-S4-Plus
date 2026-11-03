@@ -18,6 +18,8 @@ jobs:
           base="https://raw.githubusercontent.com/mirror/mesa/f28352d1179a4a85b4be286a883747bae2d3786b"
           for path in src/freedreno/ir3/ir3_compiler_nir.c \
                       src/freedreno/ir3/ir3_nir.c \
+                      src/freedreno/ir3/ir3.h \
+                      src/freedreno/ir3/instr-a3xx.h \
                       src/freedreno/vulkan/tu_device.cc; do
             mkdir -p "mesa/$(dirname "$path")"
             curl -fsSL --retry 3 "$base/$path" -o "mesa/$path"
@@ -41,6 +43,13 @@ jobs:
           patch=Path("tools/turnip-a830/apply_native_barycentrics.py").read_text()
           comp=Path("mesa/src/freedreno/ir3/ir3_compiler_nir.c").read_text()
           nir=Path("mesa/src/freedreno/ir3/ir3_nir.c").read_text()
+          ir3h=Path("mesa/src/freedreno/ir3/ir3.h").read_text()
+          isa=Path("mesa/src/freedreno/ir3/instr-a3xx.h").read_text()
+          # The assembler opcode is 6*128+31 and the existing RA/packing
+          # code already understands LDLV as a fragment shader input.
+          assert "OPC_LDLV            = _OPC(6, 31)" in isa
+          start=ir3h.index("is_input(struct ir3_instruction *instr)")
+          assert "case OPC_LDLV:" in ir3h[start:start+320]
           # Synthetic interpolated vertex fetch MUST be gone.
           assert "case nir_intrinsic_load_input_vertex:" not in patch
           assert "nir_ieq_imm(b, v, 2)" not in patch
