@@ -4,7 +4,7 @@ pre-DrawstateFix-v2 branch, without copying its unrelated A8xx regressions.
 
 Source is Mesa f28352d in the StevenMXZ 2026-10-19 V38 recipe. Applying only
 the extension-advertisement fields would be invalid: the NIR 3-component
-BaryCoord and per-vertex input lowering is required in tandem.
+BaryCoord and native per-vertex input support are required in tandem.
 Do not assume this passes Vulkan CTS without physical device verification.
 """
 from pathlib import Path
@@ -63,24 +63,10 @@ ir3_lower_khr_barycentrics_cb(nir_builder *b, nir_intrinsic_instr *intr,
    case nir_intrinsic_load_barycentric_coord_at_offset:
       op = nir_intrinsic_load_barycentric_at_offset;
       break;
-   case nir_intrinsic_load_input_vertex: {
-      b->cursor = nir_before_instr(&intr->instr);
-      nir_def *v = intr->src[0].ssa;
-      nir_def *zero = nir_imm_float(b, 0.0f);
-      nir_def *one = nir_imm_float(b, 1.0f);
-      nir_def *ij = nir_vec2(b,
-         nir_bcsel(b, nir_ieq_imm(b, v, 1), one, zero),
-         nir_bcsel(b, nir_ieq_imm(b, v, 2), one, zero));
-      nir_def *out = nir_load_interpolated_input(
-         b, intr->def.num_components, intr->def.bit_size,
-         ij, intr->src[1].ssa,
-         .base = nir_intrinsic_base(intr),
-         .component = nir_intrinsic_component(intr),
-         .dest_type = nir_intrinsic_dest_type(intr),
-         .io_semantics = nir_intrinsic_io_semantics(intr));
-      nir_def_replace(&intr->def, out);
-      return true;
-   }
+   /* GameHub A830 handles load_input_vertex in the IR3 compiler using
+    * native OPC_LDLV. Do not emulate PerVertexKHR with BARY_F: that
+    * interpolates values instead of fetching raw integer/float attributes.
+    * apply_gamehub_ir3_native_pervertex.py adds the exact native path. */
    default:
       return false;
    }
