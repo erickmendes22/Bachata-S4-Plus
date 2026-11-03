@@ -1,0 +1,106 @@
+diff --git a/src/freedreno/ir3/ir3_compiler.h b/src/freedreno/ir3/ir3_compiler.h
+--- a/src/freedreno/ir3/ir3_compiler.h
++++ b/src/freedreno/ir3/ir3_compiler.h
+@@ -56,6 +56,9 @@ struct ir3_compiler_options {
+    bool dual_color_blend_by_location;
+ 
+    uint64_t uche_trap_base;
++
++   /* If draw_id should be lowered in nir */
++   bool lower_draw_id;
+ };
+ 
+ struct ir3_compiler {
+diff --git a/src/freedreno/ir3/ir3_compiler_nir.c b/src/freedreno/ir3/ir3_compiler_nir.c
+--- a/src/freedreno/ir3/ir3_compiler_nir.c
++++ b/src/freedreno/ir3/ir3_compiler_nir.c
+@@ -3039,6 +3039,9 @@ emit_intrinsic(struct ir3_context *ctx, nir_intrinsic_instr *intr)
+    case nir_intrinsic_load_draw_id:
+       dst[0] = create_driver_param(ctx, IR3_DP_VS(draw_id));
+       break;
++   case nir_intrinsic_load_draw_id_offset_ir3:
++      dst[0] = create_driver_param(ctx, IR3_DP_VS(draw_id_offset));
++      break;
+    case nir_intrinsic_load_base_instance:
+       dst[0] = create_driver_param(ctx, IR3_DP_VS(instid_base));
+       break;
+diff --git a/src/freedreno/ir3/ir3_nir.c b/src/freedreno/ir3/ir3_nir.c
+--- a/src/freedreno/ir3/ir3_nir.c
++++ b/src/freedreno/ir3/ir3_nir.c
+@@ -1466,6 +1466,25 @@ ir3_nir_set_threadsize(struct ir3_shader_variant *v, const nir_shader *s)
+    }
+ }
+ 
++static bool
++lower_draw_id(nir_builder *b, nir_intrinsic_instr *intr, void *data)
++{
++   if (intr->intrinsic != nir_intrinsic_load_draw_id)
++      return false;
++
++   b->cursor = nir_after_instr(&intr->instr);
++   nir_def_rewrite_uses_after(&intr->def,
++                        nir_iadd(b, &intr->def, nir_load_draw_id_offset_ir3(b)));
++   return true;
++}
++
++static bool
++ir3_nir_lower_draw_id(nir_shader *shader)
++{
++   return nir_shader_intrinsics_pass(shader, lower_draw_id,
++                                     nir_metadata_control_flow, NULL);
++}
++
+ void
+ ir3_nir_lower_variant(struct ir3_shader_variant *so,
+                       const struct ir3_shader_nir_options *options,
+@@ -1595,6 +1614,9 @@ ir3_nir_lower_variant(struct ir3_shader_variant *so,
+ 
+    progress |= OPT(s, ir3_nir_opt_subgroups, so);
+ 
++   if (so->compiler->options.lower_draw_id)
++      progress |= OPT(s, ir3_nir_lower_draw_id);
++
+    if (so->compiler->info->props.load_shader_consts_via_preamble)
+       progress |= OPT(s, ir3_nir_lower_driver_params_to_ubo, so);
+ 
+@@ -1787,6 +1809,9 @@ ir3_get_driver_param_info(const nir_shader *shader,
+    case nir_intrinsic_load_draw_id:
+       param_info->offset = IR3_DP_VS(draw_id);
+       break;
++   case nir_intrinsic_load_draw_id_offset_ir3:
++      param_info->offset = IR3_DP_VS(draw_id_offset);
++      break;
+    case nir_intrinsic_load_base_instance:
+       param_info->offset = IR3_DP_VS(instid_base);
+       break;
+diff --git a/src/freedreno/ir3/ir3_shader.h b/src/freedreno/ir3/ir3_shader.h
+--- a/src/freedreno/ir3/ir3_shader.h
++++ b/src/freedreno/ir3/ir3_shader.h
+@@ -69,14 +69,15 @@ struct ir3_driver_params_vs {
+     * driver param when the hardware does not have native multiview.
+     */
+    uint32_t view_index;
++   uint32_t draw_id_offset;
+    /* user-clip-plane components, up to 8x vec4's: */
+    struct {
+       uint32_t x;
+       uint32_t y;
+       uint32_t z;
+       uint32_t w;
+    } ucp[8];
+-   uint32_t __pad_38_39[2];
++   uint32_t __pad;
+ };
+ #define IR3_DP_VS(name) dword_offsetof(struct ir3_driver_params_vs, name)
+ 
+diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -3017,6 +3017,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
+          .storage_8bit = physical_device->info->props.storage_8bit,
+          .shared_push_consts = !TU_DEBUG(PUSH_CONSTS_PER_STAGE),
+          .uche_trap_base = physical_device->uche_trap_base,
++         .lower_draw_id = physical_device->info->chip >= A8XX,
+       };
+       device->compiler = ir3_compiler_create(
+          NULL, &physical_device->dev_id, physical_device->info, &ir3_options);
