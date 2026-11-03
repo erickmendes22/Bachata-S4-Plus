@@ -88,3 +88,37 @@ interpolação/derivadas, antes de iniciar outra build.
 
 A R11 falhou visualmente na captura enviada: nenhuma declaração de
 correção dos ghosts, flicker ou cores pode ser feita com este relatório.
+
+## Extensão executável — chaves IR3 e baricêntricas (auditoria binária)
+
+A análise avançou da estrutura de metadados NIR para o **código executável**:
+
+- GameHub original e GameHub DD funcional comparam `ir3_shader_key` de **120 bytes** em `0xAC5CCC` (`mov w2,#0x78` antes de `memcmp`).
+- R11 compara **80 bytes** em `0xA25C50` e `0xA25CD0` (`mov w2,#0x50` antes de `memcmp`).
+- O driver GameHub compara **separadamente** os bytes `key[0x2A]` e `key[0x2B]` com `variant[0x42]` / `variant[0x43]` em `0xAC5CE0..0xAC5CF8` para classificar variantes mesmo quando não faz o `memcmp` completo.
+- A rotina real `load_barycentric_coord_ir3`, despachada em `0xAD60CC`, chama `0xADE7C4`, que consulta precisamente `variant[0x43]`, i.e. `key[0x2B]`. Portanto, **o campo adicional de chave altera a geração de instruções**, não é mero padding.
+- `0xADE7E8..0xADE7FC` separa `mode==2`, `mode==1`, demais estados. Em `mode==1` a rotina gera `(1,0,0)`; em `mode==2` gera os pesos de linha `(1 - (I+J), I+J, 0)`; em demais modos, cria 3 entradas IR3 de índices consecutivos `0x100..0x102` via `0xAE2E04`.
+- Outro caminho do compilador em `0xAD70D8..0xAD70E8` usa o mesmo `variant[0x43]-1` para limitar um índice, confirmando que o valor representa uma **dimensão de componente/primtiva** relevante para IR3.
+- A chave R11 pública `src/freedreno/ir3/ir3_shader.h` possui `sizeof(ir3_shader_key)==0x50` e não codifica o mesmo campo no mesmo offset (0x2B da R11 é parte de outro layout). Não se deve copiar acesso binário `key[0x2B]` diretamente.
+
+Reprodutibilidade:
+`tools/turnip-a830/recover_gamehub_ir3_dispatch_elf.py` recupera a tabela
+de saltos NIR; `tools/turnip-a830/verify_gamehub_ir3_shader_key_barycentric.py`
+verifica o tamanho das chaves e palavras ARM64 nos três binários pinados.
+
+### Interpretação e limites
+
+A equivalência de **ABI e semântica do shader** está ausente na R11 e
+essa diferença é potencialmente importante para materiais iluminados de
+Shadow of the Colossus. Isso não demonstra que os shaders do personagem
+tenham emitido a operação, nem que a causa do verde/amarelo esteja
+exatamente nessa interpolação. Uma integração correta requer:
+
+1. Traçar quem **preenche** o campo `key[0x2B]` no GameHub e a condição de pipeline;
+2. Recriar a geração das entradas IR3 nativas e a seleção de variantes no
+   código V38, não somente adicionar o intrínseco ao catálogo;
+3. Validar os códigos de shader gerados com entrada equivalente e apenas
+   então considerar uma build, sem mudar o APK.
+
+Sem essas três condições, a R11 continua sendo **driver funcionalmente
+diferente** da GameHub; **nenhuma correção gráfica final foi demonstrada**.
