@@ -41,12 +41,24 @@ def main():
         for addr,expected in OPS.items():
             actual=read_word(b,addr)
             assert actual==expected,(label,hex(addr),hex(expected),hex(actual))
+    # Exact unsigned AArch64 semantics at AD70DC..AD70E8: mode byte 0
+    # becomes 0xFFFFFFFF after a 32-bit subtraction, meaning no clamp.
+    # Therefore the zero-initialized Vulkan shader-key path matches direct
+    # unmodified vertex fetch, not a presumed triangle-only variant.
+    def gamehub_vertex_index(index, mode):
+        return min(index & 0xFFFFFFFF, (mode - 1) & 0xFFFFFFFF)
+    for requested in (0, 1, 2, 3, 31, 255, 65535):
+        assert gamehub_vertex_index(requested, 0) == requested
+    for mode, maximum in ((1,0), (2,1), (3,2)):
+        for requested in range(8):
+            assert gamehub_vertex_index(requested, mode) == min(requested, maximum)
     print(json.dumps({
       "verified_words_per_ELF":len(OPS),
       "working_gamehub_versions":"identical IR3 native PerVertexKHR opcodes",
       "per_vertex_opcode":"OPC_LDLV=0x31f",
       "primitive_mode_source":"variant+0x43",
       "dynamic_vertex_clamp":"unsigned min(index, mode-1)",
+      "mode_0_no_clamp":"verified: unsigned underflow yields 0xffffffff",
       "unresolved":"exact pipeline write of variant+0x43 and GPU shader output equality"
     },indent=2))
 if __name__=="__main__":main()
