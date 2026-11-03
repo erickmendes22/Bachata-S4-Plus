@@ -65,6 +65,7 @@ jobs:
                 git apply "$fix" || die "Upstream patch apply failed: $p"
               done
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_native_barycentrics.py"
+              python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_ir3_native_pervertex.py" src/freedreno/ir3/ir3_compiler_nir.c
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_selective_renderpass.py"
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_depth_range_unrestricted.py"
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_a830_fdm_full_density.py"
@@ -113,6 +114,8 @@ jobs:
               grep -Fq 'multi-subpass MSAA without input attachments requires sysmem' src/freedreno/vulkan/tu_cmd_buffer.cc
               ! grep -Fq 'A830 GMEM page-write workaround' src/freedreno/vulkan/tu_cmd_buffer.cc
               grep -Fq 'ir3_lower_khr_barycentrics_cb' src/freedreno/ir3/ir3_nir.c
+              grep -Fq 'gamehub_vertex ? create_frag_input_vertex' src/freedreno/ir3/ir3_compiler_nir.c
+              grep -Fq 'ir3_LDLV(build, offset, 0, vertex, 0)' src/freedreno/ir3/ir3_compiler_nir.c
               grep -Fq 'nir_intrinsic_has_interp_mode(baryc)' src/freedreno/ir3/ir3_compiler_nir.c
               grep -Fq 'features->fragmentShaderBarycentric = pdevice->info->chip >= A8XX;' src/freedreno/vulkan/tu_device.cc
               grep -Fq 'cube_coord_hang_quirk' src/freedreno/ir3/ir3_nir.c
