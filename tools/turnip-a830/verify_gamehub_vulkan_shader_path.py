@@ -16,6 +16,15 @@ HASHES = {
     "r11": "ba10389c1b22cb74eda7e094693a14d7f270d26bc92b408d3964cc5f7d68f322",
 }
 GH = {
+    # Real Vulkan graphics path initializes the complete 120-byte key
+    # to zero: 8 + 3*32 + 16 = 120, then passes &key at 0x9e77ec.
+    0x9e775c: 0xf81803bf,  # stur xzr,[fp,-0x80] (remaining eight bytes)
+    0x9e7760: 0xad3903a0,  # stp q0,q0,[fp,-0xe0]
+    0x9e7764: 0xad3a03a0,  # stp q0,q0,[fp,-0xc0]
+    0x9e7768: 0xad3b03a0,  # stp q0,q0,[fp,-0xa0]
+    0x9e776c: 0x3c9103a0,  # stur q0,[fp,-0xf0]
+    0x9e77d0: 0xd103c3a5,  # sub x5,fp,#0xf0 (key pointer)
+    0x9e77ec: 0x9400eb67,  # bl GameHub Vulkan shader create
     0xa2317c: 0x94028b08,  # Shader from NIR: real Vulkan call
     0xa2318c: 0x94028a33,  # Create IR3 shader variant: real Vulkan call
     0xac5ccc: 0x52800f02,  # memcmp: 120 bytes
@@ -66,6 +75,7 @@ def main():
         "original_and_dd_vulkan_variant_key_bytes": 120,
         "r11_variant_key_bytes": 80,
         "original_barycentric_mode_byte": "variant+0x43 = key+0x2b",
+        "one_vulkan_path_initializes_full_key_to_zero": True,
         "not_verified": [
             "Shader inputs/output match for a real Shadow of the Colossus material",
             "Source of key[0x2b] in the Vulkan pipeline for a real primitive",
