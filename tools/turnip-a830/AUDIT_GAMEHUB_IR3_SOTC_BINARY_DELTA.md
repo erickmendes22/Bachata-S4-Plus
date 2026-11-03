@@ -184,3 +184,36 @@ não demonstra erro de triângulo/material em SotC, e **não deve virar R12**.
 A origem de topologia em outras rotas de pipeline e a equivalência da
 instrução final de fragment shader ainda requerem comparação específica.
 A questão visual da R11 permanece aberta. **Não foi gerada uma nova build.**
+
+## Controle adicional: versão DD não altera o compilador GameHub
+
+O novo `audit_gamehub_original_dd_text.py` foi executado localmente com
+os ELFs de SHA-256 pinado. Ambos têm a mesma seção executável
+`.text` em `0x8DEBB0`, com **4.344.768 bytes**.
+
+Foram encontrados **12 bytes diferentes em somente 7 regiões**:
+`0x8E8EF0` (1), `0xA3A02A` (1), `0xA3A0C0` (4),
+`0xA3B8B6` (1), `0xA3B8FE` (1), `0xA3B930` (2) e
+`0xA3BAB4` (2). Todos os outros 4.344.756 bytes coincidem.
+A região `0xAC5CCC–0xADEB00` (101.940 bytes), cobrindo a
+comparação de variantes e o código IR3 examinado, é idêntica entre
+original e DD.
+
+Isso permite usar o GameHub **original** como alvo exato da
+reconstrução IR3. **Não** implica que copiar rotinas ou flags
+da seção `.text` para a R11 produza a mesma saída sem
+reconstruir também seus dados, layout de estruturas e contratos NIR.
+
+### Resultado técnico da retomada
+
+Os verificadores locais passaram com os três ELFs:
+- 11 instruções de shader creation/IR3 em cada GameHub;
+- 2 instruções do comparator R11;
+- 7 instruções adicionais de inicialização de chave GameHub, onde
+  a chave de 120 bytes é zerada antes do caminho Vulkan verificado;
+- Diff `.text` GameHub vs GameHub DD: 12 bytes diferentes.
+
+**Nenhuma build nova foi gerada.** O defeito visual da R11 continua
+sem correção comprovada. O próximo código que merece integração é
+uma divergência da saída ou armazenamento do shader/material real
+do SotC, não o tamanho da chave isoladamente.
