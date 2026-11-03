@@ -1,0 +1,114 @@
+name: A830 GameHub four-path source integration (NO APK or driver)
+on:
+  push:
+    branches:
+      - fix/a830-gamehub-kgsl-4gb-parity-r11-20261103
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  full-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Exact pinned Mesa and WinNative source
+        run: |
+          set -euo pipefail
+          git init mesa
+          git -C mesa remote add origin https://github.com/mirror/mesa.git
+          git -C mesa fetch --depth=1 origin f28352d1179a4a85b4be286a883747bae2d3786b
+          git -C mesa checkout --detach FETCH_HEAD
+          git init upstream
+          git -C upstream remote add origin https://github.com/The412Banner/Banners-Turnip.git
+          git -C upstream fetch --depth=1 origin 7fffd01ddb5651d72a05dd0b12b84977cb95d397
+          git -C upstream checkout --detach FETCH_HEAD
+          for n in 1 2 3 4 5; do
+            patchfile=$(find upstream/patches/a8xx-winnative -maxdepth 1 -name "000$n-*.patch" -type f -print -quit)
+            test -s "$patchfile"
+            git -C mesa apply --check "$GITHUB_WORKSPACE/$patchfile"
+            git -C mesa apply "$GITHUB_WORKSPACE/$patchfile"
+          done
+      - name: Restore pinned Mesa shader draw, A830 graphics, gralloc, KGSL
+        run: |
+          set -euo pipefail
+          (
+            cd mesa
+            for name in shared-const-invalidate hull-shader a8xx-indirect-split a8xx-indirect-count-split nir-drawid-offset ir3-drawid-offset vsparams-rename vsparams-split drawid-ubo; do
+              patchfile="$GITHUB_WORKSPACE/tools/turnip-a830/upstream/$name.patch"
+              git apply --check "$patchfile"
+              git apply "$patchfile"
+            done
+            python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_native_barycentrics.py"
+            python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_selective_renderpass.py"
+            python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_depth_range_unrestricted.py"
+            python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_a830_fdm_full_density.py"
+            python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_a830_subgroup64.py"
+            python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_a830_legacy_strong_barrier_flags.py"
+            python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_a830_rgb96_formats.py"
+            python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_a830_rgb96_copy.py"
+            python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_gralloc_metadata_parity.py" src/util/u_gralloc/u_gralloc_aimapper.c
+            python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_gralloc_qti_loader.py" src/util/u_gralloc/u_gralloc_aimapper.c
+            python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_gpu_properties.py" src/freedreno/common/freedreno_devices.py
+            python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_regular_indexed_guarded_r9.py" src/freedreno/ir3/ir3_compiler_nir.c src/freedreno/vulkan/tu_cmd_buffer.cc
+            python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_kgsl_alias_4gb.py" src/freedreno/vulkan/tu_knl_kgsl.cc
+          )
+      - name: Four independent domain contracts on the INTEGRATED tree
+        run: |
+          set -euo pipefail
+          python3 tools/turnip-a830/verify_gamehub_gralloc_result_semantics.py
+          python3 tools/turnip-a830/verify_gamehub_kgsl_alias.py --source mesa/src/freedreno/vulkan/tu_knl_kgsl.cc
+          python3 - <<'PY'
+          from pathlib import Path
+          base=Path('mesa/src/freedreno')
+          def has(p,*terms):
+              s=(base/p).read_text()
+              for term in terms:
+                  assert term in s,(p,term)
+              return s
+          # 1. IR3 and draw state: no missing vertex side-effect gate
+          ir=has('ir3/ir3_compiler_nir.c',
+              'so->has_no_side_effects = !ctx->s->info.writes_memory;',
+              'nir_intrinsic_has_interp_mode(baryc)')
+          n=has('ir3/ir3_nir.c',
+              'ir3_lower_khr_barycentrics_cb',
+              'nir_intrinsic_load_draw_id_offset_ir3')
+          draw=has('vulkan/tu_cmd_buffer.cc',
+              'gamehub_can_split_regular_indexed',
+              'gamehub_vs->num_sampler_prefetch == 0',
+              '!gamehub_fs->reads_primid',
+              'tu6_emit_indirect_count_split(',
+              'draw_id_offset = draw_id_offset')
+          # 2. Blit/resolve/UBWC: original gralloc layout, RGB96 fallbacks
+          imp=has('vulkan/tu_image.cc','gamehub_a830_rgb96','force_linear_tile = true;')
+          cp=has('vulkan/tu_clear_blit.cc',
+              'tu_gamehub_a830_rgb96_buffer_image',
+              'tu_gamehub_a830_rgb96_image_image',
+              'tu_gamehub_a830_rgb96_clear',
+              'FD_CCU_CLEAN_BLIT_CACHE')
+          fmt=has('vulkan/tu_formats.cc','gamehub_a830_rgb96_image')
+          gr=(Path('mesa/src/util/u_gralloc/u_gralloc_aimapper.c')).read_text()
+          assert 'gr->gamehub_legacy' in gr and '*out = inherited;' in gr
+          # 3. Synchronization: stronger flags before event emission
+          start=draw.index('tu6_emit_flushes(')
+          stop=draw.index('static void\ntu7_write_onchip_val',start)
+          f=draw[start:stop]
+          assert f.index('gamehub_a830_legacy_strong_barrier_flags') < f.index('FD_CCU_CLEAN_COLOR')
+          assert 'flushes |= TU_CMD_FLAG_CACHE_INVALIDATE;' in f
+          assert 'flushes |= TU_CMD_FLAG_WAIT_FOR_IDLE;' in f
+          assert 'FD_SUBPASS_SLICE_FENCE' in f
+          assert 'FD_CCU_CLEAN_BLIT_CACHE' in f
+          assert 'gamehub_a830_legacy_subpass' not in f
+          assert 'gamehub_a830_legacy_blit_clean' not in f
+          # 4. KGSL: VBO/IB alias created, boundary checked before bind
+          kgsl=has('vulkan/tu_knl_kgsl.cc',
+              'kgsl_gamehub_a830_alias_crosses_4gb',
+              'KGSL_MEMFLAGS_FORCE_32BIT',
+              'kgsl_bo_create_alias',
+              'kgsl_bo_destroy_alias',
+              'KGSL_GPUMEM_RANGE_OP_UNBIND')
+          print('PASS integrated source: IR3/draw + UBWC/blit + barriers + KGSL 4GiB')
+          PY
+          cd mesa
+          git diff --check
+          git diff --stat
