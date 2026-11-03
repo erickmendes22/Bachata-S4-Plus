@@ -84,7 +84,12 @@ def apply(path:Path):
       // BARY_F input: emit an actual per-vertex LDLV load.
       compile_assert(ctx, ctx->compiler->gen >= 8 &&
                                ctx->so->type == MESA_SHADER_FRAGMENT);
-      gamehub_vertex = ir3_get_src(ctx, &intr->src[0])[0];
+      /* Never pass a dynamic GPR to LDLV's immediate operand.
+       * The prior unsafe backport caused a device-lost regression. */
+      compile_assert(ctx, nir_src_is_const(intr->src[0]) &&
+                               nir_src_as_uint(intr->src[0]) < 3);
+      gamehub_vertex =
+         create_immed(&ctx->build, nir_src_as_uint(intr->src[0]));
    }
 
    const unsigned offset_src = (coord || gamehub_vertex) ? 1 : 0;
@@ -102,9 +107,15 @@ def apply(path:Path):
                         : create_frag_input(ctx, coord, idx, ncomp);
       cp_instrs(ctx->last_dst, instr.rpts, ncomp);""",
        "raw vertex attribute fetch")
+    s=replace_once(s,
+        "   so->inputs[n].flat = !coord;",
+        "   so->inputs[n].flat = !coord && !gamehub_vertex;",
+        "native varying packing")
     assert s.count("create_frag_input_vertex(")==2
     assert s.count("case nir_intrinsic_load_input_vertex:")==1
     assert "ir3_LDLV(build, offset, 0, vertex, 0)" in s
+    assert "create_immed(&ctx->build, nir_src_as_uint(intr->src[0]))" in s
+    assert "so->inputs[n].flat = !coord && !gamehub_vertex;" in s
     assert "nir_src_is_const(intr->src[offset_src])" in s
     assert "ir3_BARY_F_rpt" in s  # normal interpolation unchanged
     path.write_text(s)
