@@ -19,7 +19,8 @@ IMapper5 PLANE_LAYOUTS. V38 custom IMapper5 port did do that and collapsed
 certain QTI metadata planes, a concrete divergence in UBWC import.
 
 This patch restores GameHub's layout source while retaining V38's existing
-IMapper parser as a fallback for devices whose legacy gralloc fails. Legacy
+IMapper parser only when no legacy backend exists. A failure from an
+existing legacy backend is returned unchanged, matching the ELF. Legacy
 fourcc/modifier are overwritten only if both modern metadata values exist.
 A successful legacy import must still return success if metadata lookup
 fails (ELF 0xCA313C), and a legacy failure propagates its error (0xCA2F08).
@@ -97,7 +98,7 @@ AFTER_BASIC="""   // GameHub's basic-info assembly first calls the LEGACY grallo
    }
 
    // Keep V38 IMapper5 plane-layout decoding only if the original
-   // GameHub layout path was unavailable for this particular allocation.
+   // GameHub layout backend did not exist at construction (cross-device).
    // Never dereference a missing IMapper when libui is the only backend.
    if (!gr->mapper)
       return -EINVAL;
