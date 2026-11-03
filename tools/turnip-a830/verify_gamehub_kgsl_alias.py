@@ -50,7 +50,7 @@ def check_source(patched):
     s=patched.read_text()
     m=load_patch()
     assert s.count("kgsl_gamehub_a830_alias_crosses_4gb(")==2
-    assert s.count("KGSL_MEMFLAGS_FORCE_32BIT")==1
+    assert "attempt ? KGSL_MEMFLAGS_FORCE_32BIT : 0ull" in s
     assert "kgsl_bo_needs_alias" in s and "kgsl_bo_destroy_alias" in s
     chunk=s.split("kgsl_bo_create_alias(",1)[1].split("kgsl_bo_destroy_alias(",1)[0]
     order=["IOCTL_KGSL_GPUOBJ_ALLOC","IOCTL_KGSL_GPUMEM_GET_INFO",
