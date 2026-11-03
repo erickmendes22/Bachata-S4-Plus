@@ -1,0 +1,64 @@
+name: DD Turnip 0.4.0 A830 shader KHR audit
+on:
+  push:
+    branches: [build/dd-turnip-v040-linux-backports-android-20261103]
+    paths: [.github/workflows/dd-turnip-v040-khr-barycentric-audit.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  shader-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve exact DD v0.4.0 Mesa source
+        run: |
+          set -euo pipefail
+          git clone -q --depth 1 https://github.com/Droid-Deck/Drivers.git dd
+          git -C dd fetch -q --depth=1 origin c437d891164c5e31a65219a5451005875fab74ac
+          git -C dd checkout -q --detach c437d891164c5e31a65219a5451005875fab74ac
+          bash dd/scripts/fetch_mesa.sh mesa b1a8996cb336f8398b06583c399fae821523152d
+      - name: Inspect A830 barycentric capability and native inputs
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee DD_A830_KHR_Barycentric_Audit.txt
+          from pathlib import Path
+          keys = [
+             "fragment_shader_barycentric", "fragmentShaderBarycentric",
+             "load_input_vertex", "load_per_vertex_input",
+             "OPC_LDLV", "ir3_LDLV(", "nir_intrinsic_load_barycentric_coord",
+             "ir3_lower_khr_barycentrics", "supports_fragment_shader_barycentric",
+             "KHR_fragment_shader_barycentric", "AMD_shader_explicit_vertex_parameter",
+          ]
+          files=[
+            "mesa/src/freedreno/vulkan/tu_device.cc",
+            "mesa/src/freedreno/ir3/ir3_compiler_nir.c",
+            "mesa/src/freedreno/ir3/ir3_nir.c",
+            "mesa/src/freedreno/ir3/ir3_shader.c",
+            "mesa/src/freedreno/vulkan/tu_shader.cc",
+            "mesa/src/freedreno/vulkan/tu_pipeline.cc",
+            "mesa/src/compiler/nir/nir_lower_io.c",
+            "mesa/src/compiler/nir/nir_intrinsics.py",
+            "mesa/src/freedreno/ir3/ir3_legalize.c",
+            "mesa/src/freedreno/ir3/ir3.h",
+          ]
+          for f in files:
+             path=Path(f)
+             print("\n###",f)
+             if not path.exists():
+                 print("MISSING FILE")
+                 continue
+             lines=path.read_text(errors="replace").splitlines()
+             indices=[i for i,line in enumerate(lines) if any(key in line for key in keys)]
+             print("matches",len(indices))
+             for i in indices[:35]:
+                 for k in range(max(i-4,0),min(i+9,len(lines))):
+                     print(f"{k+1:5d} {lines[k]}")
+                 print("---")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DD-A830-KHR-Barycentric-Source-Audit
+          path: DD_A830_KHR_Barycentric_Audit.txt
+          if-no-files-found: error
