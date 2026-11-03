@@ -156,3 +156,31 @@ Os ramos de pontos/linhas e a especialização separada do GameHub
 cena precisa ser demonstrada por shader de material real ou por
 diferença nos valores interpolados. Nenhum patch ou APK foi gerado
 a partir desta análise sem essa comprovação.
+
+## Verificação independente local 03/11 — caminho real de shaders Vulkan
+
+Foi extraído e desmontado o ELF do GameHub original e do GameHub DD funcional
+com `llvm-objdump`. A mesma comparação foi feita com a R11 real.
+
+O novo verificador `verify_gamehub_vulkan_shader_path.py` **passou em execução
+local** usando os três binários: 11 opcodes do original + 11 do DD + 2 da R11.
+Ele confirma a sequência de criação e variação de shaders Vulkan no próprio
+ELF (não se limita a strings de bibliotecas embutidas):
+
+- `0xA2317C`: compilação/criação da estrutura `ir3_shader`;
+- `0xA2318C`: criação da `ir3_shader_variant` a partir da chave;
+- `0xAC7E40..0xAC7E50`: cópia dos bytes da chave para a variante;
+- `0xAC5CCC`: comparação de 120 bytes para busca da variante GameHub;
+- `0xADE7D8`: a etapa IR3 de baricêntricas lê `variant+0x43`;
+- `0xA25C50` e `0xA25CD0` R11: comparação de 80 bytes.
+
+**Distinção essencial que evita correção falsa:** o trecho Vulkan original
+`0x9E775C..0x9E776C` zera os 120 bytes da chave na pilha antes do fluxo
+que eventualmente chama `0xA22588` em `0x9E77EC`. Nesse caminho
+específico, `key+0x2B = 0` por padrão, ativando a rota nativa
+de triângulos de `0xADE7C4`. Portanto, a diferença 120/80 por si só
+não demonstra erro de triângulo/material em SotC, e **não deve virar R12**.
+
+A origem de topologia em outras rotas de pipeline e a equivalência da
+instrução final de fragment shader ainda requerem comparação específica.
+A questão visual da R11 permanece aberta. **Não foi gerada uma nova build.**
