@@ -76,6 +76,7 @@ jobs:
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_gralloc_qti_loader.py" src/util/u_gralloc/u_gralloc_aimapper.c
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_gpu_properties.py" src/freedreno/common/freedreno_devices.py
               python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_regular_indexed_guarded_r9.py" src/freedreno/ir3/ir3_compiler_nir.c src/freedreno/vulkan/tu_cmd_buffer.cc
+              python3 "$GITHUB_WORKSPACE/tools/turnip-a830/apply_gamehub_kgsl_alias_4gb.py" src/freedreno/vulkan/tu_knl_kgsl.cc
               grep -Fq "prim_alloc_threshold = 0xF" src/freedreno/common/freedreno_devices.py
               grep -Fq 'GameHub A830 gralloc: legacy FD/stride' src/util/u_gralloc/u_gralloc_aimapper.c
               grep -Fq 'u_gralloc_fallback_create()' src/util/u_gralloc/u_gralloc_aimapper.c
@@ -117,12 +118,14 @@ jobs:
               grep -Fq 'cube_coord_hang_quirk' src/freedreno/ir3/ir3_nir.c
               grep -Fq 'kgsl_bo_create_alias' src/freedreno/vulkan/tu_knl_kgsl.cc
               grep -Fq 'kgsl_bo_destroy_alias' src/freedreno/vulkan/tu_knl_kgsl.cc
+              grep -Fq 'kgsl_gamehub_a830_alias_crosses_4gb' src/freedreno/vulkan/tu_knl_kgsl.cc
+              grep -Fq 'KGSL_MEMFLAGS_FORCE_32BIT' src/freedreno/vulkan/tu_knl_kgsl.cc
               grep -Fq 'A6XX_SP_CS_BINDLESS_INVALIDATE' src/freedreno/vulkan/tu_cmd_buffer.cc
               grep -Fq 'A6XX_SP_GFX_BINDLESS_INVALIDATE' src/freedreno/vulkan/tu_cmd_buffer.cc
           """
           p.write_text(s.replace(needle,hook+needle))
           PY
-          python3 -m py_compile tools/turnip-a830/apply_native_barycentrics.py tools/turnip-a830/apply_gamehub_selective_renderpass.py tools/turnip-a830/apply_gamehub_depth_range_unrestricted.py tools/turnip-a830/apply_gamehub_a830_fdm_full_density.py tools/turnip-a830/apply_gamehub_a830_subgroup64.py tools/turnip-a830/apply_gamehub_a830_legacy_strong_barrier_flags.py tools/turnip-a830/apply_gamehub_a830_rgb96_formats.py tools/turnip-a830/apply_gamehub_a830_rgb96_copy.py tools/turnip-a830/apply_gamehub_gralloc_metadata_parity.py tools/turnip-a830/apply_gamehub_gralloc_qti_loader.py tools/turnip-a830/apply_gamehub_regular_indexed_guarded_r9.py tools/turnip-a830/apply_gamehub_gpu_properties.py tools/turnip-a830/verify_gamehub_gpu_threshold.py
+          python3 -m py_compile tools/turnip-a830/apply_native_barycentrics.py tools/turnip-a830/apply_gamehub_selective_renderpass.py tools/turnip-a830/apply_gamehub_depth_range_unrestricted.py tools/turnip-a830/apply_gamehub_a830_fdm_full_density.py tools/turnip-a830/apply_gamehub_a830_subgroup64.py tools/turnip-a830/apply_gamehub_a830_legacy_strong_barrier_flags.py tools/turnip-a830/apply_gamehub_a830_rgb96_formats.py tools/turnip-a830/apply_gamehub_a830_rgb96_copy.py tools/turnip-a830/apply_gamehub_gralloc_metadata_parity.py tools/turnip-a830/apply_gamehub_gralloc_qti_loader.py tools/turnip-a830/apply_gamehub_regular_indexed_guarded_r9.py tools/turnip-a830/apply_gamehub_gpu_properties.py tools/turnip-a830/apply_gamehub_kgsl_alias_4gb.py tools/turnip-a830/verify_gamehub_gpu_threshold.py
           bash -n turnip-recipe/build_turnip.sh
           # Validate reconstructed source contract without generating a driver.
           python3 tools/turnip-a830/verify_gamehub_gralloc_result_semantics.py
@@ -130,7 +133,7 @@ jobs:
         env:
           VARIANT: a8xx-patchs1
           MESA_COMMIT: f28352d1179a4a85b4be286a883747bae2d3786b
-          BUILD_VERSION: a830-gamehub-strong-global-barriers-r10
+          BUILD_VERSION: a830-gamehub-kgsl4gb-parity-r11
         run: |
           cd turnip-recipe
           bash build_turnip.sh
@@ -146,11 +149,12 @@ jobs:
           strings /tmp/a830.so | grep -q 'GameHub A830 gralloc:'
           strings /tmp/a830.so | grep -q 'GraphicBufferMapper20getPixelFormatFourCC'
           strings /tmp/a830.so | grep -q 'binding IB alias failed'
+          strings /tmp/a830.so | grep -q 'IB alias crosses a 4GB boundary'
           python3 tools/turnip-a830/verify_gamehub_gpu_threshold.py v38 /tmp/a830.so
           sha256sum /tmp/a830.so "$driver_zip" > turnip-sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: turnip-a830-gamehub-global-barriers-r10
+          name: turnip-a830-gamehub-kgsl4gb-parity-r11
           path: |
             turnip-recipe/turnip_workdir/Turnip_*.zip
             turnip-sha256.txt
