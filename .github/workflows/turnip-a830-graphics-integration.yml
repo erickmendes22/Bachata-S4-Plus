@@ -1,6 +1,9 @@
 name: Turnip A830 pinned source integration
 on:
-  # No automatic driver builds until GameHub parity investigation completes.
+  # Single consolidated R11 compilation, explicitly gated by four-path source preflight.
+  push:
+    branches: [build/a830-gamehub-r11-integrated-20261103]
+    paths: [.github/workflows/turnip-a830-graphics-integration.yml]
   workflow_dispatch:
 permissions:
   contents: read
