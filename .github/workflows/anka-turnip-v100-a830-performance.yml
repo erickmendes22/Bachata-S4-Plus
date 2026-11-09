@@ -60,7 +60,7 @@ jobs:
           assert (mesa/".git").exists() and lib.is_file(), "Not an actual patched Anka native build"
           assert subprocess.check_output(["git","-C",str(mesa),"rev-parse","HEAD"],text=True).strip()=="db6c407405a4353a1029704a344b565cf7f1fa48"
           blob=lib.read_bytes()
-          assert len(blob)>1000000 and blob[:4]==b"\\x7fELF" and blob[4]==2 and int.from_bytes(blob[18:20],"little")==183
+          assert len(blob)>1000000 and blob[:4]==b"\x7fELF" and blob[4]==2 and int.from_bytes(blob[18:20],"little")==183
           for p in sorted(Path("anka-src/patches").glob("*.patch")):
               r=subprocess.run(["git","-C",str(mesa),"apply","--reverse","--check",str(p.resolve())],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
               assert r.returncode==0, "Original Anka patch not present: "+p.name
@@ -92,20 +92,20 @@ jobs:
           dst=Path("AnkaTurnip_v1.0.0_A830_Performance_3_Extra_Patches.zip")
           with zipfile.ZipFile(dst,"w",zipfile.ZIP_DEFLATED,compresslevel=9) as z:
               z.writestr("libvulkan_freedreno.so",blob)
-              z.writestr("meta.json",json.dumps(meta,indent=2)+"\\n")
+              z.writestr("meta.json",json.dumps(meta,indent=2)+"\n")
               z.writestr("SOURCE.txt",
-                "Anka v1.0.0 SHA ec336240478e6be391cb5f319b0d3ef09f97c0a0\\n"
-                "Mesa SHA db6c407405a4353a1029704a344b565cf7f1fa48\\n"
-                "Extra DD SHA c437d891164c5e31a65219a5451005875fab74ac\\n"
-                "Extra patches: KGSL PWR_MAX, GMEM bandwidth 10, IR3 half-wave subgroup 32\\n"
-                "Original seven Anka patches retained. Experimental; no Android SotC FPS test.\\n")
+                "Anka v1.0.0 SHA ec336240478e6be391cb5f319b0d3ef09f97c0a0\n"
+                "Mesa SHA db6c407405a4353a1029704a344b565cf7f1fa48\n"
+                "Extra DD SHA c437d891164c5e31a65219a5451005875fab74ac\n"
+                "Extra patches: KGSL PWR_MAX, GMEM bandwidth 10, IR3 half-wave subgroup 32\n"
+                "Original seven Anka patches retained. Experimental; no Android SotC FPS test.\n")
               z.writestr("LICENSE.txt",Path("anka-src/LICENSE").read_bytes())
           with zipfile.ZipFile(dst) as z:
               assert z.testzip() is None
               assert sorted(z.namelist())==["LICENSE.txt","SOURCE.txt","libvulkan_freedreno.so","meta.json"]
           Path("SHA256SUMS.txt").write_text(
-            hashlib.sha256(blob).hexdigest()+"  libvulkan_freedreno.so\\n"+
-            hashlib.sha256(dst.read_bytes()).hexdigest()+"  "+dst.name+"\\n")
+            hashlib.sha256(blob).hexdigest()+"  libvulkan_freedreno.so\n"+
+            hashlib.sha256(dst.read_bytes()).hexdigest()+"  "+dst.name+"\n")
           print("PASS all seven Anka + three extra performance patches")
           print(Path("SHA256SUMS.txt").read_text())
           PY
