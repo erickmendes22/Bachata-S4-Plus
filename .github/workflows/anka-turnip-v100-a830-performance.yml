@@ -44,11 +44,11 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
           DD_SRC: ${{ github.workspace }}/dd-src
-          ANKA_HALF_WAVE: '1'
+          ANKA_HALF_WAVE: '0'
         run: |
           set -euo pipefail
           sh anka-src/build.sh
-      - name: Verify all ten patches, export AdrenoTools ZIP
+      - name: Verify all nine patches, export AdrenoTools ZIP
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -74,6 +74,7 @@ jobs:
             "HALF_WAVE":mesa/"src/freedreno/ir3/ir3_lower_subgroups.c",
             "GMEM_10":mesa/"src/freedreno/vulkan/tu_autotune.cc"
           }
+          source_checks.pop("HALF_WAVE")
           for k,needle in source_checks.items():
               assert needle in checks[k].read_text(), "Missing performance patch: "+k
           dyn=subprocess.check_output(["readelf","-d",str(lib)],text=True)
@@ -81,7 +82,7 @@ jobs:
           meta={
             "schemaVersion":1,
             "name":"Anka Turnip v1.0.0 A830 Performance",
-            "description":"Mesa db6c407; Anka 7 patches + DD KGSL PWR_MAX, GMEM 10, and required subgroup 32",
+            "description":"Mesa db6c407; Anka 7 patches + DD KGSL PWR_MAX and GMEM bandwidth 10",
             "author":"AnkaTurnip / Droid-Deck / Daedalus",
             "packageVersion":"1.0.0-a830-perf-1",
             "vendor":"Mesa",
@@ -89,7 +90,7 @@ jobs:
             "minApi":34,
             "libraryName":"libvulkan_freedreno.so"
           }
-          dst=Path("AnkaTurnip_v1.0.0_A830_Performance_3_Extra_Patches.zip")
+          dst=Path("AnkaTurnip_v1.0.0_A830_Performance_2_Extra_Patches.zip")
           with zipfile.ZipFile(dst,"w",zipfile.ZIP_DEFLATED,compresslevel=9) as z:
               z.writestr("libvulkan_freedreno.so",blob)
               z.writestr("meta.json",json.dumps(meta,indent=2)+"\n")
@@ -97,7 +98,7 @@ jobs:
                 "Anka v1.0.0 SHA ec336240478e6be391cb5f319b0d3ef09f97c0a0\n"
                 "Mesa SHA db6c407405a4353a1029704a344b565cf7f1fa48\n"
                 "Extra DD SHA c437d891164c5e31a65219a5451005875fab74ac\n"
-                "Extra patches: KGSL PWR_MAX, GMEM bandwidth 10, IR3 half-wave subgroup 32\n"
+                "Extra patches: KGSL PWR_MAX, GMEM bandwidth 10\n"
                 "Original seven Anka patches retained. Experimental; no Android SotC FPS test.\n")
               z.writestr("LICENSE.txt",Path("anka-src/LICENSE").read_bytes())
           with zipfile.ZipFile(dst) as z:
@@ -106,15 +107,15 @@ jobs:
           Path("SHA256SUMS.txt").write_text(
             hashlib.sha256(blob).hexdigest()+"  libvulkan_freedreno.so\n"+
             hashlib.sha256(dst.read_bytes()).hexdigest()+"  "+dst.name+"\n")
-          print("PASS all seven Anka + three extra performance patches")
+          print("PASS all seven Anka + two extra performance patches")
           print(Path("SHA256SUMS.txt").read_text())
           PY
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: AnkaTurnip-v1.0.0-A830-Performance-3-Extra-Patches
+          name: AnkaTurnip-v1.0.0-A830-Performance-2-Extra-Patches
           path: |
-            AnkaTurnip_v1.0.0_A830_Performance_3_Extra_Patches.zip
+            AnkaTurnip_v1.0.0_A830_Performance_2_Extra_Patches.zip
             SHA256SUMS.txt
           retention-days: 14
           if-no-files-found: error
