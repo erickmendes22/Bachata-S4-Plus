@@ -1,0 +1,128 @@
+name: Anka Turnip 1.0.0 - A830 extra performance patches
+on:
+  push:
+    branches: [build/anka-v100-a830-performance-20261109]
+    paths:
+      - .github/workflows/anka-turnip-v100-a830-performance.yml
+      - tools/anka-turnip/**
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  anka-performance-a830:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build bison flex glslang-tools pkg-config python3-pip git binutils zip
+          sudo python3 -m pip install --break-system-packages --quiet 'meson==1.12.1' mako pyyaml packaging
+      - name: Android NDK r28c (original Anka 1.0.0 toolchain)
+        uses: nttld/setup-ndk@afb4c9964b521afb97c864b7d40b11e6911bd410
+        id: ndk
+        with:
+          ndk-version: r28c
+          add-to-path: false
+          local-cache: true
+      - name: Checkout exact Anka 1.0.0 and DD patch sources
+        run: |
+          set -euo pipefail
+          git clone -q https://github.com/EddizEge/AnkaTurnip.git anka-src
+          git -C anka-src checkout -q --detach ec336240478e6be391cb5f319b0d3ef09f97c0a0
+          test "$(git -C anka-src rev-parse HEAD)" = ec336240478e6be391cb5f319b0d3ef09f97c0a0
+          git clone -q --filter=blob:none https://github.com/Droid-Deck/Drivers.git dd-src
+          git -C dd-src checkout -q --detach c437d891164c5e31a65219a5451005875fab74ac
+          test "$(git -C dd-src rev-parse HEAD)" = c437d891164c5e31a65219a5451005875fab74ac
+          test "$(find anka-src/patches -name '*.patch' -type f | wc -l)" -eq 7
+          python3 tools/anka-turnip/prepare_anka_performance.py anka-src/build.sh
+          python3 -m py_compile tools/anka-turnip/prepare_anka_performance.py
+          bash -n anka-src/build.sh
+      - name: Compile actual Anka 1.0.0 with added A830 performance patches
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          DD_SRC: ${{ github.workspace }}/dd-src
+          ANKA_HALF_WAVE: '1'
+        run: |
+          set -euo pipefail
+          sh anka-src/build.sh
+      - name: Verify all ten patches, export AdrenoTools ZIP
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,zipfile,hashlib,subprocess
+          from pathlib import Path
+          build=Path("anka-src/work")
+          mesa=build/"mesa"
+          lib=build/"pkg/vulkan.anka_turnip.so"
+          assert (mesa/".git").exists() and lib.is_file(), "Not an actual patched Anka native build"
+          assert subprocess.check_output(["git","-C",str(mesa),"rev-parse","HEAD"],text=True).strip()=="db6c407405a4353a1029704a344b565cf7f1fa48"
+          blob=lib.read_bytes()
+          assert len(blob)>1000000 and blob[:4]==b"\\x7fELF" and blob[4]==2 and int.from_bytes(blob[18:20],"little")==183
+          for p in sorted(Path("anka-src/patches").glob("*.patch")):
+              r=subprocess.run(["git","-C",str(mesa),"apply","--reverse","--check",str(p.resolve())],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+              assert r.returncode==0, "Original Anka patch not present: "+p.name
+          source_checks={
+            "PWR_MAX":"KGSL_CMDBATCH_PWR_CONSTRAINT",
+            "HALF_WAVE":"ir3_nir_lower_half_subgroups",
+            "GMEM_10":"gmem_bandwidth * 10 + total_draw_call_bandwidth"
+          }
+          checks={
+            "PWR_MAX":mesa/"src/freedreno/vulkan/tu_knl_kgsl.cc",
+            "HALF_WAVE":mesa/"src/freedreno/ir3/ir3_lower_subgroups.c",
+            "GMEM_10":mesa/"src/freedreno/vulkan/tu_autotune.cc"
+          }
+          for k,needle in source_checks.items():
+              assert needle in checks[k].read_text(), "Missing performance patch: "+k
+          dyn=subprocess.check_output(["readelf","-d",str(lib)],text=True)
+          assert "libc.so.6" not in dyn and "libc.so" in dyn
+          meta={
+            "schemaVersion":1,
+            "name":"Anka Turnip v1.0.0 A830 Performance",
+            "description":"Mesa db6c407; Anka 7 patches + DD KGSL PWR_MAX, GMEM 10, and required subgroup 32",
+            "author":"AnkaTurnip / Droid-Deck / Daedalus",
+            "packageVersion":"1.0.0-a830-perf-1",
+            "vendor":"Mesa",
+            "driverVersion":"AnkaTurnip-v1.0.0-A830-Perf",
+            "minApi":34,
+            "libraryName":"libvulkan_freedreno.so"
+          }
+          dst=Path("AnkaTurnip_v1.0.0_A830_Performance_3_Extra_Patches.zip")
+          with zipfile.ZipFile(dst,"w",zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+              z.writestr("libvulkan_freedreno.so",blob)
+              z.writestr("meta.json",json.dumps(meta,indent=2)+"\\n")
+              z.writestr("SOURCE.txt",
+                "Anka v1.0.0 SHA ec336240478e6be391cb5f319b0d3ef09f97c0a0\\n"
+                "Mesa SHA db6c407405a4353a1029704a344b565cf7f1fa48\\n"
+                "Extra DD SHA c437d891164c5e31a65219a5451005875fab74ac\\n"
+                "Extra patches: KGSL PWR_MAX, GMEM bandwidth 10, IR3 half-wave subgroup 32\\n"
+                "Original seven Anka patches retained. Experimental; no Android SotC FPS test.\\n")
+              z.writestr("LICENSE.txt",Path("anka-src/LICENSE").read_bytes())
+          with zipfile.ZipFile(dst) as z:
+              assert z.testzip() is None
+              assert sorted(z.namelist())==["LICENSE.txt","SOURCE.txt","libvulkan_freedreno.so","meta.json"]
+          Path("SHA256SUMS.txt").write_text(
+            hashlib.sha256(blob).hexdigest()+"  libvulkan_freedreno.so\\n"+
+            hashlib.sha256(dst.read_bytes()).hexdigest()+"  "+dst.name+"\\n")
+          print("PASS all seven Anka + three extra performance patches")
+          print(Path("SHA256SUMS.txt").read_text())
+          PY
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: AnkaTurnip-v1.0.0-A830-Performance-3-Extra-Patches
+          path: |
+            AnkaTurnip_v1.0.0_A830_Performance_3_Extra_Patches.zip
+            SHA256SUMS.txt
+          retention-days: 14
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: AnkaTurnip-A830-performance-build-diagnostics
+          path: |
+            anka-src/work/mesa/meson-logs/meson-log.txt
+            anka-src/work/mesa/build-android/meson-logs/meson-log.txt
+          if-no-files-found: ignore
