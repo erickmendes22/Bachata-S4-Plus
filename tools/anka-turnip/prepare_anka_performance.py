@@ -34,6 +34,16 @@ EXTRA = r"""
       fi
   fi
   grep -Fq 'KGSL_CMDBATCH_PWR_CONSTRAINT' src/freedreno/vulkan/tu_knl_kgsl.cc
+  # Mesa upstream 2026-10-08 e984ef294e: KGSL zero-timeout fix.
+  # Pinned 2026-11-07 Anka Mesa already carries it; do NOT patch twice.
+  grep -Fq 'kgsl_poll_timestamp' src/freedreno/vulkan/tu_knl_kgsl.cc || {
+    echo "Missing KGSL Zero Timeout patch e984ef29 in pinned Mesa" >&2
+    exit 3
+  }
+  grep -Fq 'return kgsl_poll_timestamp(device, context_id, timestamp);' src/freedreno/vulkan/tu_knl_kgsl.cc || {
+    echo "KGSL zero-timeout must use non-blocking READTIMESTAMP; refused" >&2
+    exit 3
+  }
   grep -Fq 'gmem_bandwidth * 10 + total_draw_call_bandwidth' src/freedreno/vulkan/tu_autotune.cc
   if [ "${ANKA_HALF_WAVE:-1}" = 1 ]; then
       grep -Fq 'ir3_nir_lower_half_subgroups' src/freedreno/ir3/ir3_lower_subgroups.c
