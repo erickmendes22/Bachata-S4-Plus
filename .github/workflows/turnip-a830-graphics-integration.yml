@@ -47,7 +47,7 @@ jobs:
             git -C shader-reference show "7fffd01ddb5651d72a05dd0b12b84977cb95d397:$source" > "turnip-recipe/patches/patchs1/$(basename "$source")"
           done
           test "$(find turnip-recipe/patches/patchs1 -maxdepth 1 -name '0006-*.patch' | wc -l)" -eq 1
-      - name: Apply official KGSL timelines after original V39 patches
+      - name: Compile source-rebased native KGSL timelines after original V39 patches
         run: |
           python3 - <<'PY'
           from pathlib import Path
