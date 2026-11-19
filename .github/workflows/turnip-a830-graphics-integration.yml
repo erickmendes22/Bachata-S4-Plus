@@ -56,20 +56,10 @@ jobs:
           old="            apply_patchs1_extra_patches\n"
           assert s.count(old)==1,"V39 patch hook changed"
           hook='''            apply_patchs1_extra_patches
-                      # Real native GPU timelines from Mesa MR39751; preserve the original V39 IR3 path.
-                      for part in 1 2; do
-                        timeline_patch="$REPO_ROOT/patches/spiderman2/39751-$part.patch"
-                        if git apply --check "$timeline_patch"; then
-                          git apply "$timeline_patch" || die "MR39751 part $part failed"
-                        else
-                          # Bounded context rebase: require every hunk to apply, never ship .rej files.
-                          patch -p1 --dry-run --fuzz=2 --no-backup-if-mismatch < "$timeline_patch" || die "MR39751 part $part cannot be rebased safely"
-                          patch -p1 --fuzz=2 --no-backup-if-mismatch < "$timeline_patch" || die "MR39751 part $part rebase failed"
-                          if find src -name '*.rej' -print -quit | grep -q .; then die "MR39751 rejected hunks present"; fi
-                        fi
-                      done
-                      grep -Fq 'KGSL_GPU_AUX_COMMAND_TIMELINE' src/freedreno/vulkan/tu_knl_kgsl.cc || die 'Native GPU timeline signaling missing'
-                      grep -Fq 'KGSL_TIMELINE_WAIT' src/freedreno/vulkan/tu_knl_kgsl.cc || die 'Native timeline wait missing'
+                      # Source-specific rebase of MR39751 against Mesa f28352d, preserving syncobj submission.
+                      python3 "$GITHUB_WORKSPACE/tools/turnip-a830/port_kgsl_timeline.py" "$PWD" "$REPO_ROOT/patches/spiderman2"
+                      grep -Fq 'KGSL_GPU_AUX_COMMAND_TIMELINE' src/freedreno/vulkan/tu_knl_kgsl.cc || die "GPU timeline signal missing"
+                      grep -Fq 'KGSL_TIMELINE_WAIT' src/freedreno/vulkan/tu_knl_kgsl.cc || die "Kernel timeline wait missing"
           '''
           s=s.replace(old,hook,1)
           old='pretty_name="Turnip A8xx Patched Patchs1"'
