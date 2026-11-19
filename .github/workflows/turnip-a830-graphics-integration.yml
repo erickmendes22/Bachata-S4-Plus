@@ -27,16 +27,22 @@ jobs:
           git -C shader-reference checkout --detach f3940f460744114a09a3cf39ae5f1e293785b2fe
           mkdir -p turnip-recipe/patches/spiderman2
           cp shader-reference/patches/a8xx-dd/0006-ir3-shuffle-broadcast.patch turnip-recipe/patches/spiderman2/shuffle.patch
+          # Use the previously proven A8xx patch series for Mesa f28352d, not the newer main rebases.
+          git -C shader-reference fetch --depth=1 origin 7fffd01ddb5651d72a05dd0b12b84977cb95d397
+          for n in 1 2 3 4 5; do
+            old="$(find turnip-recipe/patches/patchs1 -maxdepth 1 -name "000$n-*.patch" -type f -print -quit)"
+            source="$(git -C shader-reference ls-tree -r --name-only 7fffd01ddb5651d72a05dd0b12b84977cb95d397 | grep "^patches/a8xx-winnative/000$n-.*\.patch$")"
+            test -n "$old" && test -n "$source"
+            rm "$old"
+            git -C shader-reference show "7fffd01ddb5651d72a05dd0b12b84977cb95d397:$source" > "turnip-recipe/patches/patchs1/$(basename "$source")"
+          done
+          rm turnip-recipe/patches/patchs1/0006-*.patch
       - name: Integrate performance changes using Gen39's own builder
         run: |
           python3 - <<'PY'
           from pathlib import Path
           root=Path('turnip-recipe')
-          f=root/'patches/patchs1/0006-tu-kgsl-Cache-retired-A8XX-IB-storage.patch'
-          c=f.read_text()
-          a='debug_get_bool_option("TU_KGSL_IB_CACHE", true)'
-          assert c.count(a)==1, 'V39 KGSL cache patch mismatch'
-          f.write_text(c.replace(a,'debug_get_bool_option("TU_KGSL_IB_CACHE", false)',1))
+          assert not list((root/'patches/patchs1').glob('0006-*.patch')), 'Unsafe IB cache still present'
           f=root/'build_turnip.sh'
           s=f.read_text()
           def sub(old,new):
@@ -53,6 +59,7 @@ jobs:
                         die 'IR3 shuffle optimization incompatible with source'
                       fi
           ''')
+          sub('[ "$count" -eq 6 ]', '[ "$count" -eq 5 ]')
           sub(' -Dbuildtype=release ', ' -Dbuildtype=release -Db_lto=true -Db_lto_mode=thin ')
           sub('pretty_name="Turnip A8xx Patched Patchs1"', 'pretty_name="Turnip Gen39 A840 Performance"')
           sub('suffix="A8xx-Patched-Patchs1"', 'suffix="Gen39-A840-Performance"')
@@ -69,12 +76,12 @@ jobs:
           f.write_text(s)
           PY
           bash -n turnip-recipe/build_turnip.sh
-          grep -Fq 'debug_get_bool_option("TU_KGSL_IB_CACHE", false)' turnip-recipe/patches/patchs1/0006-tu-kgsl-Cache-retired-A8XX-IB-storage.patch
+          test "$(find turnip-recipe/patches/patchs1 -maxdepth 1 -name '0006-*.patch' | wc -l)" -eq 0
           grep -Fq 'make_shuffle_mixed(' turnip-recipe/patches/spiderman2/shuffle.patch
       - name: Build Gen39 patched performance
         env:
           VARIANT: a8xx-patchs1
-          MESA_COMMIT: 2648b2059f
+          MESA_COMMIT: f28352d1179a4a85b4be286a883747bae2d3786b
           BUILD_VERSION: 39-spiderman2-perf-r1
         run: |
           cd turnip-recipe
