@@ -1,0 +1,57 @@
+name: Compare original V39 patched driver binary
+on:
+  push:
+    branches: [investigate/spiderman2-gen39-original-binary-20261119]
+    paths: [.github/workflows/analyze-spiderman2-turnip-binary.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download unmodified official V39 patched and unpatched binaries
+        run: |
+          set -euo pipefail
+          mkdir -p binary-compare
+          for variant in Turnip_Gen8_V39_Patched Turnip_Gen8_V39; do
+            curl -fLsS --retry 5 --retry-all-errors --connect-timeout 10 \
+              "https://github.com/StevenMXZ/Adreno-Tools-Drivers/releases/download/v39/${variant}.zip" \
+              -o "binary-compare/${variant}.zip"
+            unzip -t "binary-compare/${variant}.zip"
+            unzip -p "binary-compare/${variant}.zip" libvulkan_freedreno.so >"binary-compare/${variant}.so"
+            test "$(wc -c <"binary-compare/${variant}.so")" -gt 5000000
+          done
+      - name: Compare binary code signatures, GPU IDs, Android ABI and build IDs
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess, struct, hashlib, json
+          out={}
+          root=Path('binary-compare')
+          for n in ['Turnip_Gen8_V39_Patched','Turnip_Gen8_V39']:
+            so=root/(n+'.so')
+            b=so.read_bytes()
+            strings=set(subprocess.check_output(['strings',str(so)],text=True,errors='replace').splitlines())
+            gpu_ids=['ffff44050a31','ffff44050a21','ffff440514ff','ffff44050000']
+            o={'size':len(b),'sha256':hashlib.sha256(b).hexdigest()}
+            o['gpu_ids']={v:(b.find(struct.pack('<Q',int(v,16)))) for v in gpu_ids}
+            o['markers']={v:v in strings for v in ['tu_advertise_wave32_compat','tu_compute_mesh_shader','tu_disable_mesh_shader','tu_sync_renderpass_cache','TU_KGSL_IB_CACHE','tu_enable_softfloat32','DXVK|vkd3d','prefer_sysmem','tu_autotune_algorithm','TU_AUTOTUNE_ALGO=prefer_sysmem','tu-mesh-layout-cache-v1-routing-fix-r1-shuffle-r1-bytewrap-r1-retained-blob-v1']}
+            o['abi']=subprocess.check_output(['readelf','-n',str(so)],text=True,errors='replace')[-2000:]
+            o['sections']=[line.strip() for line in subprocess.check_output(['readelf','-W','-S',str(so)],text=True).splitlines() if any(t in line for t in ['.rodata','.text','.data.rel.ro'])]
+            o['meta']=subprocess.check_output(['unzip','-p',str(root/(n+'.zip')),'meta.json'],text=True,errors='replace')
+            out[n]=o
+          (root/'comparison.json').write_text(json.dumps(out,indent=2))
+          print(json.dumps(out,indent=2)[:12000])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Original-StevenMXZ-V39-Patched-and-Unpatched-binary
+          path: |
+            binary-compare/*.so
+            binary-compare/*.zip
+            binary-compare/comparison.json
+          retention-days: 7
+          if-no-files-found: error
