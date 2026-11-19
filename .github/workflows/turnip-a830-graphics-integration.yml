@@ -102,6 +102,21 @@ jobs:
         run: |
           cd turnip-recipe
           bash build_turnip.sh
+      - name: Capture precise Gen39 sources and MR for source-level rebase
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gen39-A840-KGSL-source-rebase
+          path: |
+            turnip-recipe/turnip_workdir/mesa/src/freedreno/vulkan/tu_knl_kgsl.cc
+            turnip-recipe/turnip_workdir/mesa/src/freedreno/vulkan/tu_common.h
+            turnip-recipe/turnip_workdir/mesa/src/freedreno/vulkan/tu_device.h
+            turnip-recipe/turnip_workdir/mesa/src/freedreno/vulkan/tu_queue.h
+            turnip-recipe/turnip_workdir/mesa/src/vulkan/runtime/vk_semaphore.c
+            turnip-recipe/patches/spiderman2/39751.patch
+            turnip-recipe/patches/spiderman2/39751-1.patch
+            turnip-recipe/patches/spiderman2/39751-2.patch
+          if-no-files-found: error
       - name: Verify ZIP and architecture
         run: |
           set -euo pipefail
