@@ -75,20 +75,20 @@ jobs:
           # Port Mesa df911094 (merged 2026-11-12): bit 32 was truncated
           # by kgsl_gpumem_alloc_id.flags (32 bits). This is a real upstream bug.
           sub('    configure_variant\n    apply_android_ndk_fixes', '''    configure_variant
-    if ! grep -Fq 'if (kgsl_flags >> 32)' src/freedreno/vulkan/tu_knl_kgsl.cc; then
-        log 'Backporting Mesa df911094: preserve KGSL_MEMFLAGS_FORCE_32BIT'
-        git fetch -q --depth=2 origin df911094d362179661f96d0f19e29a9f79cf252a
-        git show --format= df911094d362179661f96d0f19e29a9f79cf252a -- src/freedreno/vulkan/tu_knl_kgsl.cc > "$WORKDIR/force32.patch"
-        [ -s "$WORKDIR/force32.patch" ] || die 'Missing pinned upstream KGSL patch'
-        if git apply --check "$WORKDIR/force32.patch"; then
-            git apply "$WORKDIR/force32.patch"
-        else
-            die 'Upstream force32 patch does not apply cleanly to this Mesa/variant'
-        fi
-    fi
-    grep -Fq 'if (kgsl_flags >> 32)' src/freedreno/vulkan/tu_knl_kgsl.cc || die 'KGSL fix missing after patch'
-    grep -Fq 'IOCTL_KGSL_GPUOBJ_INFO' src/freedreno/vulkan/tu_knl_kgsl.cc || die 'KGSL GPU VA query missing'
-    apply_android_ndk_fixes''')
+              if ! grep -Fq 'if (kgsl_flags >> 32)' src/freedreno/vulkan/tu_knl_kgsl.cc; then
+                  log 'Backporting Mesa df911094: preserve KGSL_MEMFLAGS_FORCE_32BIT'
+                  git fetch -q --depth=2 origin df911094d362179661f96d0f19e29a9f79cf252a
+                  git show --format= df911094d362179661f96d0f19e29a9f79cf252a -- src/freedreno/vulkan/tu_knl_kgsl.cc > "$WORKDIR/force32.patch"
+                  [ -s "$WORKDIR/force32.patch" ] || die 'Missing pinned upstream KGSL patch'
+                  if git apply --check "$WORKDIR/force32.patch"; then
+                      git apply "$WORKDIR/force32.patch"
+                  else
+                      die 'Upstream force32 patch does not apply cleanly to this Mesa/variant'
+                  fi
+              fi
+              grep -Fq 'if (kgsl_flags >> 32)' src/freedreno/vulkan/tu_knl_kgsl.cc || die 'KGSL fix missing after patch'
+              grep -Fq 'IOCTL_KGSL_GPUOBJ_INFO' src/freedreno/vulkan/tu_knl_kgsl.cc || die 'KGSL GPU VA query missing'
+              apply_android_ndk_fixes''')
           f.write_text(s)
           PY
           bash -n turnip-recipe/build_turnip.sh
