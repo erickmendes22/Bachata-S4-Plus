@@ -132,11 +132,11 @@ jobs:
           unzip -p "$driver" meta.json | python3 -m json.tool
           unzip -p "$driver" libvulkan_freedreno.so >/tmp/turnip-native.so
           readelf -h /tmp/turnip-native.so | grep -q AArch64
-          if strings /tmp/turnip-native.so | grep -Fq TU_KGSL_IB_CACHE; then
+          if LC_ALL=C grep -aFq TU_KGSL_IB_CACHE /tmp/turnip-native.so; then
             echo "Unexpected retired-IB cache in r3 binary" >&2
             exit 1
           fi
-          strings /tmp/turnip-native.so | grep -Fq 'kgsl_timeline_wait failed'
+          LC_ALL=C grep -aFq 'kgsl_timeline_wait failed' /tmp/turnip-native.so
           unzip -p "$driver" meta.json | grep -Fq 'O(n) retired IB cache removed'
           sha256sum "$driver" >turnip-recipe/turnip_workdir/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
