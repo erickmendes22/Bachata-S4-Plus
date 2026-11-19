@@ -1,7 +1,7 @@
-name: Turnip Gen39 A840 Spider-Man 2 performance
+name: Turnip Gen39 A840 Spider-Man 2 KGSL FORCE_32BIT fix
 on:
   push:
-    branches: [build/spiderman2-gen39-v39-perf-20261119]
+    branches: [build/spiderman2-gen39-kgsl-force32-20261119]
     paths: [.github/workflows/turnip-a830-graphics-integration.yml]
   workflow_dispatch:
 permissions:
@@ -72,6 +72,23 @@ jobs:
                           die 'KGSL nonblocking poll unavailable'
                       fi
           '''+s[end:]
+          # Port Mesa df911094 (merged 2026-11-12): bit 32 was truncated
+          # by kgsl_gpumem_alloc_id.flags (32 bits). This is a real upstream bug.
+          sub('    configure_variant\\n    apply_android_ndk_fixes', '''    configure_variant
+    if ! grep -Fq 'if (kgsl_flags >> 32)' src/freedreno/vulkan/tu_knl_kgsl.cc; then
+        log 'Backporting Mesa df911094: preserve KGSL_MEMFLAGS_FORCE_32BIT'
+        git fetch -q --depth=2 origin df911094d362179661f96d0f19e29a9f79cf252a
+        git show --format= df911094d362179661f96d0f19e29a9f79cf252a -- src/freedreno/vulkan/tu_knl_kgsl.cc > "$WORKDIR/force32.patch"
+        [ -s "$WORKDIR/force32.patch" ] || die 'Missing pinned upstream KGSL patch'
+        if git apply --check "$WORKDIR/force32.patch"; then
+            git apply "$WORKDIR/force32.patch"
+        else
+            die 'Upstream force32 patch does not apply cleanly to this Mesa/variant'
+        fi
+    fi
+    grep -Fq 'if (kgsl_flags >> 32)' src/freedreno/vulkan/tu_knl_kgsl.cc || die 'KGSL fix missing after patch'
+    grep -Fq 'IOCTL_KGSL_GPUOBJ_INFO' src/freedreno/vulkan/tu_knl_kgsl.cc || die 'KGSL GPU VA query missing'
+    apply_android_ndk_fixes''')
           f.write_text(s)
           PY
           bash -n turnip-recipe/build_turnip.sh
@@ -81,7 +98,7 @@ jobs:
         env:
           VARIANT: a8xx-patchs1
           MESA_COMMIT: f28352d1179a4a85b4be286a883747bae2d3786b
-          BUILD_VERSION: 39-spiderman2-perf-r1
+          BUILD_VERSION: 39-spiderman2-kgsl-force32-r1
         run: |
           cd turnip-recipe
           bash build_turnip.sh
@@ -97,7 +114,7 @@ jobs:
           sha256sum "$zip_path" > turnip-recipe/turnip_workdir/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: Turnip-Gen39-A840-SpiderMan2-Performance
+          name: Turnip-Gen39-A840-SpiderMan2-KGSL-FORCE32
           path: |
             turnip-recipe/turnip_workdir/Turnip_Gen39-A840-Performance_*.zip
             turnip-recipe/turnip_workdir/SHA256SUMS.txt
@@ -106,9 +123,9 @@ jobs:
       - name: Publish the actual AdrenoTools ZIP directly in GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: gen39-a840-spiderman2-perf-r1
+          tag_name: gen39-a840-spiderman2-kgsl-force32-r1
           target_commitish: ${{ github.sha }}
-          name: Turnip Gen39 A840 Spider-Man 2 Performance r1
+          name: Turnip Gen39 A840 Spider-Man 2 KGSL FORCE_32BIT r1
           prerelease: true
           make_latest: false
           fail_on_unmatched_files: true
@@ -116,7 +133,7 @@ jobs:
             Download the Turnip_Gen39-A840-Performance_*.zip asset directly.
             This is the AdrenoTools driver ZIP (root contains meta.json and libvulkan_freedreno.so).
             Do not import the GitHub Actions artifact wrapper into Winlator.
-            Experimental: performance not yet benchmarked; Feature Level 12_0 limitation is not claimed fixed.
+            Backports Mesa df911094 (2026-11-12): fixes truncated bit-32 KGSL FORCE_32BIT allocation flag. Experimental, no claim that Spider-Man 2 crash or Feature Level 12_0 is fixed.
           files: turnip-recipe/turnip_workdir/Turnip_Gen39-A840-Performance_*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
