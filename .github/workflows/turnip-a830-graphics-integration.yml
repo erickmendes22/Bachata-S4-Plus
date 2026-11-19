@@ -60,7 +60,6 @@ jobs:
                       fi
           ''')
           sub('[ "$count" -eq 6 ]', '[ "$count" -eq 5 ]')
-          sub(' -Dbuildtype=release ', ' -Dbuildtype=release -Db_lto=true -Db_lto_mode=thin ')
           sub('pretty_name="Turnip A8xx Patched Patchs1"', 'pretty_name="Turnip Gen39 A840 Performance"')
           sub('suffix="A8xx-Patched-Patchs1"', 'suffix="Gen39-A840-Performance"')
           start=s.index('            if ! git apply --check "$poll_patch"; then')
