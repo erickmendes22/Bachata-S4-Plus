@@ -74,7 +74,7 @@ jobs:
           '''+s[end:]
           # Port Mesa df911094 (merged 2026-11-12): bit 32 was truncated
           # by kgsl_gpumem_alloc_id.flags (32 bits). This is a real upstream bug.
-          sub('    configure_variant\\n    apply_android_ndk_fixes', '''    configure_variant
+          sub('    configure_variant\n    apply_android_ndk_fixes', '''    configure_variant
     if ! grep -Fq 'if (kgsl_flags >> 32)' src/freedreno/vulkan/tu_knl_kgsl.cc; then
         log 'Backporting Mesa df911094: preserve KGSL_MEMFLAGS_FORCE_32BIT'
         git fetch -q --depth=2 origin df911094d362179661f96d0f19e29a9f79cf252a
