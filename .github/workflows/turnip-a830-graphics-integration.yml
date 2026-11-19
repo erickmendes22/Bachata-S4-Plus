@@ -63,6 +63,12 @@ jobs:
           old_count='[ "$count" -eq 6 ]'
           assert s.count(old_count)==1, "V39 recipe patch count changed"
           s=s.replace(old_count,'[ "$count" -eq 5 ]',1)
+          old_desc='desc="Patchs1 Android/Bionic balanced recipe + extra 0001-0006 A8xx patchset"'
+          assert s.count(old_desc)==1, "V39 metadata description changed"
+          s=s.replace(old_desc, 'desc="Gen39 patches 0001-0005 + native KGSL timelines; O(n) retired IB cache removed"', 1)
+          old_log='A8xx Patchs1: applying extra patchset 0001-0006...'
+          assert s.count(old_log)==1, "V39 patch log changed"
+          s=s.replace(old_log,'A8xx Patchs1: applying extra patchset 0001-0005...',1)
           old="            apply_patchs1_extra_patches\n"
           assert s.count(old)==1,"V39 patch hook changed"
           hook='''            apply_patchs1_extra_patches
@@ -126,6 +132,12 @@ jobs:
           unzip -p "$driver" meta.json | python3 -m json.tool
           unzip -p "$driver" libvulkan_freedreno.so >/tmp/turnip-native.so
           readelf -h /tmp/turnip-native.so | grep -q AArch64
+          if strings /tmp/turnip-native.so | grep -Fq TU_KGSL_IB_CACHE; then
+            echo "Unexpected retired-IB cache in r3 binary" >&2
+            exit 1
+          fi
+          strings /tmp/turnip-native.so | grep -Fq 'kgsl_timeline_wait failed'
+          unzip -p "$driver" meta.json | grep -Fq 'O(n) retired IB cache removed'
           sha256sum "$driver" >turnip-recipe/turnip_workdir/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
