@@ -1,7 +1,7 @@
-name: Turnip Gen39 A840 native KGSL timeline
+name: Turnip Gen39 A840 native KGSL without IB cache
 on:
   push:
-    branches: [build/spiderman2-gen39-kgsl-timeline-20261119]
+    branches: [build/spiderman2-gen39-nativekgsl-no-ibcache-r3-20261119]
     paths: [.github/workflows/turnip-a830-graphics-integration.yml]
   workflow_dispatch:
 permissions:
@@ -46,13 +46,23 @@ jobs:
             rm "$old"
             git -C shader-reference show "7fffd01ddb5651d72a05dd0b12b84977cb95d397:$source" > "turnip-recipe/patches/patchs1/$(basename "$source")"
           done
-          test "$(find turnip-recipe/patches/patchs1 -maxdepth 1 -name '0006-*.patch' | wc -l)" -eq 1
+          # 0006 has an O(n) linked-list scan for retired-IB reuse and was removed elsewhere after A840 issues.
+          # Preserve the original alias/unbind fix 0005 and the working native KGSL timeline implementation.
+          cache_patch="$(find turnip-recipe/patches/patchs1 -maxdepth 1 -name '0006-*.patch' -type f -print -quit)"
+          test -n "$cache_patch"
+          grep -Fq 'Cache retired A8XX IB storage' "$cache_patch"
+          rm "$cache_patch"
+          test "$(find turnip-recipe/patches/patchs1 -maxdepth 1 -name '000[1-5]-*.patch' | wc -l)" -eq 5
+          test "$(find turnip-recipe/patches/patchs1 -maxdepth 1 -name '0006-*.patch' | wc -l)" -eq 0
       - name: Compile source-rebased native KGSL timelines after original V39 patches
         run: |
           python3 - <<'PY'
           from pathlib import Path
           p=Path("turnip-recipe/build_turnip.sh")
           s=p.read_text()
+          old_count='[ "$count" -eq 6 ]'
+          assert s.count(old_count)==1, "V39 recipe patch count changed"
+          s=s.replace(old_count,'[ "$count" -eq 5 ]',1)
           old="            apply_patchs1_extra_patches\n"
           assert s.count(old)==1,"V39 patch hook changed"
           hook='''            apply_patchs1_extra_patches
@@ -64,10 +74,10 @@ jobs:
           s=s.replace(old,hook,1)
           old='pretty_name="Turnip A8xx Patched Patchs1"'
           assert s.count(old)==1
-          s=s.replace(old,'pretty_name="Turnip Gen39 A840 Native KGSL"',1)
+          s=s.replace(old,'pretty_name="Turnip Gen39 A840 Native KGSL No IB Cache"',1)
           old='suffix="A8xx-Patched-Patchs1"'
           assert s.count(old)==1
-          s=s.replace(old,'suffix="Gen39-A840-NativeKGSL"',1)
+          s=s.replace(old,'suffix="Gen39-A840-NativeKGSL-NoIBCache"',1)
           start=s.index('            if ! git apply --check "$poll_patch"; then')
           end=s.index('            ;;',start)
           s=s[:start]+'''            # Mesa f28352d already has the nonblocking KGSL poll implementation.
@@ -88,7 +98,7 @@ jobs:
         env:
           VARIANT: a8xx-patchs1
           MESA_COMMIT: f28352d1179a4a85b4be286a883747bae2d3786b
-          BUILD_VERSION: 39-spiderman2-nativekgsl-r2
+          BUILD_VERSION: 39-spiderman2-nativekgsl-r3
         run: |
           cd turnip-recipe
           bash build_turnip.sh
@@ -110,7 +120,7 @@ jobs:
       - name: Verify ZIP and architecture
         run: |
           set -euo pipefail
-          driver="$(find turnip-recipe/turnip_workdir -maxdepth 1 -name 'Turnip_Gen39-A840-NativeKGSL_*.zip' -type f -print -quit)"
+          driver="$(find turnip-recipe/turnip_workdir -maxdepth 1 -name 'Turnip_Gen39-A840-NativeKGSL-NoIBCache_*.zip' -type f -print -quit)"
           test -n "$driver"
           unzip -t "$driver"
           unzip -p "$driver" meta.json | python3 -m json.tool
@@ -119,27 +129,27 @@ jobs:
           sha256sum "$driver" >turnip-recipe/turnip_workdir/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: Turnip-Gen39-A840-SpiderMan2-NativeKGSL
+          name: Turnip-Gen39-A840-SpiderMan2-NativeKGSL-NoIBCache
           path: |
-            turnip-recipe/turnip_workdir/Turnip_Gen39-A840-NativeKGSL_*.zip
+            turnip-recipe/turnip_workdir/Turnip_Gen39-A840-NativeKGSL-NoIBCache_*.zip
             turnip-recipe/turnip_workdir/SHA256SUMS.txt
           retention-days: 14
           if-no-files-found: error
       - name: Publish direct Winlator driver ZIP
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: gen39-a840-spiderman2-nativekgsl-r2
+          tag_name: gen39-a840-spiderman2-nativekgsl-r3-noibcache
           target_commitish: ${{ github.sha }}
-          name: Turnip Gen39 A840 native KGSL timelines r2
+          name: Turnip Gen39 A840 native KGSL no IB cache r3
           prerelease: true
           make_latest: false
           fail_on_unmatched_files: true
           body: |
             Experimental A840 driver with Mesa MR39751 native KGSL timelines.
-            Original Gen39 0001-0006 patches preserved; no divergent shuffle experiment.
+            Same Mesa f28352d and native KGSL timeline port as r2. Only the linear-scan retired-IB cache 0006 is removed; 0001-0005 remain. No IR3 shuffle experiment.
             Kernel timeline support is detected at runtime, with fallback.
             Performance and full D3D12 Feature Level support require real-device verification.
             Download the .zip asset under Releases directly for Winlator AdrenoTools.
-          files: turnip-recipe/turnip_workdir/Turnip_Gen39-A840-NativeKGSL_*.zip
+          files: turnip-recipe/turnip_workdir/Turnip_Gen39-A840-NativeKGSL-NoIBCache_*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
