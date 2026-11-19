@@ -1,7 +1,7 @@
-name: Turnip Gen39 A840 Spider-Man 2 performance
+name: Turnip Gen39 A840 Spider-Man 2 mesh capability experiment
 on:
   push:
-    branches: [build/spiderman2-gen39-v39-perf-20261119]
+    branches: [build/spiderman2-gen39-mesh-policy-20261119]
     paths: [.github/workflows/turnip-a830-graphics-integration.yml]
   workflow_dispatch:
 permissions:
@@ -17,16 +17,12 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends ninja-build patchelf unzip flex bison git perl python3-pip glslang-tools curl zip patch clang lld llvm
           sudo python3 -m pip install --break-system-packages 'meson>=1.5' mako packaging pyyaml
-      - name: Restore original Gen39 patched and source-matched shader fix
+      - name: Restore original Gen39 patched source and WinNative patches
         run: |
           set -euo pipefail
           git clone --depth=1 --branch v39 https://github.com/StevenMXZ/Adreno-Tools-Drivers.git turnip-recipe
           test "$(git -C turnip-recipe rev-parse HEAD)" = b3b32ad30e7d7b4bd897e678af064036eeb9df09
           git clone --depth=1 --branch A8xx https://github.com/The412Banner/Banners-Turnip.git shader-reference
-          git -C shader-reference fetch --depth=1 origin f3940f460744114a09a3cf39ae5f1e293785b2fe
-          git -C shader-reference checkout --detach f3940f460744114a09a3cf39ae5f1e293785b2fe
-          mkdir -p turnip-recipe/patches/spiderman2
-          cp shader-reference/patches/a8xx-dd/0006-ir3-shuffle-broadcast.patch turnip-recipe/patches/spiderman2/shuffle.patch
           # Use the previously proven A8xx patch series for Mesa f28352d, not the newer main rebases.
           git -C shader-reference fetch --depth=1 origin 7fffd01ddb5651d72a05dd0b12b84977cb95d397
           for n in 1 2 3 4 5; do
@@ -36,13 +32,13 @@ jobs:
             rm "$old"
             git -C shader-reference show "7fffd01ddb5651d72a05dd0b12b84977cb95d397:$source" > "turnip-recipe/patches/patchs1/$(basename "$source")"
           done
-          rm turnip-recipe/patches/patchs1/0006-*.patch
-      - name: Integrate performance changes using Gen39's own builder
+          test "$(find turnip-recipe/patches/patchs1 -maxdepth 1 -name '0006-*.patch' | wc -l)" -eq 1
+      - name: Integrate Spider-Man 2 compute-mesh extension gate
         run: |
           python3 - <<'PY'
           from pathlib import Path
           root=Path('turnip-recipe')
-          assert not list((root/'patches/patchs1').glob('0006-*.patch')), 'Unsafe IB cache still present'
+          assert len(list((root/'patches/patchs1').glob('0006-*.patch')))==1, 'Gen39 patch 0006 absent'
           f=root/'build_turnip.sh'
           s=f.read_text()
           def sub(old,new):
@@ -50,18 +46,10 @@ jobs:
               assert s.count(old)==1, 'V39 recipe mismatch: '+old[:65]
               s=s.replace(old,new,1)
           sub('            apply_patchs1_extra_patches\n','''            apply_patchs1_extra_patches
-                      shuffle_patch="$REPO_ROOT/patches/spiderman2/shuffle.patch"
-                      if grep -Fq 'make_shuffle_mixed(' src/freedreno/ir3/ir3_lower_subgroups.c; then
-                        log 'IR3 shuffle improvement already upstream'
-                      elif git apply --check "$shuffle_patch"; then
-                        git apply "$shuffle_patch"
-                      else
-                        die 'IR3 shuffle optimization incompatible with source'
-                      fi
+                      python3 "$GITHUB_WORKSPACE/tools/turnip-a830/mesh_policy_sm2.py" || die "Mesh capability patch rejected"
           ''')
-          sub('[ "$count" -eq 6 ]', '[ "$count" -eq 5 ]')
-          sub('pretty_name="Turnip A8xx Patched Patchs1"', 'pretty_name="Turnip Gen39 A840 Performance"')
-          sub('suffix="A8xx-Patched-Patchs1"', 'suffix="Gen39-A840-Performance"')
+          sub('pretty_name="Turnip A8xx Patched Patchs1"', 'pretty_name="Turnip Gen39 A840 SpiderMan2 MeshPolicy"')
+          sub('suffix="A8xx-Patched-Patchs1"', 'suffix="Gen39-A840-SM2-MeshPolicy"')
           start=s.index('            if ! git apply --check "$poll_patch"; then')
           end=s.index('            ;;',start)
           s=s[:start]+'''            if grep -Fq 'return kgsl_poll_timestamp(device, context_id, timestamp);' src/freedreno/vulkan/tu_knl_kgsl.cc; then
@@ -75,48 +63,50 @@ jobs:
           f.write_text(s)
           PY
           bash -n turnip-recipe/build_turnip.sh
-          test "$(find turnip-recipe/patches/patchs1 -maxdepth 1 -name '0006-*.patch' | wc -l)" -eq 0
-          grep -Fq 'make_shuffle_mixed(' turnip-recipe/patches/spiderman2/shuffle.patch
-      - name: Build Gen39 patched performance
+          test "$(find turnip-recipe/patches/patchs1 -maxdepth 1 -name '0006-*.patch' | wc -l)" -eq 1
+          test -s tools/turnip-a830/mesh_policy_sm2.py
+      - name: Build original Gen39 with conditional mesh shader advertisement
         env:
           VARIANT: a8xx-patchs1
           MESA_COMMIT: f28352d1179a4a85b4be286a883747bae2d3786b
-          BUILD_VERSION: 39-spiderman2-perf-r1
+          BUILD_VERSION: 39-spiderman2-meshpolicy-r1
         run: |
           cd turnip-recipe
           bash build_turnip.sh
       - name: Verify ARM64 driver ZIP
         run: |
           set -euo pipefail
-          zip_path="$(find turnip-recipe/turnip_workdir -maxdepth 1 -name 'Turnip_Gen39-A840-Performance_*.zip' -type f -print -quit)"
+          zip_path="$(find turnip-recipe/turnip_workdir -maxdepth 1 -name 'Turnip_Gen39-A840-SM2-MeshPolicy_*.zip' -type f -print -quit)"
           test -n "$zip_path"
           unzip -t "$zip_path"
           unzip -p "$zip_path" meta.json | python3 -m json.tool
           unzip -p "$zip_path" libvulkan_freedreno.so >/tmp/v39.so
           readelf -h /tmp/v39.so | grep -q AArch64
+          grep -Fq 'TU_SPIDERMAN2_COMPUTE_MESH' turnip-recipe/turnip_workdir/mesa/src/freedreno/vulkan/tu_device.cc
+          strings /tmp/v39.so | grep -q TU_SPIDERMAN2_COMPUTE_MESH
           sha256sum "$zip_path" > turnip-recipe/turnip_workdir/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: Turnip-Gen39-A840-SpiderMan2-Performance
+          name: Turnip-Gen39-A840-SpiderMan2-MeshPolicy
           path: |
-            turnip-recipe/turnip_workdir/Turnip_Gen39-A840-Performance_*.zip
+            turnip-recipe/turnip_workdir/Turnip_Gen39-A840-SM2-MeshPolicy_*.zip
             turnip-recipe/turnip_workdir/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
       - name: Publish the actual AdrenoTools ZIP directly in GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: gen39-a840-spiderman2-perf-r1
+          tag_name: gen39-a840-spiderman2-meshpolicy-r1
           target_commitish: ${{ github.sha }}
-          name: Turnip Gen39 A840 Spider-Man 2 Performance r1
+          name: Turnip Gen39 A840 Spider-Man 2 mesh capability r1
           prerelease: true
           make_latest: false
           fail_on_unmatched_files: true
           body: |
-            Download the Turnip_Gen39-A840-Performance_*.zip asset directly.
+            Download the Turnip_Gen39-A840-SM2-MeshPolicy_*.zip asset directly.
             This is the AdrenoTools driver ZIP (root contains meta.json and libvulkan_freedreno.so).
             Do not import the GitHub Actions artifact wrapper into Winlator.
-            Experimental: performance not yet benchmarked; Feature Level 12_0 limitation is not claimed fixed.
-          files: turnip-recipe/turnip_workdir/Turnip_Gen39-A840-Performance_*.zip
+            Experimental: VK_EXT_mesh_shader emulation disabled by default to isolate D3D12 feature selection. Re-enable with TU_SPIDERMAN2_COMPUTE_MESH=1. FPS and boot not confirmed on hardware.
+          files: turnip-recipe/turnip_workdir/Turnip_Gen39-A840-SM2-MeshPolicy_*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
