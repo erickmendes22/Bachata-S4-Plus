@@ -59,8 +59,14 @@ jobs:
                       # Real native GPU timelines from Mesa MR39751; preserve the original V39 IR3 path.
                       for part in 1 2; do
                         timeline_patch="$REPO_ROOT/patches/spiderman2/39751-$part.patch"
-                        git apply --check "$timeline_patch" || die "MR39751 part $part rejected"
-                        git apply "$timeline_patch" || die "MR39751 part $part failed"
+                        if git apply --check "$timeline_patch"; then
+                          git apply "$timeline_patch" || die "MR39751 part $part failed"
+                        else
+                          # Bounded context rebase: require every hunk to apply, never ship .rej files.
+                          patch -p1 --dry-run --fuzz=2 --no-backup-if-mismatch < "$timeline_patch" || die "MR39751 part $part cannot be rebased safely"
+                          patch -p1 --fuzz=2 --no-backup-if-mismatch < "$timeline_patch" || die "MR39751 part $part rebase failed"
+                          if find src -name '*.rej' -print -quit | grep -q .; then die "MR39751 rejected hunks present"; fi
+                        fi
                       done
                       grep -Fq 'KGSL_GPU_AUX_COMMAND_TIMELINE' src/freedreno/vulkan/tu_knl_kgsl.cc || die 'Native GPU timeline signaling missing'
                       grep -Fq 'KGSL_TIMELINE_WAIT' src/freedreno/vulkan/tu_knl_kgsl.cc || die 'Native timeline wait missing'
