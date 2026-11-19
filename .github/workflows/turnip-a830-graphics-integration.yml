@@ -1,7 +1,7 @@
-name: Turnip Gen39 A840 Spider-Man 2 performance
+name: Turnip Gen39 A840 native KGSL timeline
 on:
   push:
-    branches: [build/spiderman2-gen39-v39-perf-20261119]
+    branches: [build/spiderman2-gen39-kgsl-timeline-20261119]
     paths: [.github/workflows/turnip-a830-graphics-integration.yml]
   workflow_dispatch:
 permissions:
@@ -12,12 +12,12 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-      - name: Install build dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends ninja-build patchelf unzip flex bison git perl python3-pip glslang-tools curl zip patch clang lld llvm
-          sudo python3 -m pip install --break-system-packages 'meson>=1.5' mako packaging pyyaml
-      - name: Restore original Gen39 patched and source-matched shader fix
+          sudo python3 -m pip install --break-system-packages 'meson>=1.5' mako pyyaml packaging
+      - name: Restore Gen39 patched and exact native KGSL timeline MR39751
         run: |
           set -euo pipefail
           git clone --depth=1 --branch v39 https://github.com/StevenMXZ/Adreno-Tools-Drivers.git turnip-recipe
@@ -26,8 +26,18 @@ jobs:
           git -C shader-reference fetch --depth=1 origin f3940f460744114a09a3cf39ae5f1e293785b2fe
           git -C shader-reference checkout --detach f3940f460744114a09a3cf39ae5f1e293785b2fe
           mkdir -p turnip-recipe/patches/spiderman2
-          cp shader-reference/patches/a8xx-dd/0006-ir3-shuffle-broadcast.patch turnip-recipe/patches/spiderman2/shuffle.patch
-          # Use the previously proven A8xx patch series for Mesa f28352d, not the newer main rebases.
+          git -C shader-reference show f3940f460744114a09a3cf39ae5f1e293785b2fe:39751.patch > turnip-recipe/patches/spiderman2/39751.patch
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          p=Path("turnip-recipe/patches/spiderman2/39751.patch")
+          source=p.read_text()
+          starts=[m.start() for m in re.finditer(r'^From [0-9a-f]{40} Mon Sep 17 00:00:00 2001$',source,re.M)]
+          assert len(starts)==2, "expected upstream MR39751 as two sequential patches"
+          (p.parent/"39751-1.patch").write_text(source[starts[0]:starts[1]])
+          (p.parent/"39751-2.patch").write_text(source[starts[1]:])
+          PY
+          # Rebase only patches 0001-0005 to the previously compiled f28352d base.
           git -C shader-reference fetch --depth=1 origin 7fffd01ddb5651d72a05dd0b12b84977cb95d397
           for n in 1 2 3 4 5; do
             old="$(find turnip-recipe/patches/patchs1 -maxdepth 1 -name "000$n-*.patch" -type f -print -quit)"
@@ -36,87 +46,89 @@ jobs:
             rm "$old"
             git -C shader-reference show "7fffd01ddb5651d72a05dd0b12b84977cb95d397:$source" > "turnip-recipe/patches/patchs1/$(basename "$source")"
           done
-          rm turnip-recipe/patches/patchs1/0006-*.patch
-      - name: Integrate performance changes using Gen39's own builder
+          test "$(find turnip-recipe/patches/patchs1 -maxdepth 1 -name '0006-*.patch' | wc -l)" -eq 1
+      - name: Apply official KGSL timelines after original V39 patches
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          root=Path('turnip-recipe')
-          assert not list((root/'patches/patchs1').glob('0006-*.patch')), 'Unsafe IB cache still present'
-          f=root/'build_turnip.sh'
-          s=f.read_text()
-          def sub(old,new):
-              global s
-              assert s.count(old)==1, 'V39 recipe mismatch: '+old[:65]
-              s=s.replace(old,new,1)
-          sub('            apply_patchs1_extra_patches\n','''            apply_patchs1_extra_patches
-                      shuffle_patch="$REPO_ROOT/patches/spiderman2/shuffle.patch"
-                      if grep -Fq 'make_shuffle_mixed(' src/freedreno/ir3/ir3_lower_subgroups.c; then
-                        log 'IR3 shuffle improvement already upstream'
-                      elif git apply --check "$shuffle_patch"; then
-                        git apply "$shuffle_patch"
-                      else
-                        die 'IR3 shuffle optimization incompatible with source'
-                      fi
-          ''')
-          sub('[ "$count" -eq 6 ]', '[ "$count" -eq 5 ]')
-          sub('pretty_name="Turnip A8xx Patched Patchs1"', 'pretty_name="Turnip Gen39 A840 Performance"')
-          sub('suffix="A8xx-Patched-Patchs1"', 'suffix="Gen39-A840-Performance"')
+          p=Path("turnip-recipe/build_turnip.sh")
+          s=p.read_text()
+          old="            apply_patchs1_extra_patches\n"
+          assert s.count(old)==1,"V39 patch hook changed"
+          hook='''            apply_patchs1_extra_patches
+                      # Real native GPU timelines from Mesa MR39751; preserve the original V39 IR3 path.
+                      for part in 1 2; do
+                        timeline_patch="$REPO_ROOT/patches/spiderman2/39751-$part.patch"
+                        git apply --check "$timeline_patch" || die "MR39751 part $part rejected"
+                        git apply "$timeline_patch" || die "MR39751 part $part failed"
+                      done
+                      grep -Fq 'KGSL_GPU_AUX_COMMAND_TIMELINE' src/freedreno/vulkan/tu_knl_kgsl.cc || die 'Native GPU timeline signaling missing'
+                      grep -Fq 'KGSL_TIMELINE_WAIT' src/freedreno/vulkan/tu_knl_kgsl.cc || die 'Native timeline wait missing'
+          '''
+          s=s.replace(old,hook,1)
+          old='pretty_name="Turnip A8xx Patched Patchs1"'
+          assert s.count(old)==1
+          s=s.replace(old,'pretty_name="Turnip Gen39 A840 Native KGSL"',1)
+          old='suffix="A8xx-Patched-Patchs1"'
+          assert s.count(old)==1
+          s=s.replace(old,'suffix="Gen39-A840-NativeKGSL"',1)
           start=s.index('            if ! git apply --check "$poll_patch"; then')
           end=s.index('            ;;',start)
-          s=s[:start]+'''            if grep -Fq 'return kgsl_poll_timestamp(device, context_id, timestamp);' src/freedreno/vulkan/tu_knl_kgsl.cc; then
-                          log 'KGSL upstream nonblocking zero-timeout fix present'
+          s=s[:start]+'''            # Mesa f28352d already has the nonblocking KGSL poll implementation.
+                      if grep -Fq 'return kgsl_poll_timestamp(device, context_id, timestamp);' src/freedreno/vulkan/tu_knl_kgsl.cc; then
+                        log 'Upstream KGSL nonblocking poll already present'
                       elif git apply --check "$poll_patch"; then
-                          git apply "$poll_patch"
+                        git apply "$poll_patch"
                       else
-                          die 'KGSL nonblocking poll unavailable'
+                        die 'Nonblocking KGSL poll missing'
                       fi
           '''+s[end:]
-          f.write_text(s)
+          p.write_text(s)
           PY
           bash -n turnip-recipe/build_turnip.sh
-          test "$(find turnip-recipe/patches/patchs1 -maxdepth 1 -name '0006-*.patch' | wc -l)" -eq 0
-          grep -Fq 'make_shuffle_mixed(' turnip-recipe/patches/spiderman2/shuffle.patch
-      - name: Build Gen39 patched performance
+          test -s turnip-recipe/patches/spiderman2/39751-1.patch
+          test -s turnip-recipe/patches/spiderman2/39751-2.patch
+      - name: Build A840 Turnip Gen39 with native timelines
         env:
           VARIANT: a8xx-patchs1
           MESA_COMMIT: f28352d1179a4a85b4be286a883747bae2d3786b
-          BUILD_VERSION: 39-spiderman2-perf-r1
+          BUILD_VERSION: 39-spiderman2-nativekgsl-r2
         run: |
           cd turnip-recipe
           bash build_turnip.sh
-      - name: Verify ARM64 driver ZIP
+      - name: Verify ZIP and architecture
         run: |
           set -euo pipefail
-          zip_path="$(find turnip-recipe/turnip_workdir -maxdepth 1 -name 'Turnip_Gen39-A840-Performance_*.zip' -type f -print -quit)"
-          test -n "$zip_path"
-          unzip -t "$zip_path"
-          unzip -p "$zip_path" meta.json | python3 -m json.tool
-          unzip -p "$zip_path" libvulkan_freedreno.so >/tmp/v39.so
-          readelf -h /tmp/v39.so | grep -q AArch64
-          sha256sum "$zip_path" > turnip-recipe/turnip_workdir/SHA256SUMS.txt
+          driver="$(find turnip-recipe/turnip_workdir -maxdepth 1 -name 'Turnip_Gen39-A840-NativeKGSL_*.zip' -type f -print -quit)"
+          test -n "$driver"
+          unzip -t "$driver"
+          unzip -p "$driver" meta.json | python3 -m json.tool
+          unzip -p "$driver" libvulkan_freedreno.so >/tmp/turnip-native.so
+          readelf -h /tmp/turnip-native.so | grep -q AArch64
+          sha256sum "$driver" >turnip-recipe/turnip_workdir/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: Turnip-Gen39-A840-SpiderMan2-Performance
+          name: Turnip-Gen39-A840-SpiderMan2-NativeKGSL
           path: |
-            turnip-recipe/turnip_workdir/Turnip_Gen39-A840-Performance_*.zip
+            turnip-recipe/turnip_workdir/Turnip_Gen39-A840-NativeKGSL_*.zip
             turnip-recipe/turnip_workdir/SHA256SUMS.txt
-          if-no-files-found: error
           retention-days: 14
-      - name: Publish the actual AdrenoTools ZIP directly in GitHub Releases
+          if-no-files-found: error
+      - name: Publish direct Winlator driver ZIP
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: gen39-a840-spiderman2-perf-r1
+          tag_name: gen39-a840-spiderman2-nativekgsl-r2
           target_commitish: ${{ github.sha }}
-          name: Turnip Gen39 A840 Spider-Man 2 Performance r1
+          name: Turnip Gen39 A840 native KGSL timelines r2
           prerelease: true
           make_latest: false
           fail_on_unmatched_files: true
           body: |
-            Download the Turnip_Gen39-A840-Performance_*.zip asset directly.
-            This is the AdrenoTools driver ZIP (root contains meta.json and libvulkan_freedreno.so).
-            Do not import the GitHub Actions artifact wrapper into Winlator.
-            Experimental: performance not yet benchmarked; Feature Level 12_0 limitation is not claimed fixed.
-          files: turnip-recipe/turnip_workdir/Turnip_Gen39-A840-Performance_*.zip
+            Experimental A840 driver with Mesa MR39751 native KGSL timelines.
+            Original Gen39 0001-0006 patches preserved; no divergent shuffle experiment.
+            Kernel timeline support is detected at runtime, with fallback.
+            Performance and full D3D12 Feature Level support require real-device verification.
+            Download the .zip asset under Releases directly for Winlator AdrenoTools.
+          files: turnip-recipe/turnip_workdir/Turnip_Gen39-A840-NativeKGSL_*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
