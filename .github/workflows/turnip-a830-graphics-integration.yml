@@ -5,7 +5,7 @@ on:
     paths: [.github/workflows/turnip-a830-graphics-integration.yml]
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   android:
     runs-on: ubuntu-24.04
@@ -103,3 +103,20 @@ jobs:
             turnip-recipe/turnip_workdir/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
+      - name: Publish the actual AdrenoTools ZIP directly in GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: gen39-a840-spiderman2-perf-r1
+          target_commitish: ${{ github.sha }}
+          name: Turnip Gen39 A840 Spider-Man 2 Performance r1
+          prerelease: true
+          make_latest: false
+          fail_on_unmatched_files: true
+          body: |
+            Download the Turnip_Gen39-A840-Performance_*.zip asset directly.
+            This is the AdrenoTools driver ZIP (root contains meta.json and libvulkan_freedreno.so).
+            Do not import the GitHub Actions artifact wrapper into Winlator.
+            Experimental: performance not yet benchmarked; Feature Level 12_0 limitation is not claimed fixed.
+          files: turnip-recipe/turnip_workdir/Turnip_Gen39-A840-Performance_*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
