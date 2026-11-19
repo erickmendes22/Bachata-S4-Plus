@@ -23,8 +23,8 @@ jobs:
           git clone --depth=1 --branch v39 https://github.com/StevenMXZ/Adreno-Tools-Drivers.git turnip-recipe
           test "$(git -C turnip-recipe rev-parse HEAD)" = b3b32ad30e7d7b4bd897e678af064036eeb9df09
           git clone --depth=1 --branch A8xx https://github.com/The412Banner/Banners-Turnip.git shader-reference
-          git -C shader-reference fetch --depth=1 origin 7fffd01ddb5651d72a05dd0b12b84977cb95d397
-          git -C shader-reference checkout --detach 7fffd01ddb5651d72a05dd0b12b84977cb95d397
+          git -C shader-reference fetch --depth=1 origin f3940f460744114a09a3cf39ae5f1e293785b2fe
+          git -C shader-reference checkout --detach f3940f460744114a09a3cf39ae5f1e293785b2fe
           mkdir -p turnip-recipe/patches/spiderman2
           cp shader-reference/patches/a8xx-dd/0006-ir3-shuffle-broadcast.patch turnip-recipe/patches/spiderman2/shuffle.patch
       - name: Integrate performance changes using Gen39's own builder
