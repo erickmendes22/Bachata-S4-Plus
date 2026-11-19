@@ -125,6 +125,10 @@ kgsl_submitqueue_close(struct tu_device *dev, struct tu_queue *queue)
                     additions(p1, "@@ -1320,6 +1320,101 @@ kgsl_bind_finalize") +
                     "static VkResult\nkgsl_queue_submit_syncobj(struct tu_queue *queue",
                     "preserve syncobj submit")
+    # Clang Android r29 rejects alignof(expression) with -Wgnu-alignof-expression.
+    s = replace_one(s, "alignof(*profiling->cmd_obj)",
+                    "alignof(struct kgsl_command_object)",
+                    "profiling allocation alignment")
 
     # The upstream native timeline submit directly attaches GPU timeline
     # signal aux commands and allows kernel-side wait-any, without CPU FD merges.
@@ -162,6 +166,14 @@ kgsl_submitqueue_close(struct tu_device *dev, struct tu_queue *queue)
    }
    device->sync_types[2] = NULL;"""
     s = replace_one(s, old, new, "runtime kernel timeline detection")
+    # The loader contains goto fail paths; C++ forbids jumping over an
+    # initialized local. Declare the probe ID with the function's other locals.
+    s = replace_one(s, "   uint32_t dummy_timeline_id = 0;\n   if (kgsl_timeline_create_ioctl",
+                    "   if (kgsl_timeline_create_ioctl",
+                    "remove late timeline probe initialization")
+    s = replace_one(s, "   int dma_fd;\n",
+                    "   int dma_fd;\n   uint32_t dummy_timeline_id = 0;\n",
+                    "initialize native timeline probe before goto")
     assert s.count("kgsl_queue_submit_syncobj(") >= 2
     assert s.count("kgsl_queue_submit_timeline(") >= 2
     assert "KGSL_GPU_AUX_COMMAND_TIMELINE" in s
