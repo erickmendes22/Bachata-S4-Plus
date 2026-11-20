@@ -1,0 +1,45 @@
+name: Bachata preboot Bionic core source validation - no APK or full build
+on:
+  push:
+    branches: [feature/bionic-arm64-core-20261119]
+    paths: ['.github/workflows/bachata-preboot-source-validation.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  core-entry:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: zenithblue-oss/shadps4-arm64
+          ref: be6bc2e9c60799e071dd2fafa6216e8d80ec619c
+          path: upstream
+          submodules: false
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            ndk;30.0.14904198
+      - name: Validate complete Android Bionic source integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile bionic/generic/port_generic.py
+          python3 bionic/generic/port_generic.py upstream
+          git -C upstream diff --check
+          grep -Fq 'SDL_VULKAN_LIBRARY' upstream/src/video_core/renderer_vulkan/vk_platform.cpp
+          grep -Fq 'VK_USE_PLATFORM_ANDROID_KHR' upstream/src/video_core/renderer_vulkan/vk_platform.cpp
+          grep -Fq 'get_instance_proc' upstream/src/video_core/renderer_vulkan/vk_platform.cpp
+          grep -Fq 'BachataCoreMain' upstream/src/main.cpp
+          grep -Fq 'bachata-socket' upstream/src/main.cpp
+          grep -Fq 'bachata-storage-root' upstream/src/main.cpp
+          grep -Fq 'SetUserPath' bionic/generic/android_native_core.cpp
+          grep -Fq 'ConfigureAndroidUserPaths' bionic/generic/android_native_core.cpp
+          CXX="$ANDROID_HOME/ndk/30.0.14904198/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang++"
+          "$CXX" -std=c++23 -Wall -Wextra -Werror -fPIC -O2 \
+            -I bionic/generic -I upstream/src \
+            -c bionic/generic/android_native_core.cpp -o /tmp/android_native_core.o
+          readelf -h /tmp/android_native_core.o | grep -q AArch64
+          echo BIONIC_NATIVE_CORE_BOOTSTRAP_COMPILED_AND_ARGV_VULKAN_PATHS_PRESENT
