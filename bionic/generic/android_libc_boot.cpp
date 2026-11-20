@@ -168,7 +168,7 @@ struct FormatOutput {
     char* dst{};
     std::size_t capacity{};
 };
-void BoundedFormatOutput(char c, char* opaque, std::size_t index, std::size_t) {
+void BoundedFormatOutput(char c, void* opaque, std::size_t index, std::size_t) {
     auto* buf = reinterpret_cast<FormatOutput*>(opaque);
     if (index < buf->capacity) buf->dst[index] = c;
     else if (c == '\0' && buf->capacity) buf->dst[buf->capacity - 1] = '\0';
