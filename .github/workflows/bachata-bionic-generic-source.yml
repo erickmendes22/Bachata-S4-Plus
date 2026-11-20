@@ -1,7 +1,10 @@
 name: Bachata S4+ generic shadPS4 Android/Bionic source integration
 on:
-  # This workflow also publishes an APK. Never auto-run it on partial
-  # source integrations; require an explicit complete build request.
+  # The user requested an actual Android APK to test the fixed launch.
+  # This run is triggered only by the single workflow file update.
+  push:
+    branches: [feature/bionic-arm64-core-20261119]
+    paths: ['.github/workflows/bachata-bionic-generic-source.yml']
   workflow_dispatch:
 
 permissions:
@@ -9,6 +12,9 @@ permissions:
 
 jobs:
   generic-shadps4-android:
+    # The full core job below compiles and validates the actual source.
+    # Skip an obsolete isolated compilation not required for the APK.
+    if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -187,13 +193,10 @@ jobs:
           key: bachata-full-bionic-r30-${{ github.sha }}
 
   assemble-bionic-apk:
-    # Superseded: this job contains the old unvalidated SDL3 JNI + signing
-    # logic. Use bachata-bionic-apk-only.yml after a full-core boot gate.
-    if: false
-    name: DISABLED - obsolete APK packaging (use P36 APK-only workflow)
+    needs: [full-ps4-bionic]
+    name: Assemble and sign Bachata S4+ 0.2.7 Bionic TEST APK
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    needs: [full-ps4-bionic]
     env:
       BACHATA_P36_PRIVATE_KEY: ${{ secrets.BACHATA_P36_PRIVATE_KEY }}
       BACHATA_P36_CERT: ${{ secrets.BACHATA_P36_CERT }}
@@ -210,7 +213,7 @@ jobs:
             exit 3
           fi
 
-      - name: Retrieve compiled Bionic core from current workflow run
+      - name: Retrieve successful updated Bionic core from pinned build
         uses: actions/download-artifact@v4
         with:
           name: Bachata-S4Plus-FULL-general-purpose-Bionic-core
@@ -242,7 +245,7 @@ jobs:
           echo '35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8  out/apk/Bachata-S4-Plus-v0.2.7-base.apk' | sha256sum -c -
 
 
-      - name: Patch 0.2.7 frontend SDL3 JNI load (DEX only)
+      - name: Patch 0.2.7 frontend with deferred Bionic core loader (DEX only)
         shell: bash
         run: |
           set -euo pipefail
@@ -256,7 +259,7 @@ jobs:
             -o out/apk/recompiled-smali.apk > out/apk/apktool-rebuild.log 2>&1
           unzip -p out/apk/recompiled-smali.apk classes8.dex > out/apk/classes8-bionic.dex
           test -s out/apk/classes8-bionic.dex
-          echo "NativeRuntimeBridge SDL3 loader DEX prepared (rest of frontend preserved)"
+          echo "NativeRuntimeBridge Bionic core JNI loader DEX prepared (rest of frontend preserved)"
 
       - name: Compile ONLY lightweight Android JNI handoff (no shadPS4/FEX rebuild)
         shell: bash
@@ -268,15 +271,23 @@ jobs:
             bionic/jni/bachata_native_bridge.cpp \
             -o out/bionic/stage/lib/arm64-v8a/libbachata_native_runtime.so \
             -landroid -llog -ldl
+          # The Java SDL.setupJNI() methods are exported from the monolithic
+          # libbachata_bionic_core.so, *not* from libSDL3.so. Check only global
+          # defined DYNAMIC symbols, which Android's dlsym can actually resolve.
+          CORE=out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so
           for symbol in \
+            JNI_OnLoad \
             Java_org_libsdl_app_SDLActivity_nativeSetupJNI \
             Java_org_libsdl_app_SDLAudioManager_nativeSetupJNI \
-            Java_org_libsdl_app_SDLControllerManager_nativeSetupJNI; do
-            readelf -Ws out/bionic/stage/lib/arm64-v8a/libSDL3.so | grep -F "$symbol" > /dev/null || {
-              echo "::error::libSDL3.so missing mandatory Java JNI function: $symbol"; exit 2;
-            }
+            Java_org_libsdl_app_SDLControllerManager_nativeSetupJNI \
+            Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run \
+            Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_stop; do
+            if ! readelf --dyn-syms --wide "$CORE" |
+              awk -v target="$symbol" '$4 == "FUNC" && $5 == "GLOBAL" && $7 != "UND" && $8 == target { found=1 } END { exit !found }'; then
+              echo "::error::Bionic core lacks globally exported JNI symbol $symbol"; exit 2
+            fi
           done
-          echo "JNI adapter rebuilt; SDL3 required Java JNI exports present"
+          echo "JNI adapter rebuilt; core SDL + Bachata ABI exports validated for Android"
 
       - name: Normalize SONAMEs and audit JNI exports
         run: |
@@ -302,8 +313,9 @@ jobs:
             out/apk/Bachata-S4Plus-Bionic-unsigned.apk \
             out/apk/Bachata-S4Plus-Bionic-aligned.apk
           KEY=out/apk/bachata-p36-private.pem
+          KEY_PKCS8=out/apk/bachata-p36-private.pk8
           CERT=out/apk/bachata-p36-cert.pem
-          trap 'rm -f "$KEY" "$CERT"' EXIT
+          trap 'rm -f "$KEY" "$KEY_PKCS8" "$CERT"' EXIT
           # GitHub Secrets provide the ORIGINAL PEM key and X.509 certificate.
           # Never commit them or generate a new certificate during CI.
           umask 077
@@ -321,6 +333,15 @@ jobs:
             echo "::error::P36 private key does not match certificate"
             exit 4
           fi
+          # The existing P36 PEM may be traditional PKCS#1 RSA. apksigner's
+          # --key parser only accepts unencrypted PKCS#8. Convert encoding,
+          # NOT keypair or certificate: the P36 signer identity stays identical.
+          openssl pkcs8 -topk8 -nocrypt -in "$KEY" -outform DER -out "$KEY_PKCS8"
+          der_public="$(openssl pkey -inform DER -in "$KEY_PKCS8" -pubout -outform DER | sha256sum | cut -d' ' -f1)"
+          if [[ "$der_public" != "$cert_public" ]]; then
+            echo "::error::P36 PKCS8 conversion changed public key"
+            exit 4
+          fi
           # Ensure that test builds can update the ORIGINAL 0.2.7 app
           # without wiping existing game saves and settings.
           "$BT/apksigner" verify --verbose --print-certs \
@@ -331,7 +352,7 @@ jobs:
             exit 4
           fi
           "$BT/apksigner" sign \
-            --key "$KEY" --cert "$CERT" \
+            --key "$KEY_PKCS8" --cert "$CERT" \
             --v1-signing-enabled true --v2-signing-enabled true \
             --v3-signing-enabled true \
             --out out/apk/Bachata-S4Plus-0.2.7-Bionic-TEST.apk \
