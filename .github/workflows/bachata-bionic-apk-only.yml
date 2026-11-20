@@ -1,10 +1,7 @@
 name: Bachata S4+ Bionic APK ONLY - repackage existing ARM64 core
 on:
-  # Publish the explicitly prepared P36-signed Bionic JNI repair. Changes
-  # outside this workflow never trigger another APK build automatically.
-  push:
-    branches: [feature/bionic-arm64-core-20261119]
-    paths: ['.github/workflows/bachata-bionic-apk-only.yml']
+  # Boot integration gate: APK delivery is strictly manual while the Android
+  # native service/CLI/socket/renderer issues are unresolved.
   workflow_dispatch:
     inputs:
       source_run_id:
