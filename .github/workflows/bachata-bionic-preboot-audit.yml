@@ -1,0 +1,40 @@
+name: Bachata Bionic 0.2.7 pre-boot integration audit - no APK
+on:
+  push:
+    branches: [feature/bionic-arm64-core-20261119]
+    paths: ['.github/workflows/bachata-bionic-preboot-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect-base:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decode only original release Java runtime launch and native signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 4 'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.7/Bachata-S4-Plus-v0.2.7.apk' -o /tmp/base.apk
+          echo '35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8  /tmp/base.apk' | sha256sum -c -
+          curl -fL --retry 4 'https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar' -o /tmp/apktool.jar
+          java -Xmx5G -jar /tmp/apktool.jar d -f -r /tmp/base.apk -o /tmp/decoded >/dev/null
+          for name in NativeRuntimeBridge NativeRuntimeProcessLauncher NativeRuntimeService BionicLaunchBridge NativeRuntimeBridge\\$Companion; do
+            find /tmp/decoded -name "$name.smali" -print | while read -r file; do
+              echo "==== CLASS $file ===="
+              grep -nE '^.method|^    const-string.*(socket|storage-root|bachata|working|lib|SDL|run)|->(run|stop|loadLibrary|startProcess|launch)' "$file" | head -n 300 || true
+            done
+          done
+          echo '==== BIONIC SERVICE BRIDGE CALL SITES ===='
+          grep -R -n -F 'NativeRuntimeBridge;->run' /tmp/decoded/smali* | head -n 25 || true
+          echo '==== APP NATIVE RUN METHOD ===='
+          f="$(find /tmp/decoded -name 'NativeRuntimeBridge.smali' -print -quit)"
+          grep -n -A 14 -B 4 '^.method.* native run(' "$f" || true
+          echo '==== SERVICE ARGS, SOCKET and DIRECTORY neighborhood ===='
+          f="$(find /tmp/decoded -name 'NativeRuntimeProcessLauncher.smali' -print -quit)"
+          grep -n -A 35 -B 30 -E 'const-string.*(--bachata-socket|--bachata-storage-root|--override-root)' "$f" | head -n 450 || true
+          echo '==== SMALI COMPILER PATCH CHECK ===='
+          python3 -m py_compile bionic/apk/patch_frontend.py
+          python3 bionic/apk/patch_frontend.py /tmp/decoded
+          sed -n '65,100p' "$(find /tmp/decoded -name 'NativeRuntimeBridge.smali' -print -quit)"
