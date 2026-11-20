@@ -70,7 +70,7 @@ def main() -> None:
     changed = {NATIVE_DIR + name: file.read_bytes() for name, file in staged.items()}
     if args.patched_classes8 is not None:
         patched_dex = args.patched_classes8.read_bytes()
-        if not patched_dex.startswith(b"dex\\n") or len(patched_dex) < 1024:
+        if not patched_dex.startswith(b"dex\n") or len(patched_dex) < 1024:
             die("Patched classes8.dex is invalid")
         if b"SDL3" not in patched_dex:
             die("Rebuilt classes8.dex lacks the shared SDL3 initialization string")
