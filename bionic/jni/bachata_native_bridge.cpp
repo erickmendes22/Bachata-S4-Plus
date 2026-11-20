@@ -60,10 +60,19 @@ struct ScopedServiceProcessIO {
     bool ok = false;
 
     ScopedServiceProcessIO(JNIEnv* env, jstring directory, jint output_fd) {
+        // Android's isolated service may have search but not read permission
+        // for its inherited current directory. O_PATH can save a cwd without
+        // requiring directory read access; failure to save cwd is NOT a boot
+        // failure for this dedicated runtime service process.
+#ifdef O_PATH
+        previous_directory = open(".", O_PATH | O_CLOEXEC);
+#else
         previous_directory = open(".", O_RDONLY | O_CLOEXEC);
+#endif
         if (previous_directory < 0) {
-            throw_java(env, "Bachata Bionic: cannot save working directory");
-            return;
+            __android_log_print(ANDROID_LOG_WARN, kTag,
+                                "Cannot save inherited cwd (errno=%d); using runtime cwd",
+                                errno);
         }
         if (!directory) {
             throw_java(env, "Bachata Bionic: missing working directory");
@@ -118,7 +127,7 @@ bool try_engine(const char* name) {
         const char* error = dlerror();
         __android_log_print(ANDROID_LOG_ERROR, kTag, "BIONIC_CORE_DLOPEN_FAILED: %s: %s", name,
                             error ? error : "unknown linker error");
-        fprintf(stderr, "BIONIC_CORE_DLOPEN_FAILED: %s: %s\\n", name,
+        fprintf(stderr, "BIONIC_CORE_DLOPEN_FAILED: %s: %s\n", name,
                 error ? error : "unknown linker error");
         fflush(stderr);
         return false;
@@ -129,7 +138,7 @@ bool try_engine(const char* name) {
         // A port's SDL_main cannot be invoked by NativeRuntimeBridge.run.
         __android_log_print(ANDROID_LOG_WARN, kTag,
                             "%s lacks exact Bachata JNI ABI; skipping", name);
-        fprintf(stderr, "[BachataBionic] missing JNI run/stop export: %s\\n", name);
+        fprintf(stderr, "[BachataBionic] missing JNI run/stop export: %s\n", name);
         dlclose(h);
         return false;
     }
