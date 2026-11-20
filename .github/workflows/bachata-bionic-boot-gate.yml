@@ -64,6 +64,18 @@ jobs:
           echo '35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8  /tmp/base.apk' | sha256sum -c -
           curl -fLsS --retry 4 'https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar' -o /tmp/apktool.jar
           java -Xmx5G -jar /tmp/apktool.jar d -r -f /tmp/base.apk -o /tmp/decoded > /tmp/apktool-decode.log 2>&1
+          echo '=== BASE APK NATIVE EXTRACTION POLICY ==='
+          grep -n 'extractNativeLibs' /tmp/decoded/AndroidManifest.xml || true
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('/tmp/base.apk') as z:
+              for name in ('lib/arm64-v8a/libbachata_native_runtime.so', 'lib/arm64-v8a/libbachata_bionic_core.so', 'lib/arm64-v8a/libSDL3.so'):
+                  try:
+                      info=z.getinfo(name)
+                      print('BASE_NATIVE_ZIP',name,'stored' if info.compress_type==0 else 'compressed',info.file_size)
+                  except KeyError:
+                      print('BASE_NATIVE_ZIP',name,'ABSENT')
+          PY
           python3 bionic/apk/patch_frontend.py /tmp/decoded
           python3 - <<'PY'
           from pathlib import Path
