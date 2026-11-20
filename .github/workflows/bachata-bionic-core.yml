@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   bionic-core:
+    if: false # Replace accidental port-only build with a no-op
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
