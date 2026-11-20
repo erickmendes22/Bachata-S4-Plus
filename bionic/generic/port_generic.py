@@ -59,30 +59,66 @@ def apply(upstream: Path, overlay: Path) -> None:
         "        break;\n"
         "#elif defined(VK_USE_PLATFORM_WIN32_KHR)",
     )
-    # Preserve Android custom Vulkan loader selection. Unlike the desktop
-    # SDL window, our Android ANativeWindow uses no SDL_Vulkan_LoadLibrary.
+    # The Android frontend's SDL_VULKAN_LIBRARY is an optional *candidate*,
+    # not a guarantee of a Vulkan loader. In particular, a Mesa/Turnip ICD
+    # normally exports vk_icdGetInstanceProcAddr while Android's system
+    # loader exports vkGetInstanceProcAddr. The previous implementation
+    # unconditionally dlsym'ed only the latter, then asserted at boot.
+    # Resolve both APIs, log rejected candidates, and retry the Android
+    # system loader so a missing/inaccessible custom ICD does not prevent
+    # the app from starting the native renderer.
     replace(
         platform,
-        "#include <vector>\n",
-        "#include <cstdlib>\n#include <vector>\n",
+        "#include <vector>\\n",
+        "#include <cstdlib>\\n#include <dlfcn.h>\\n#include <vector>\\n",
     )
     replace(
         platform,
-        "    static vk::detail::DynamicLoader dl;\n"
-        "    VULKAN_HPP_DEFAULT_DISPATCHER.init(\n"
-        "        dl.getProcAddress<PFN_vkGetInstanceProcAddr>(\"vkGetInstanceProcAddr\"));",
-        "#if defined(__ANDROID__)\n"
-        "    const char* loader_path = std::getenv(\"SDL_VULKAN_LIBRARY\");\n"
-        "    static vk::detail::DynamicLoader dl(\n"
-        "        loader_path && loader_path[0] ? loader_path : \"libvulkan.so\");\n"
-        "#else\n"
-        "    static vk::detail::DynamicLoader dl;\n"
-        "#endif\n"
-        "    const auto get_instance_proc =\n"
-        "        dl.getProcAddress<PFN_vkGetInstanceProcAddr>(\"vkGetInstanceProcAddr\");\n"
-        "    ASSERT_MSG(get_instance_proc != nullptr,\n"
-        "               \"Vulkan loader missing vkGetInstanceProcAddr\");\n"
-        "    VULKAN_HPP_DEFAULT_DISPATCHER.init(get_instance_proc);",
+        '    static vk::detail::DynamicLoader dl;\\n'
+        '    VULKAN_HPP_DEFAULT_DISPATCHER.init(\\n'
+        '        dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr"));',
+        '#if defined(__ANDROID__)\\n'
+        '    static PFN_vkGetInstanceProcAddr get_instance_proc = []() -> PFN_vkGetInstanceProcAddr {\\n'
+        '        const char* requested = std::getenv("SDL_VULKAN_LIBRARY");\\n'
+        '        const char* candidates[] = {requested, "libvulkan.so", "/system/lib64/libvulkan.so"};\\n'
+        '        for (const char* path : candidates) {\\n'
+        '            if (!path || !path[0]) continue;\\n'
+        '            void* handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);\\n'
+        '            if (!handle) {\\n'
+        '                const char* error = dlerror();\\n'
+        '                LOG_WARNING(Render_Vulkan, "BIONIC_VULKAN_LOADER_OPEN_FAIL path={} error={}",\\n'
+        '                            path, error ? error : "unknown");\\n'
+        '                continue;\\n'
+        '            }\\n'
+        '            auto proc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(\\n'
+        '                dlsym(handle, "vkGetInstanceProcAddr"));\\n'
+        '            const char* api = "vkGetInstanceProcAddr";\\n'
+        '            if (!proc) {\\n'
+        '                proc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(\\n'
+        '                    dlsym(handle, "vk_icdGetInstanceProcAddr"));\\n'
+        '                api = "vk_icdGetInstanceProcAddr";\\n'
+        '            }\\n'
+        '            if (proc) {\\n'
+        '                LOG_INFO(Render_Vulkan, "BIONIC_VULKAN_LOADER_READY path={} api={} fallback={}",\\n'
+        '                         path, api, requested && std::strcmp(path, requested) != 0);\\n'
+        '                // Retain handle: Vulkan-Hpp dispatcher stores pointers into this ELF.\\n'
+        '                return proc;\\n'
+        '            }\\n'
+        '            LOG_WARNING(Render_Vulkan,\\n'
+        '                        "BIONIC_VULKAN_LOADER_EXPORT_MISSING path={} (both APIs)", path);\\n'
+        '            dlclose(handle);\\n'
+        '        }\\n'
+        '        LOG_CRITICAL(Render_Vulkan, "No usable Android Vulkan loader or ICD found");\\n'
+        '        return nullptr;\\n'
+        '    }();\\n'
+        '#else\\n'
+        '    static vk::detail::DynamicLoader dl;\\n'
+        '    const auto get_instance_proc =\\n'
+        '        dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr");\\n'
+        '#endif\\n'
+        '    ASSERT_MSG(get_instance_proc != nullptr,\\n'
+        '               "Vulkan loader missing vkGetInstanceProcAddr");\\n'
+        '    VULKAN_HPP_DEFAULT_DISPATCHER.init(get_instance_proc);',
     )
 
     # The Android 0.2.7 frontend sends an independent SAF broker session
