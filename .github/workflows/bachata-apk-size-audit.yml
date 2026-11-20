@@ -47,6 +47,26 @@ jobs:
                           print('NESTED_ENTRIES',len(r.infolist()))
                           for j in sorted(r.infolist(),key=lambda x:x.file_size,reverse=True)[:75]:
                               print('NESTED_ENTRY_MB',mb(j.file_size),mb(j.compress_size),j.filename)
+          print('=== GLIBC RUNTIME MANIFEST REFERENCES ===')
+          import re
+          with zipfile.ZipFile('/tmp/base.apk') as z:
+              manifest_text=z.read('assets/runtime/manifest.json').decode('utf-8',errors='replace')
+              try:
+                  manifest=json.loads(manifest_text)
+                  print('RUNTIME_MANIFEST_ROOT_KEYS', list(manifest) if isinstance(manifest,dict) else type(manifest).__name__)
+              except Exception as e:print('MANIFEST_PARSE_ERROR',str(e))
+              for line in manifest_text.splitlines():
+                  if any(term in line for term in ('shadps4-arm64-0','runtime.zip','"version"','"name"','"path"')):
+                      print('RUNTIME_MANIFEST_LINE',line[:600])
+              with zipfile.ZipFile(__import__('io').BytesIO(z.read('assets/runtime/runtime.zip'))) as nested:
+                  for i in nested.infolist():
+                      if i.filename.startswith('host/shadps4') or i.filename.endswith('/shadps4'):
+                          print('HOST_GLIBC_BINARY',i.filename,i.file_size,i.compress_size)
+          print('=== STAGE DYNAMIC ELF DEPENDENCIES ===')
+          for f in files:
+              dyn=subprocess.run(['readelf','-d',str(f)],capture_output=True,text=True).stdout
+              needed=[line.split('[',1)[-1].split(']',1)[0] for line in dyn.splitlines() if '(NEEDED)' in line]
+              print('ELF_REQUIRED',f.name,','.join(needed))
           print('=== STAGED_ELFS ===')
           root=Path('out/bionic/stage/lib/arm64-v8a')
           files=sorted(root.glob('*.so'))
