@@ -35,6 +35,9 @@ fetch_rev() {
   fi
 }
 echo "== [1/5] Android/Bionic dependencies"
+# The port defaults to $(nproc), which can exhaust GitHub runner memory when
+# FFmpeg and multiple C++ dependencies are compiled in parallel.
+sed -i 's/^J=$(nproc)$/J=${BACHATA_JOBS:-2}/' "$PORT/android/scripts/port-arm64/android_deps.sh"
 bash "$PORT/android/scripts/port-arm64/android_deps.sh"
 echo "== [2/5] pinned FEXCore Android build"
 FEX_DIR="$WORK/fex"
@@ -85,6 +88,12 @@ for name in libSDL3.so libavformat.so libavcodec.so libavutil.so \
   lib="$DEPS/prefix/lib/$name"
   test -s "$lib" || { echo "Missing dependency: $lib" >&2; exit 4; }
   cp -Lf "$lib" "$S/lib/arm64-v8a/$name"
+  # Android resolves DT_NEEDED against DT_SONAME (e.g. libavcodec.so.62),
+  # not necessarily the unversioned linker name libavcodec.so.
+  soname="$(readelf -d "$lib" | sed -n 's/.*(SONAME).*\\[\\([^]]*\\)\\].*/\\1/p' | head -1)"
+  if [[ -n "$soname" && "$soname" != "$name" ]]; then
+    cp -Lf "$lib" "$S/lib/arm64-v8a/$soname"
+  fi
 done
 cp -f "$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" \
   "$S/lib/arm64-v8a/"
