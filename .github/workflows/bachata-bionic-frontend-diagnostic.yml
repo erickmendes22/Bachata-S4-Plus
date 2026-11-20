@@ -85,3 +85,12 @@ jobs:
           done
           echo '=== ALL JAVA SDL JNI CALLS AND COMPATIBILITY ==='
           grep -R -n -C 7 'SDL;->setupJNI' /tmp/decode/smali_classes* | head -n 150 || true
+
+      - name: Examine exact SDL.setupJNI calls in original release
+        run: |
+          set -euo pipefail
+          f="$(find /tmp/decode -path '*/org/libsdl/app/SDL.smali' -print -quit)"
+          echo "SDL_FILE=$f"
+          grep -n -A 65 -B 12 '^.method.*setupJNI' "$f" || true
+          echo '=== Names of SDL nativeSetupJNI entrypoints ==='
+          grep -R -n 'nativeSetupJNI' /tmp/decode/smali_classes*/org/libsdl/app | head -n 65 || true
