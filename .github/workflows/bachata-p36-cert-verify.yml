@@ -1,0 +1,33 @@
+name: Verify Bachata 0.2.7 P36 original release signature
+on:
+  push:
+    branches: [feature/bionic-arm64-core-20261119]
+    paths: ['.github/workflows/bachata-p36-cert-verify.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify-p36-release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            platform-tools
+            build-tools;36.0.0
+      - name: Check original 0.2.7 release certificate without private key
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 \
+            'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.7/Bachata-S4-Plus-v0.2.7.apk' -o base.apk
+          echo '35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8  base.apk' | sha256sum -c -
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs base.apk > report.txt
+          grep -E 'Signer #1 certificate SHA-256 digest|Verified using v[23] scheme' report.txt
+          actual="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' report.txt | head -n1)"
+          expected=d04ef2a865f8ed5ab8f98321be93ed2881eaa64f844fbaf480e18a8336620a72
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::Release 0.2.7 signer != P36 ($actual)"
+            exit 1
+          fi
+          echo 'RELEASE_0_2_7_P36_SIGNATURE_MATCHES'
