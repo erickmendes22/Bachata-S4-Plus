@@ -40,24 +40,52 @@ and synchronize changes made in 0.2.7. Do not assume that the older public
 frontend is binary- or feature-identical to 0.2.7, and do not import the closed
 onRps4-Android release binary as source.
 
-## Signing / upgrading installed releases
+## Permanent original P36 signing — required
 
-The workflow uses four **GitHub Actions Secrets** for durable signing, never
-a private keystore committed to source control:
-- `BACHATA_SIGNING_KEYSTORE_BASE64`
-- `BACHATA_SIGNING_STORE_PASSWORD`
-- `BACHATA_SIGNING_KEY_ALIAS`
-- `BACHATA_SIGNING_KEY_PASSWORD`
+The original Bachata S4+ P36 private key and certificate are retained in the
+user-owned ChatGPT Library as:
 
-With all four configured, the job signs with that certificate. **Only when the
-certificate matches the installed 0.2.7 certificate** can Android update the
-existing installation without uninstalling (subject to Android version code
-rules). If no secrets are present, a **fresh temporary TEST certificate** is
-generated, which is **not updatable** across CI executions and cannot upgrade
-an installed 0.2.7 release. Back up saves before a clean install. Partial
-signing-secret configuration fails the job rather than silently switching keys.
+- `Bachata-S4-Plus-P36-signing-key.pem`
+- `Bachata-S4-Plus-P36-signing-cert.pem`
 
-Never publish temporary-test-signed APKs as production updates.
+**Never commit, upload or expose the private key on public GitHub.**
+
+The P36 certificate was cryptographically confirmed to match the key and,
+independently, the **official 0.2.7 GitHub Release** signer through GitHub
+Actions run `44763248800`.
+
+Expected P36 X.509 DER SHA256:
+
+`d04ef2a865f8ed5ab8f98321be93ed2881eaa64f844fbaf480e18a8336620a72`
+
+One-time GitHub setup by a repository administrator:
+1. Open **Settings → Secrets and variables → Actions** in `erickmendes22/Bachata-S4-Plus`.
+2. Create secret **`BACHATA_P36_PRIVATE_KEY`** containing the full private-key
+   PEM text, including `BEGIN PRIVATE KEY` / `END PRIVATE KEY`.
+3. Create secret **`BACHATA_P36_CERT`** containing the full certificate PEM
+   text, including `BEGIN CERTIFICATE` / `END CERTIFICATE`.
+4. Launch **Actions → Bachata S4+ Bionic APK ONLY → Run workflow** using the
+   pinned successful native core run `44751437665` (default).
+
+The GitHub Actions integration available here cannot write repository Actions
+secrets. The repository owner must configure them once using the GitHub UI.
+
+The APK-only workflow uses `apksigner --key/--cert` directly with the
+permanent original PEM key; no password or PKCS#12 conversion is necessary.
+The key and certificate exist only in the workflow runner's temporary files
+and are deleted when signing finishes.
+
+Safety checks:
+- Abort before downloads if either secret is missing.
+- Never generate a temporary/self-signed certificate.
+- Validate the key matches the certificate.
+- Validate the certificate matches the original P36 SHA256.
+- Validate the official base APK 0.2.7 is P36-signed.
+- Sign with the original P36 key and verify output signature matches P36.
+- Fail the workflow rather than publish a non-updatable build.
+
+No local build is involved. Only GitHub Actions compiles, assembles, aligns,
+signs and verifies the APK.
 
 ## Validation gates
 
