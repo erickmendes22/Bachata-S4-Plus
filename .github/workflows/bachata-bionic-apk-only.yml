@@ -138,8 +138,9 @@ jobs:
             out/apk/Bachata-S4Plus-Bionic-unsigned.apk \
             out/apk/Bachata-S4Plus-Bionic-aligned.apk
           KEY=out/apk/bachata-p36-private.pem
+          KEY_PKCS8=out/apk/bachata-p36-private.pk8
           CERT=out/apk/bachata-p36-cert.pem
-          trap 'rm -f "$KEY" "$CERT"' EXIT
+          trap 'rm -f "$KEY" "$KEY_PKCS8" "$CERT"' EXIT
           # GitHub Secrets provide the ORIGINAL PEM key and X.509 certificate.
           # Never commit them or generate a new certificate during CI.
           umask 077
@@ -157,6 +158,15 @@ jobs:
             echo "::error::P36 private key does not match certificate"
             exit 4
           fi
+          # The existing P36 PEM may be traditional PKCS#1 RSA. apksigner's
+          # --key parser only accepts unencrypted PKCS#8. Convert encoding,
+          # NOT keypair or certificate: the P36 signer identity stays identical.
+          openssl pkcs8 -topk8 -nocrypt -in "$KEY" -outform DER -out "$KEY_PKCS8"
+          der_public="$(openssl pkey -inform DER -in "$KEY_PKCS8" -pubout -outform DER | sha256sum | cut -d' ' -f1)"
+          if [[ "$der_public" != "$cert_public" ]]; then
+            echo "::error::P36 PKCS8 conversion changed public key"
+            exit 4
+          fi
           # Ensure that test builds can update the ORIGINAL 0.2.7 app
           # without wiping existing game saves and settings.
           "$BT/apksigner" verify --verbose --print-certs \
@@ -167,7 +177,7 @@ jobs:
             exit 4
           fi
           "$BT/apksigner" sign \
-            --key "$KEY" --cert "$CERT" \
+            --key "$KEY_PKCS8" --cert "$CERT" \
             --v1-signing-enabled true --v2-signing-enabled true \
             --v3-signing-enabled true \
             --out out/apk/Bachata-S4Plus-0.2.7-Bionic-TEST.apk \
