@@ -149,6 +149,83 @@ def apply(upstream: Path, overlay: Path) -> None:
         "#endif\n",
     )
 
+    # Android NDK libc++ has no std::chrono::current_zone. Bionic's
+    # localtime_r provides the UTC offset for the requested game timestamp.
+    time_file = upstream / "src/core/libraries/kernel/time.cpp"
+    replace(
+        time_file,
+        "#else\n"
+        "#if defined(__APPLE__) || defined(__FreeBSD__)\n"
+        "    // std::chrono::current_zone() not available yet.\n",
+        "#elif defined(__ANDROID__)\n"
+        "    struct tm local_tm {};\n"
+        "    if (local_time == nullptr || localtime_r(&time, &local_tm) == nullptr) {\n"
+        "        return ORBIS_KERNEL_ERROR_EINVAL;\n"
+        "    }\n"
+        "    const s64 utc_offset = static_cast<s64>(local_tm.tm_gmtoff);\n"
+        "    const u64 daylight_seconds = local_tm.tm_isdst > 0 ? 3600ULL : 0ULL;\n"
+        "    *local_time = static_cast<time_t>(static_cast<s64>(time) + utc_offset);\n"
+        "    if (st != nullptr) {\n"
+        "        st->t = time;\n"
+        "        st->west_sec = static_cast<u32>(utc_offset);\n"
+        "        st->dst_sec = static_cast<u32>(daylight_seconds);\n"
+        "    }\n"
+        "    if (dst_sec != nullptr) {\n"
+        "        *dst_sec = daylight_seconds;\n"
+        "    }\n"
+        "#else\n"
+        "#if defined(__APPLE__) || defined(__FreeBSD__)\n"
+        "    // std::chrono::current_zone() not available yet.\n",
+    )
+
+    # epoll_pwait2 is unavailable to NDK API 33. Avoid truncating a positive
+    # sub-millisecond guest wait to zero: epoll_pwait accepts millisecond waits.
+    network = upstream / "src/core/libraries/network/net.cpp"
+    replace(
+        network,
+        "    if (should_wait) {\n"
+        "#ifdef __linux__\n"
+        "        const timespec epoll_timeout",
+        "    if (should_wait) {\n"
+        "#if defined(__ANDROID__)\n"
+        "        const int timeout_ms = timeout < 0 ? -1 :\n"
+        "            timeout / 1000 + (timeout % 1000 != 0);\n"
+        "        result = epoll_pwait(epoll->epoll_fd, native_events.data(), maxevents,\n"
+        "                             timeout_ms, nullptr);\n"
+        "#elif defined(__linux__)\n"
+        "        const timespec epoll_timeout",
+    )
+
+    # Android defines __unix__ but does NOT define the glibc adaptive mutex
+    # initializer. The fallback Common::SpinLock must actually be included,
+    # or buffer/page tracker templates fail to instantiate (cascading errors).
+    region = upstream / "src/video_core/buffer_cache/region_manager.h"
+    replace(
+        region,
+        '#include "common/adaptive_mutex.h"\n'
+        "#else\n"
+        '#include "common/spin_lock.h"\n'
+        "#endif\n"
+        '#include "common/debug.h"\n',
+        '#include "common/adaptive_mutex.h"\n'
+        "#else\n"
+        '#include "common/spin_lock.h"\n'
+        "#endif\n"
+        "#ifdef __ANDROID__\n"
+        '#include "common/spin_lock.h"\n'
+        "#endif\n"
+        '#include "common/debug.h"\n',
+    )
+    page_manager = upstream / "src/video_core/page_manager.cpp"
+    replace(
+        page_manager,
+        '#include "common/range_lock.h"\n',
+        '#include "common/range_lock.h"\n'
+        "#ifdef __ANDROID__\n"
+        '#include "common/spin_lock.h"\n'
+        "#endif\n",
+    )
+
     cmake = upstream / "CMakeLists.txt"
     replace(cmake, "add_executable(shadps4\n",
             "add_library(shadps4 SHARED\n")
