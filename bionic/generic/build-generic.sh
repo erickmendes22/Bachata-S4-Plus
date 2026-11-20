@@ -55,4 +55,9 @@ readelf -d "$CORE" | grep -q 'Shared library: \[libc.so\]'
 ! readelf -d "$CORE" | grep -q 'Shared library: \[libc.so.6\]'
 readelf -Ws "$CORE" | grep -F 'Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run' > /dev/null
 cp -f "$CORE" "$STAGE/"
+# Bind the exact GitHub source revision to every generated core artifact.
+# APK-only must reject stale binaries compiled before required boot fixes.
+git -C "$ROOT" rev-parse HEAD > "$WORK/stage/BIONIC_SOURCE_REVISION.txt"
+git -C "$SRC" rev-parse HEAD > "$WORK/stage/BIONIC_UPSTREAM_REVISION.txt"
 echo "GENERIC_CORE_BUILD_SUCCESS: $STAGE/libbachata_bionic_core.so"
+echo "BIONIC_SOURCE_REVISION: $(cat "$WORK/stage/BIONIC_SOURCE_REVISION.txt")"
