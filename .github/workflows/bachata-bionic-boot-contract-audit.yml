@@ -22,8 +22,8 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           root=Path("/tmp/decode")
-          names=['NativeRuntimeBridge','NativeRuntimeProcessLauncher','NativeRuntimeProcessService','NativeRuntimeService','RuntimeProcessRequest','RuntimeProcessController','ExternalDirectRuntimeBridge']
-          triggers=['NativeRuntimeBridge;->run','NativeRuntimeBridge;->stop','--bachata-socket','--bachata-storage-root','--bachata-saf-socket','--bachata-saf-token','--override-root','shadPS4 exited before socket connect','getArguments()','->getArguments(', '->getEnvironment(', '->getWorkingDirectory(', '->getOutput', 'nativeArguments(', '->run(']
+          names=['NativeRuntimeBridge','NativeRuntimeProcessLauncher','NativeRuntimeProcessService','NativeRuntimeService','NativeRuntimeService$binder$1','NativeRuntimeService$onCreate$1','NativeRuntimeService$worker$1','NativeRuntimeService$Companion','BionicLaunchBridge$launch$1','NativeRuntimeProcessLauncher$NativeLaunch','RuntimeProcessRequest','RuntimeProcessController','ExternalDirectRuntimeBridge']
+          triggers=['NativeRuntimeBridge;->run','NativeRuntimeBridge;->stop','--bachata-socket','--bachata-storage-root','--bachata-saf-socket','--bachata-saf-token','--override-root','shadPS4 exited before socket connect','getArguments()','->getArguments(', '->getEnvironment(', '->getWorkingDirectory(', '->getOutput', 'nativeArguments(', '->run(', 'UNKNOWN_EXIT_CODE', 'onNativeExit', 'invoke-static {', '->getSocketPath()', 'Lcom/bachatas4/android/runtime/process/NativeRuntimeBridge;']
           for name in names:
               found=list(root.glob(f'smali*/**/{name}.smali'))
               print(f'\n====== CLASS {name} matches={len(found)} ======')
@@ -31,10 +31,10 @@ jobs:
                   lines=p.read_text().splitlines()
                   print(f'PATH {p} LINES {len(lines)}')
                   print('\n'.join(f'{i+1}: {line}' for i,line in enumerate(lines) if line.startswith('.method ') or line.startswith('.field '))[:12000])
-                  indices=[i for i,l in enumerate(lines) if any(t in l for t in triggers)]
+                  indices=[i for i,l in enumerate(lines) if any(t in l for t in triggers) and not ('invoke-static {' in l and name!='NativeRuntimeService$binder$1')]
                   seen=set()
-                  for idx in indices[:40]:
-                      a=max(0,idx-22);b=min(len(lines),idx+28)
+                  for idx in indices[:60]:
+                      a=max(0,idx-35);b=min(len(lines),idx+65)
                       if any(x in seen for x in range(a,b)): continue
                       print(f'\n----- {p.name}:{idx+1} ------')
                       for k in range(a,b):print(f'{k+1}: {lines[k]}')
