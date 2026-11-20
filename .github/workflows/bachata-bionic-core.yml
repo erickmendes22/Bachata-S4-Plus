@@ -1,0 +1,95 @@
+name: Bachata S4+ experimental ARM64 Bionic source core
+on:
+  push:
+    branches:
+      - feature/bionic-arm64-core-20261119
+    paths:
+      - '.github/workflows/bachata-bionic-core.yml'
+      - 'bionic/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bachata-bionic-core-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bionic-core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Bachata S4+ control and compatibility source
+        uses: actions/checkout@v4
+
+      - name: Native Bionic source from working Android port
+        uses: actions/checkout@v4
+        with:
+          repository: erickmendes22/uncharted-android
+          ref: 148656bc7ae1b8b482d95e33d49f0729421ff477
+          path: port
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            platform-tools
+            platforms;android-35
+            build-tools;35.0.1
+            ndk;30.0.14904198
+
+      - name: Install cross-build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang lld llvm git cmake ninja-build python3-venv \
+            bison flex pkg-config curl unzip zip glslang-tools binutils
+          bash -n bionic/build-core.sh
+          test -f "$ANDROID_HOME/ndk/30.0.14904198/source.properties"
+
+      - name: Build FEXCore, native PS4 loader and Vulkan renderer against Android Bionic
+        env:
+          NDK: ${{ env.ANDROID_HOME }}/ndk/30.0.14904198
+          BACHATA_JOBS: '2'
+        run: bash bionic/build-core.sh
+
+      - name: Verify ABI and native dependencies
+        run: |
+          set -euo pipefail
+          L=out/bionic/stage/lib/arm64-v8a
+          test -s "$L/libmain.so"
+          test -s "$L/libbbgpu.so"
+          test -s "$L/libbbprepare.so"
+          for lib in "$L"/libmain.so "$L"/libbbgpu.so "$L"/libbbprepare.so; do
+            readelf -h "$lib" | grep -q AArch64
+            readelf -d "$lib" | grep -q 'Shared library: \[libc.so\]'
+            ! readelf -d "$lib" | grep -q 'Shared library: \[libc.so.6\]'
+          done
+          (cd out/bionic/stage && sha256sum -c SHA256SUMS)
+
+      - name: Upload ARM64 Bionic core artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bachata-S4Plus-ARM64-Bionic-core-source-build
+          path: out/bionic/stage/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Save build logs only on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bachata-S4Plus-Bionic-build-failure
+          path: |
+            out/bionic/deps/build/*.log
+            out/bionic/fex-android/CMakeFiles/CMakeConfigureLog.yaml
+            out/bionic/gpu-build/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: ignore
+          retention-days: 7
