@@ -6,9 +6,8 @@ on:
     inputs:
       source_run_id:
         description: Completed GitHub Actions run with compiled Bionic core
-        required: false
+        required: true
         type: string
-        default: '44751437665'
 permissions:
   contents: read
   actions: read
@@ -38,7 +37,7 @@ jobs:
         with:
           name: Bachata-S4Plus-FULL-general-purpose-Bionic-core
           path: out/bionic/stage
-          run-id: ${{ github.event.inputs.source_run_id || '44751437665' }}
+          run-id: ${{ inputs.source_run_id }}
           github-token: ${{ github.token }}
 
       - name: Android build tools and ELF patching
@@ -115,6 +114,19 @@ jobs:
         run: |
           set -euo pipefail
           bash bionic/apk/normalize_elf.sh out/bionic/stage/lib/arm64-v8a
+
+      - name: Refuse stale pre-boot native core (no APK produced)
+        shell: bash
+        run: |
+          set -euo pipefail
+          REV=out/bionic/stage/BIONIC_SOURCE_REVISION.txt
+          CORE=out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so
+          test -s "$REV" || { echo '::error::Native core has no source revision; rebuild full core with pre-boot fixes.'; exit 8; }
+          grep -aFq 'BIONIC_MANAGED_USER_PATH_READY' "$CORE" ||
+            { echo '::error::Native core lacks Android managed runtime path bootstrap.'; exit 8; }
+          grep -aFq 'SDL_VULKAN_LIBRARY' "$CORE" ||
+            { echo '::error::Native core lacks custom Vulkan loader selection.'; exit 8; }
+          echo "CORE_BOOT_INTEGRATION_PRESENT source=$(cat "$REV")"
 
       - name: Integrate newly compiled native runtime into 0.2.7 APK
         run: |
