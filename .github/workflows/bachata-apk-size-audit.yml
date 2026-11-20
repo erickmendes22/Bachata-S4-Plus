@@ -1,0 +1,80 @@
+name: Bachata APK and native core size audit (no APK)
+on:
+  push:
+    branches: [feature/bionic-arm64-core-20261119]
+    paths: ['.github/workflows/bachata-apk-size-audit.yml']
+  workflow_dispatch:
+permissions: { contents: read, actions: read }
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Bachata-S4Plus-FULL-general-purpose-Bionic-core
+          run-id: '44803289945'
+          path: out/bionic/stage
+          github-token: ${{ github.token }}
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'ndk;30.0.14904198'
+      - name: Inspect original APK, glibc runtime, and Bionic ELF sections
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 4 'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.7/Bachata-S4-Plus-v0.2.7.apk' -o /tmp/base.apk
+          echo '35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8  /tmp/base.apk' | sha256sum -c -
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,collections,json,subprocess,re
+          def mb(n):return round(n/1048576,2)
+          with zipfile.ZipFile('/tmp/base.apk') as z:
+              print('ORIGINAL_APK_BYTES',z.fp.seek(0,2),flush=True)
+              for i in sorted(z.infolist(),key=lambda x:x.compress_size,reverse=True)[:45]:
+                  print('BASE_ENTRY_MB',mb(i.file_size),mb(i.compress_size),i.filename)
+              print('=== BASE_NATIVE_MANIFEST ===')
+              print(z.read('assets/runtime/native-runtime.json').decode(errors='replace')[:9000])
+              for i in z.infolist():
+                  if i.filename.startswith('assets/runtime/') or i.filename.startswith('lib/arm64-v8a/'):
+                      print('BASE_RUNTIME_OR_NATIVE',mb(i.file_size),mb(i.compress_size),i.filename)
+              for i in z.infolist():
+                  if i.filename.endswith('runtime.zip') or ('glibc' in i.filename.lower() and i.filename.endswith('.zip')):
+                      print('=== NESTED_RUNTIMES',i.filename,'===')
+                      import io
+                      with zipfile.ZipFile(io.BytesIO(z.read(i.filename))) as r:
+                          print('NESTED_ENTRIES',len(r.infolist()))
+                          for j in sorted(r.infolist(),key=lambda x:x.file_size,reverse=True)[:75]:
+                              print('NESTED_ENTRY_MB',mb(j.file_size),mb(j.compress_size),j.filename)
+          print('=== STAGED_ELFS ===')
+          root=Path('out/bionic/stage/lib/arm64-v8a')
+          files=sorted(root.glob('*.so'))
+          for f in files:
+              dyn=subprocess.run(['readelf','-d',str(f)],capture_output=True,text=True).stdout
+              needed=re.findall(r'Shared library: \\[(.+?)\\]',dyn)
+              print('STAGED_ELF_MB',mb(f.stat().st_size),f.name,'NEEDED',','.join(needed))
+          core=root/'libbachata_bionic_core.so'
+          out=subprocess.run(['readelf','-SW',str(core)],capture_output=True,text=True).stdout
+          sections=[]
+          for line in out.splitlines():
+              m=re.search(r'\\]\\s+(\\S+)\\s+\\S+\\s+\\S+\\s+\\S+\\s+([0-9a-fA-F]+)\\s+',line)
+              if m:sections.append((int(m.group(2),16),m.group(1)))
+          print('CORE_LARGEST_SECTIONS',sorted([(mb(n),s) for n,s in sections],reverse=True)[:35])
+          print('CORE_DEBUG_SECTION_TOTAL_MB',mb(sum(n for n,s in sections if s.startswith('.debug') or s.startswith('.zdebug'))))
+          PY
+          cp out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so /tmp/core-stripped.so
+          "$ANDROID_HOME/ndk/30.0.14904198/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-debug /tmp/core-stripped.so
+          ls -lh out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so /tmp/core-stripped.so
+          echo '== DYNAMIC EXPORTS BEFORE AND AFTER =='
+          readelf --dyn-syms --wide out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so | awk '$4=="FUNC" && $5=="GLOBAL" && $7!="UND" {print $8}'|sort >/tmp/original-exports
+          readelf --dyn-syms --wide /tmp/core-stripped.so | awk '$4=="FUNC" && $5=="GLOBAL" && $7!="UND" {print $8}'|sort >/tmp/stripped-exports
+          diff -u /tmp/original-exports /tmp/stripped-exports
+          python3 - <<'PY'
+          import zipfile,os
+          for p in ['out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so','/tmp/core-stripped.so']:
+              for lvl in (6,9):
+                  out='/tmp/measure'+str(lvl)+'.zip'
+                  with zipfile.ZipFile(out,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=lvl) as z:z.write(p,'lib/arm64-v8a/libbachata_bionic_core.so')
+                  print('CORE_ZIP_SIZE',p,lvl,round(os.path.getsize(out)/1048576,2))
+          PY
