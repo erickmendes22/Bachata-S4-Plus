@@ -60,7 +60,7 @@ jobs:
             -c bionic/generic/android_native_core.cpp \
             -o out/generic/android_native_core.o
           readelf -h out/generic/android_native_core.o | grep -q AArch64
-          llvm-nm out/generic/android_native_core.o \
+          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" out/generic/android_native_core.o \
             | grep -q Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run
           echo 'JNI entrypoint built as ARM64 Android Bionic object.'
 
