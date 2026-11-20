@@ -1,9 +1,7 @@
 name: Bachata S4+ generic shadPS4 Android/Bionic source integration
 on:
-  push:
-    branches: [feature/bionic-arm64-core-20261119]
-    paths:
-      - 'bionic/generic/**'
+  # This workflow also publishes an APK. Never auto-run it on partial
+  # source integrations; require an explicit complete build request.
   workflow_dispatch:
 
 permissions:
