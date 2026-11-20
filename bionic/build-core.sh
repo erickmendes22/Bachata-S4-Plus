@@ -89,7 +89,7 @@ done
 test -s "$WORK/gpu-build/bb-probe"
 cp -f "$WORK/gpu-build/bb-probe" "$S/tools/ps4-bionic-probe"
 for name in libSDL3.so libavformat.so libavcodec.so libavutil.so \
-            libswscale.so libswresample.so; do
+            libavfilter.so libswscale.so libswresample.so; do
   lib="$DEPS/prefix/lib/$name"
   test -s "$lib" || { echo "Missing dependency: $lib" >&2; exit 4; }
   cp -Lf "$lib" "$S/lib/arm64-v8a/$name"

@@ -226,6 +226,38 @@ def apply(upstream: Path, overlay: Path) -> None:
         "#endif\n",
     )
 
+    # Do not link Linux ARM64 FFmpeg .a prebuilts into an Android/Bionic .so:
+    # these archives contain non-PIC relocations and target the wrong libc.
+    # Use the NDK-built, shared FFmpeg 9 libraries AND their matching headers.
+    externals = upstream / "externals/CMakeLists.txt"
+    replace(
+        externals,
+        "# FFmpeg\n"
+        "if (NOT TARGET FFmpeg::ffmpeg)\n"
+        "    add_subdirectory(ffmpeg-core)\n"
+        "    add_library(FFmpeg::ffmpeg ALIAS ffmpeg)\n"
+        "endif()\n",
+        "# FFmpeg\n"
+        "if (ANDROID)\n"
+        "    if (NOT BACHATA_ANDROID_FFMPEG_PREFIX)\n"
+        "        message(FATAL_ERROR \"Android FFmpeg shared-library prefix not provided\")\n"
+        "    endif()\n"
+        "    add_library(ffmpeg INTERFACE)\n"
+        "    target_include_directories(ffmpeg INTERFACE \"${BACHATA_ANDROID_FFMPEG_PREFIX}/include\")\n"
+        "    foreach(component avformat avcodec swscale avutil avfilter swresample)\n"
+        "        set(ffmpeg_so \"${BACHATA_ANDROID_FFMPEG_PREFIX}/lib/lib${component}.so\")\n"
+        "        if (NOT EXISTS \"${ffmpeg_so}\")\n"
+        "            message(FATAL_ERROR \"Android FFmpeg library missing: ${ffmpeg_so}\")\n"
+        "        endif()\n"
+        "        target_link_libraries(ffmpeg INTERFACE \"${ffmpeg_so}\")\n"
+        "    endforeach()\n"
+        "    add_library(FFmpeg::ffmpeg ALIAS ffmpeg)\n"
+        "elseif (NOT TARGET FFmpeg::ffmpeg)\n"
+        "    add_subdirectory(ffmpeg-core)\n"
+        "    add_library(FFmpeg::ffmpeg ALIAS ffmpeg)\n"
+        "endif()\n",
+    )
+
     cmake = upstream / "CMakeLists.txt"
     replace(cmake, "add_executable(shadps4\n",
             "add_library(shadps4 SHARED\n")
