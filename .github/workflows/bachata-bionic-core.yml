@@ -1,10 +1,7 @@
 name: Bachata S4+ experimental ARM64 Bionic source core
 on:
-  # One controlled native-core build to verify integrated Android pre-boot
-  # sources; this workflow publishes only a core artifact, never an APK.
-  push:
-    branches: [feature/bionic-arm64-core-20261119]
-    paths: ['.github/workflows/bachata-bionic-core.yml']
+  # The old port-specific BBPROBE5 workflow is deliberately manual only.
+  # Do not confuse it with the fully game-generic shadPS4 Bionic core.
   workflow_dispatch:
 
 permissions:
@@ -16,7 +13,6 @@ concurrency:
 
 jobs:
   bionic-core:
-    if: false # Replace accidental port-only build with a no-op
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
