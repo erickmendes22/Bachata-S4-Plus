@@ -76,6 +76,17 @@ jobs:
                   except KeyError:
                       print('BASE_NATIVE_ZIP',name,'ABSENT')
           PY
+          unzip -p /tmp/base.apk lib/arm64-v8a/libbachata_native_runtime.so > /tmp/official_native_runtime.so
+          echo '=== ORIGINAL 0.2.7 JNI DYNAMIC EXPORTS ==='
+          readelf --dyn-syms --wide /tmp/official_native_runtime.so |
+            awk '$4=="FUNC" && $5=="GLOBAL" && $7!="UND" && ($8 ~ /^Java_/ || $8=="JNI_OnLoad") {print $8}' |
+            sort -u | tee /tmp/official-jni-exports.txt
+          echo '=== NEW ADAPTER JNI DYNAMIC EXPORTS ==='
+          readelf --dyn-syms --wide /tmp/libbachata_native_runtime.so |
+            awk '$4=="FUNC" && $5=="GLOBAL" && $7!="UND" && ($8 ~ /^Java_/ || $8=="JNI_OnLoad") {print $8}' |
+            sort -u | tee /tmp/new-adapter-jni-exports.txt
+          echo '=== JNI removed from original adapter (must be supplied by core if needed) ==='
+          comm -23 /tmp/official-jni-exports.txt /tmp/new-adapter-jni-exports.txt || true
           python3 bionic/apk/patch_frontend.py /tmp/decoded
           python3 - <<'PY'
           from pathlib import Path
