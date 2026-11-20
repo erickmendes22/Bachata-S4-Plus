@@ -26,7 +26,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile bionic/generic/port_generic.py
+          python3 -m py_compile bionic/generic/port_generic.py bionic/apk/assemble_apk.py bionic/apk/patch_frontend.py
+          bash -n bionic/generic/build-generic.sh
           python3 bionic/generic/port_generic.py upstream
           git -C upstream diff --check
           grep -Fq 'SDL_VULKAN_LIBRARY' upstream/src/video_core/renderer_vulkan/vk_platform.cpp
@@ -37,6 +38,9 @@ jobs:
           grep -Fq 'bachata-storage-root' upstream/src/main.cpp
           grep -Fq 'SetUserPath' bionic/generic/android_native_core.cpp
           grep -Fq 'ConfigureAndroidUserPaths' bionic/generic/android_native_core.cpp
+          grep -Fq 'BIONIC_SOURCE_REVISION.txt' bionic/generic/build-generic.sh
+          grep -Fq 'BIONIC_SOURCE_REVISION.txt' bionic/apk/assemble_apk.py
+          grep -Fq 'BIONIC_MANAGED_USER_PATH_READY' bionic/apk/assemble_apk.py
           CXX="$ANDROID_HOME/ndk/30.0.14904198/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang++"
           "$CXX" -std=c++23 -Wall -Wextra -Werror -fPIC -O2 \
             -I bionic/generic -I upstream/src \
