@@ -59,31 +59,29 @@ def apply(upstream: Path, overlay: Path) -> None:
         "        break;\n"
         "#elif defined(VK_USE_PLATFORM_WIN32_KHR)",
     )
-    # The original 0.2.7 Android frontend passes the selected Turnip/Qualcomm
-    # loader through SDL_VULKAN_LIBRARY. The native Android WindowSDL no
-    # longer calls SDL_Vulkan_LoadLibrary, so shadPS4's default Vulkan-Hpp
-    # DynamicLoader would silently load system libvulkan.so instead.
+    # Preserve Android custom Vulkan loader selection. Unlike the desktop
+    # SDL window, our Android ANativeWindow uses no SDL_Vulkan_LoadLibrary.
     replace(
         platform,
-        "#include <vector>\\n",
-        "#include <cstdlib>\\n#include <vector>\\n",
+        "#include <vector>\n",
+        "#include <cstdlib>\n#include <vector>\n",
     )
     replace(
         platform,
-        "    static vk::detail::DynamicLoader dl;\\n"
-        "    VULKAN_HPP_DEFAULT_DISPATCHER.init(\\n"
-        "        dl.getProcAddress<PFN_vkGetInstanceProcAddr>(\\\"vkGetInstanceProcAddr\\\"));",
-        "#if defined(__ANDROID__)\\n"
-        "    // Match Android's selected custom driver without an SDL_Window.\\n"
-        "    const char* loader_path = std::getenv(\\\"SDL_VULKAN_LIBRARY\\\");\\n"
-        "    static vk::detail::DynamicLoader dl(\\n"
-        "        loader_path && loader_path[0] ? loader_path : \\\"libvulkan.so\\\");\\n"
-        "#else\\n"
-        "    static vk::detail::DynamicLoader dl;\\n"
-        "#endif\\n"
-        "    const auto get_instance_proc =\\n"
-        "        dl.getProcAddress<PFN_vkGetInstanceProcAddr>(\\\"vkGetInstanceProcAddr\\\");\\n"
-        "    ASSERT_MSG(get_instance_proc != nullptr, \\\"Android Vulkan loader missing vkGetInstanceProcAddr\\\");\\n"
+        "    static vk::detail::DynamicLoader dl;\n"
+        "    VULKAN_HPP_DEFAULT_DISPATCHER.init(\n"
+        "        dl.getProcAddress<PFN_vkGetInstanceProcAddr>(\"vkGetInstanceProcAddr\"));",
+        "#if defined(__ANDROID__)\n"
+        "    const char* loader_path = std::getenv(\"SDL_VULKAN_LIBRARY\");\n"
+        "    static vk::detail::DynamicLoader dl(\n"
+        "        loader_path && loader_path[0] ? loader_path : \"libvulkan.so\");\n"
+        "#else\n"
+        "    static vk::detail::DynamicLoader dl;\n"
+        "#endif\n"
+        "    const auto get_instance_proc =\n"
+        "        dl.getProcAddress<PFN_vkGetInstanceProcAddr>(\"vkGetInstanceProcAddr\");\n"
+        "    ASSERT_MSG(get_instance_proc != nullptr,\n"
+        "               \"Vulkan loader missing vkGetInstanceProcAddr\");\n"
         "    VULKAN_HPP_DEFAULT_DISPATCHER.init(get_instance_proc);",
     )
 
