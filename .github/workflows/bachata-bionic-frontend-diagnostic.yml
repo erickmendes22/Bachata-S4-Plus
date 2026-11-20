@@ -1,0 +1,45 @@
+name: Bionic APK frontend integration diagnostics
+on:
+  push:
+    branches: [feature/bionic-arm64-core-20261119]
+    paths:
+      - '.github/workflows/bachata-bionic-frontend-diagnostic.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect-original-0-2-7:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Fetch APK and Apktool for Android-only static analysis
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.7/Bachata-S4-Plus-v0.2.7.apk' -o /tmp/base.apk
+          curl -fsSL --retry 3 'https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar' -o /tmp/apktool.jar
+          echo '35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8  /tmp/base.apk' | sha256sum -c -
+      - name: Decompile dex (do not build any APK or core)
+        run: |
+          set -euo pipefail
+          java -Xmx4G -jar /tmp/apktool.jar d -f -r /tmp/base.apk -o /tmp/decode > /tmp/decomp.log 2>&1
+          tail -n 5 /tmp/decomp.log
+      - name: Locate Bionic execution routing call sites
+        run: |
+          set -euo pipefail
+          echo '==== BIONIC SURFACE AND LAUNCH ROUTING ===='
+          grep -R -l -E 'BIONIC_SURFACE_DIRECT|BionicLaunchBridge|NativeRuntimeLaunchPolicy' /tmp/decode/smali_classes* | head -n 70
+          echo '==== POLICY, BRIDGE, AND SERVICE METHODS ===='
+          for pat in 'NativeRuntimeLaunchPolicy.smali' 'BionicLaunchBridge.smali' 'HostProcessEmulatorRuntime.smali' 'NativeRuntimeProcessLauncher.smali' 'NativeRuntimeBridge.smali'; do
+            echo "================== $pat ================"
+            f="$(find /tmp/decode -path "*com/bachatas4/android*" -name "$pat" -print -quit)"
+            if [[ -n "$f" ]]; then
+              echo "FILE: $f; LINES: $(wc -l < "$f")"
+              sed -n '1,1250p' "$f"
+            fi
+          done
+          echo '==== BIONIC_SURFACE_DIRECT callsite and context ===='
+          grep -R -n -C 45 'BIONIC_SURFACE_DIRECT' /tmp/decode/smali_classes* || true
+          echo '==== BionicLaunchBridge invocations ===='
+          grep -R -n -C 20 -E 'BionicLaunchBridge;->(launch|canLaunch|shouldLaunch)' /tmp/decode/smali_classes* | head -n 1000 || true
+          echo '==== Host process class and launch policy ===='
+          grep -R -n -C 12 'NativeRuntimeLaunchPolicy;->' /tmp/decode/smali_classes* | head -n 650 || true
