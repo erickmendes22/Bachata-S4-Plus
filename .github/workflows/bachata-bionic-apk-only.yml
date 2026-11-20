@@ -40,7 +40,7 @@ jobs:
         with:
           name: Bachata-S4Plus-FULL-general-purpose-Bionic-core
           path: out/bionic/stage
-          run-id: ${{ inputs.source_run_id || '44778993482' }}
+          run-id: ${{ inputs.source_run_id || '44803289945' }}
           github-token: ${{ github.token }}
 
       - name: Android build tools and ELF patching
