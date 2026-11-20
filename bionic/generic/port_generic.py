@@ -406,6 +406,43 @@ def apply(upstream: Path, overlay: Path) -> None:
         "    RegisterFexLibcBootAliases(sym);\n",
     )
 
+
+    # The FEX x86 guest must see guest VMM addresses for all PS4 FILE
+    # structures and buffers. Keep upstream desktop new/malloc untouched.
+    io = upstream / "src/core/libraries/libc_internal/libc_internal_io.cpp"
+    replace(io, "namespace Libraries::LibcInternal {\n",
+        "namespace Libraries::LibcInternal {\n"
+        "#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n"
+        "void* FexLibcGuestAllocate(std::size_t size);\n"
+        "void FexLibcGuestFree(void* pointer);\n"
+        "#endif\n")
+    replace(io, "            file = new OrbisFILE();\n",
+        "#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n"
+        "            file = static_cast<OrbisFILE*>(FexLibcGuestAllocate(sizeof(OrbisFILE)));\n"
+        "#else\n"
+        "            file = new OrbisFILE();\n"
+        "#endif\n")
+    replace(io, "        free(file);\n",
+        "#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n"
+        "        FexLibcGuestFree(file);\n"
+        "#else\n"
+        "        free(file);\n"
+        "#endif\n")
+    replace(io, "        u8* new_buffer = std::bit_cast<u8*>(std::malloc(0x10000));\n",
+        "#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n"
+        "        u8* new_buffer = static_cast<u8*>(FexLibcGuestAllocate(0x10000));\n"
+        "#else\n"
+        "        u8* new_buffer = std::bit_cast<u8*>(std::malloc(0x10000));\n"
+        "#endif\n")
+    replace(io, "            std::free(file->_Buf);\n",
+        "#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n"
+        "            FexLibcGuestFree(file->_Buf);\n"
+        "#else\n"
+        "            std::free(file->_Buf);\n"
+        "#endif\n")
+    replace(io, "        *Kernel::__Error() = POSIX_ENOMEM;\n    }\n\n    // Preserve mode and index\n",
+        "        *Kernel::__Error() = POSIX_ENOMEM;\n        return nullptr;\n    }\n\n    // Preserve mode and index\n")
+
     cmake = upstream / "CMakeLists.txt"
     replace(cmake, "add_executable(shadps4\n",
             "add_library(shadps4 SHARED\n")

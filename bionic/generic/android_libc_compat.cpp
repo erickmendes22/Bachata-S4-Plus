@@ -20,6 +20,8 @@
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
 #include "common/va_ctx.h"
 #include "core/libraries/libc_internal/printf.h"
+#include "core/libraries/libc_internal/libc_internal_io.h"
+#include "core/libraries/kernel/file_system.h"
 #include "core/memory.h"
 
 namespace Libraries::LibcInternal {
@@ -164,13 +166,86 @@ float PS4_SYSV_ABI Fex_modff(float value, float* out) {
     return std::modf(value, out);
 }
 
-enum class PrintKind { Printf, Sprintf, Snprintf };
+
+OrbisFILE* PS4_SYSV_ABI GuestFopen(const char* path, const char* mode) {
+    return internal_fopen(path, mode);
+}
+int PS4_SYSV_ABI GuestFclose(OrbisFILE* file) { return internal_fclose(file); }
+std::size_t PS4_SYSV_ABI GuestFread(void* dst, std::size_t size,
+                                    std::size_t count, OrbisFILE* file) {
+    if (!file || !GuestAccess(reinterpret_cast<std::uintptr_t>(file),
+                               sizeof(*file), true)) return 0;
+    if (size && count > std::numeric_limits<std::size_t>::max() / size) return 0;
+    if (size && count && !GuestAccess(reinterpret_cast<std::uintptr_t>(dst),
+                                       size * count, true)) return 0;
+    return internal_fread(static_cast<char*>(dst), size, count, file);
+}
+std::size_t PS4_SYSV_ABI GuestFwrite(const void* src, std::size_t size,
+                                     std::size_t count, OrbisFILE* file) {
+    if (!file || !GuestAccess(reinterpret_cast<std::uintptr_t>(file),
+                               sizeof(*file), true) || file->_Handle < 0) return 0;
+    if (!size || !count || count > std::numeric_limits<std::size_t>::max() / size)
+        return 0;
+    const auto bytes = size * count;
+    if (!GuestAccess(reinterpret_cast<std::uintptr_t>(src), bytes, false)) return 0;
+    const auto written = Libraries::Kernel::sceKernelWrite(file->_Handle, src, bytes);
+    if (written < 0) {
+        file->_Mode |= 0x200;
+        return 0;
+    }
+    return static_cast<std::size_t>(written) / size;
+}
+int PS4_SYSV_ABI GuestFputs(const char* str, OrbisFILE* file) {
+    std::string value;
+    if (!GuestString(str, 1024 * 1024, value) || !file ||
+        !GuestAccess(reinterpret_cast<std::uintptr_t>(file),
+                     sizeof(*file), true) || file->_Handle < 0) return EOF;
+    const auto written = Libraries::Kernel::sceKernelWrite(file->_Handle,
+                                                           value.data(), value.size());
+    return written == static_cast<std::int64_t>(value.size()) ? 0 : EOF;
+}
+int PS4_SYSV_ABI GuestFgetc(OrbisFILE* file) {
+    char ch{};
+    return GuestFread(&ch, 1, 1, file) == 1 ? static_cast<unsigned char>(ch) : EOF;
+}
+int PS4_SYSV_ABI GuestFflush(OrbisFILE* file) { return internal_fflush(file); }
+int PS4_SYSV_ABI GuestFseek(OrbisFILE* file, long offset, int whence) {
+    return internal_fseek(file, offset, whence);
+}
+long PS4_SYSV_ABI GuestFtell(OrbisFILE* file) {
+    if (!file || !GuestAccess(reinterpret_cast<std::uintptr_t>(file),
+                               sizeof(*file), false) || file->_Handle < 0) return -1;
+    return Libraries::Kernel::posix_lseek(file->_Handle, 0, 1);
+}
+int PS4_SYSV_ABI GuestFgetpos(OrbisFILE* file, Orbisfpos_t* out) {
+    if (!out || !GuestAccess(reinterpret_cast<std::uintptr_t>(out),
+                              sizeof(*out), true)) return -1;
+    const auto at = GuestFtell(file);
+    if (at < 0) return -1;
+    std::memset(out, 0, sizeof(*out));
+    out->_Off = at;
+    return 0;
+}
+int PS4_SYSV_ABI GuestFeof(OrbisFILE* file) {
+    return file && GuestAccess(reinterpret_cast<std::uintptr_t>(file),
+        sizeof(*file), false) && ((file->_Mode & 0x100) != 0);
+}
+int PS4_SYSV_ABI GuestFerror(OrbisFILE* file) {
+    return file && GuestAccess(reinterpret_cast<std::uintptr_t>(file),
+        sizeof(*file), false) && ((file->_Mode & 0x200) != 0);
+}
+void PS4_SYSV_ABI GuestClearerr(OrbisFILE* file) {
+    if (file && GuestAccess(reinterpret_cast<std::uintptr_t>(file),
+                            sizeof(*file), true)) file->_Mode &= ~u16{0x300};
+}
+
+enum class PrintKind { Printf, Sprintf, Snprintf, Fprintf };
 class SysvPrintHle final : public Core::GuestCpu::HleCallAdapter {
 public:
     explicit SysvPrintHle(PrintKind mode_) : mode(mode_) {}
     Core::GuestCpu::HleCallResult Invoke(Core::GuestCpu::HleCallFrame& frame) const override {
         constexpr std::array<std::size_t, 6> regs{7, 6, 2, 1, 8, 9};
-        const std::size_t fixed = mode == PrintKind::Printf ? 1 : (mode == PrintKind::Sprintf ? 2 : 3);
+        const std::size_t fixed = mode == PrintKind::Printf ? 1 : (mode == PrintKind::Snprintf ? 3 : 2);
         const auto fmt_addr = static_cast<std::uintptr_t>(frame.gpr[regs[fixed - 1]]);
         std::string format;
         if (!GuestString(reinterpret_cast<const char*>(fmt_addr), 4096, format) ||
@@ -191,7 +266,7 @@ public:
         char* dst = nullptr;
         std::size_t cap = MaxOutput;
         std::vector<char> buffer;
-        if (mode == PrintKind::Printf) {
+        if (mode == PrintKind::Printf || mode == PrintKind::Fprintf) {
             buffer.resize(MaxOutput);
             dst = buffer.data();
         } else {
@@ -230,9 +305,20 @@ public:
         };
         const auto result = _vsnprintf(writer, reinterpret_cast<char*>(&output),
                                        format.c_str(), &arguments);
-        if (mode == PrintKind::Printf && result >= 0) {
+        if ((mode == PrintKind::Printf || mode == PrintKind::Fprintf) && result >= 0) {
             const auto written = std::min<std::size_t>(result, MaxOutput - 1);
-            (void)std::fwrite(buffer.data(), 1, written, stdout);
+            if (mode == PrintKind::Printf) {
+                (void)std::fwrite(buffer.data(), 1, written, stdout);
+            } else {
+                auto* file = reinterpret_cast<OrbisFILE*>(frame.gpr[regs[0]]);
+                if (!file || !GuestAccess(reinterpret_cast<std::uintptr_t>(file),
+                        sizeof(*file), true) || file->_Handle < 0 ||
+                    Libraries::Kernel::sceKernelWrite(file->_Handle, buffer.data(),
+                         written) != static_cast<std::int64_t>(written)) {
+                    frame.gpr[0] = static_cast<u64>(-1);
+                    return true;
+                }
+            }
         }
         frame.gpr[0] = static_cast<u64>(static_cast<std::int64_t>(result));
         return true;
@@ -256,6 +342,19 @@ void RegisterFexLibcCompatAliases(Core::Loader::SymbolsResolver* sym) {
 #define ALIAS(nid, function) LIB_FUNCTION(nid, "libc", 1, "libc", function)
     ALIAS("YQ0navp+YIc", GuestPuts);
     ALIAS("m5wN+SwZOR4", GuestPutchar);
+    ALIAS("xeYO4u7uyJ0", GuestFopen);
+    ALIAS("uodLYyUip20", GuestFclose);
+    ALIAS("lbB+UlZqVG0", GuestFread);
+    ALIAS("MpxhMh8QFro", GuestFwrite);
+    ALIAS("QrZZdJ8XsX0", GuestFputs);
+    ALIAS("MUjC4lbHrK4", GuestFflush);
+    ALIAS("rQFVBXp-Cxg", GuestFseek);
+    ALIAS("Qazy8LmXTvw", GuestFtell);
+    ALIAS("LxcEU+ICu8U", GuestFeof);
+    ALIAS("AHxyhN96dy4", GuestFerror);
+    ALIAS("AEuF3F2f8TA", GuestFgetc);
+    ALIAS("St9nbxSoezk", GuestClearerr);
+    ALIAS("SHlt7EhOtqA", GuestFgetpos);
     ALIAS("5jNubw4vlAA", GuestStrnlen);
     ALIAS("6sJWiWSRuqk", GuestStrncpy);
     ALIAS("aesyjrHVWy4", GuestStrncmp);
@@ -297,6 +396,7 @@ void RegisterFexLibcCompatAliases(Core::Loader::SymbolsResolver* sym) {
     AddPrintfAlias(sym, "hcuQgD53UxM", PrintKind::Printf);
     AddPrintfAlias(sym, "tcVi5SivF7Q", PrintKind::Sprintf);
     AddPrintfAlias(sym, "eLdDw6l0-bU", PrintKind::Snprintf);
+    AddPrintfAlias(sym, "fffwELXNVFA", PrintKind::Fprintf);
 #undef ALIAS
 }
 } // namespace Libraries::LibcInternal
