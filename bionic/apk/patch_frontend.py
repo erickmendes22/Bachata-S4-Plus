@@ -23,10 +23,12 @@ NEW = """    const-string v0, "bachata_native_runtime"
 
     invoke-static {v0}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V
 
-    # The original v0.2.7 native runtime embedded the SDL JNI functions.
-    # The new modular Bionic adapter does not. Explicitly load the shared
-    # SDL3 runtime before Java's SDL.setupJNI() calls nativeSetupJNI().
-    const-string v0, "SDL3"
+    # The original 0.2.7 native runtime contained SDL JNI methods.
+    # The replacement adapter does not. JNI methods and JNI_OnLoad are
+    # exported by libbachata_bionic_core.so, NOT by libSDL3.so.
+    # Use System.loadLibrary so Android registers this .so against the
+    # current Java ClassLoader before SDL.setupJNI resolves native methods.
+    const-string v0, "bachata_bionic_core"
 
     invoke-static {v0}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V
 
@@ -46,7 +48,7 @@ def main() -> None:
         raise SystemExit("Refusing wrong dex: NativeRuntimeBridge.<clinit> anchor mismatch")
     body = body.replace(OLD, NEW, 1)
     file.write_text(body, encoding="utf-8")
-    print("BIONIC_FRONTEND_SDL_JNI_FIXED: load SDL3 before SDL.setupJNI")
+    print("BIONIC_FRONTEND_SDL_JNI_FIXED: load native core with SDL JNI exports before SDL.setupJNI")
 
 
 if __name__ == "__main__":
