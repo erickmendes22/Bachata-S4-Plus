@@ -67,3 +67,21 @@ jobs:
           echo '=== EXACT SELECTED CODE AFTER BIONIC BRIDGE ==='
           f=/tmp/decode/smali_classes2/com/bachatas4/android/service/EmulationService.smali
           sed -n '9320,9435p' "$f"
+
+      - name: Trace native binder worker, SDL JNI and early process failures
+        run: |
+          set -euo pipefail
+          for name in 'NativeRuntimeService$binder$1.smali' 'NativeRuntimeService$Companion.smali' 'NativeRuntimeService$worker$1.smali' 'NativeRuntimeService$binder$1$launch$1.smali' 'NativeRuntimeProcessLauncher$start$2.smali' 'NativeRuntimeProcessHandle.smali'; do
+            f="$(find /tmp/decode -name "$name" -print -quit)"
+            echo "==================== $name ===================="
+            if [[ -f "$f" ]]; then
+              if [[ "$name" == 'NativeRuntimeProcessHandle.smali' ]]; then
+                grep -n -E '^.method|UNKNOWN_EXIT_CODE|setExit|onExit' "$f" | head -n 150 || true
+                sed -n '245,540p' "$f"
+              else
+                sed -n '1,1500p' "$f"
+              fi
+            fi
+          done
+          echo '=== ALL JAVA SDL JNI CALLS AND COMPATIBILITY ==='
+          grep -R -n -C 7 'SDL;->setupJNI' /tmp/decode/smali_classes* | head -n 150 || true
