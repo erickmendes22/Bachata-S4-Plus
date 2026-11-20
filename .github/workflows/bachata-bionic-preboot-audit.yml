@@ -20,7 +20,7 @@ jobs:
           echo '35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8  /tmp/base.apk' | sha256sum -c -
           curl -fL --retry 4 'https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar' -o /tmp/apktool.jar
           java -Xmx5G -jar /tmp/apktool.jar d -f -r /tmp/base.apk -o /tmp/decoded >/dev/null
-          for name in NativeRuntimeBridge NativeRuntimeProcessLauncher NativeRuntimeService BionicLaunchBridge NativeRuntimeBridge\\$Companion; do
+          for name in NativeRuntimeBridge NativeRuntimeProcessLauncher NativeRuntimeService BionicLaunchBridge; do
             find /tmp/decoded -name "$name.smali" -print | while read -r file; do
               echo "==== CLASS $file ===="
               grep -nE '^.method|^    const-string.*(socket|storage-root|bachata|working|lib|SDL|run)|->(run|stop|loadLibrary|startProcess|launch)' "$file" | head -n 300 || true
