@@ -43,3 +43,27 @@ jobs:
           grep -R -n -C 20 -E 'BionicLaunchBridge;->(launch|canLaunch|shouldLaunch)' /tmp/decode/smali_classes* | head -n 1000 || true
           echo '==== Host process class and launch policy ===='
           grep -R -n -C 12 'NativeRuntimeLaunchPolicy;->' /tmp/decode/smali_classes* | head -n 650 || true
+
+      - name: Inspect exact Bionic JNI launch, Binder service and legacy socket contract
+        run: |
+          set -euo pipefail
+          for name in 'BionicLaunchBridge$launch$1.smali' 'NativeRuntimeService.smali' 'NativeRuntimeProcessLauncher.smali' 'NativeRuntimeProcessLauncher$start$2.smali' 'RuntimeProcessRequest.smali' 'NativeRuntimeProcessHandle.smali'; do
+            f="$(find /tmp/decode -name "$name" -print -quit)"
+            echo "========================== $name =============================="
+            if [[ -n "$f" ]]; then
+              echo "$f $(wc -l < "$f") lines"
+              if [[ "$name" == 'NativeRuntimeProcessLauncher.smali' ]]; then
+                sed -n '1480,2120p' "$f"
+              elif [[ "$name" == 'NativeRuntimeService.smali' ]]; then
+                grep -n -E '^\\.method|NativeRuntimeBridge|stop|run\\(' "$f" | head -n 180 || true
+                sed -n '100,800p' "$f"
+              else
+                sed -n '1,1250p' "$f"
+              fi
+            fi
+          done
+          echo '=== EXACT CONTROL SOCKET ARGUMENT BUILD ==='
+          grep -R -n -C 15 'shadPS4 exited before socket connect:' /tmp/decode/smali_classes* | head -n 150 || true
+          echo '=== EXACT SELECTED CODE AFTER BIONIC BRIDGE ==='
+          f=/tmp/decode/smali_classes2/com/bachatas4/android/service/EmulationService.smali
+          sed -n '9320,9435p' "$f"
