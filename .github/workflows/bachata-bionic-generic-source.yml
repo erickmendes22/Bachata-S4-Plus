@@ -1,13 +1,12 @@
 name: Bachata S4+ generic shadPS4 Android/Bionic source integration
 on:
   # The user requested an actual Android APK to test the fixed launch.
-  # This run is triggered only by the single workflow file update.
+  # Compile the complete core whenever its Bionic source changes.
   push:
     branches: [feature/bionic-arm64-core-20261119]
     paths:
       - '.github/workflows/bachata-bionic-generic-source.yml'
-      - 'bionic/generic/android_libc_boot.cpp'
-      - 'bionic/generic/port_generic.py'
+      - 'bionic/generic/**'
   workflow_dispatch:
 
 permissions:
@@ -142,6 +141,12 @@ jobs:
       - name: Compile native FEXCore and Android Vulkan prerequisites
         run: |
           NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 bash bionic/build-core.sh
+
+      - name: Audit full class of FEX libc NIDs without hiding missing functions
+        run: |
+          set -euo pipefail
+          python3 bionic/generic/audit_fex_libc.py --upstream generic-upstream
+          python3 bionic/generic/audit_fex_libc.py --upstream generic-upstream >> "$GITHUB_STEP_SUMMARY"
 
       - name: Audit FEX libc heap and guest printf entrypoints
         run: |
