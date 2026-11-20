@@ -23,6 +23,15 @@ python3 "$ROOT/bionic/generic/port_generic.py" "$SRC"
 git -C "$SRC" diff --check
 mkdir -p "$BUILD" "$STAGE"
 
+# Dear ImGui font-to-C emitter is a build-time HOST tool. NDK targets cannot
+# run on the Ubuntu Actions runner (and cross-CMake correctly forbids that).
+HOST_FONT_EMBED="$BUILD/bachata-imgui-font-embed-host"
+HOST_FONT_SOURCE="$SRC/externals/dear_imgui/misc/fonts/binary_to_compressed_c.cpp"
+test -s "$HOST_FONT_SOURCE" || { echo "Missing Dear ImGui host font generator" >&2; exit 2; }
+"${HOST_CXX:-c++}" -std=c++17 -O2 "$HOST_FONT_SOURCE" -o "$HOST_FONT_EMBED"
+"$HOST_FONT_EMBED" 2>&1 | head -1 || true
+test -x "$HOST_FONT_EMBED"
+
 cmake -S "$SRC" -B "$BUILD" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
   -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=33 -DANDROID_STL=c++_shared \
@@ -31,6 +40,7 @@ cmake -S "$SRC" -B "$BUILD" -G Ninja \
   -DENABLE_BACHATA_RUNTIME=ON -DENABLE_FEX_GUEST_CPU=ON \
   -DFEXCORE_GUEST_CPU_SOURCE_DIR="$FEX_SOURCE" \
   -DFEXCORE_GUEST_CPU_BUILD_DIR="$FEX_BUILD" \
+  -DIMGUI_FONT_EMBED_EXECUTABLE="$HOST_FONT_EMBED" \
   -DCMAKE_PREFIX_PATH="$WORK/deps/prefix" \
   -DCMAKE_FIND_ROOT_PATH="$WORK/deps/prefix"
 
