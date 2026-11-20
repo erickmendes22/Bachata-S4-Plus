@@ -44,6 +44,14 @@ jobs:
           grep -R -n -E 'BACHATA/1|HELLO version=|EVENT Starting|EVENT Running|EVENT Frame|EVENT Stopped|--bachata-saf-socket|--bachata-saf-token' /tmp/decoded/smali* | head -n 110 || true
           echo '==== IPC CORE CLASS CANDIDATES ===='
           find /tmp/decoded -iname '*protocol*smali' -o -iname '*socket*smali' | grep -Ei '(runtime|bachata|session)' | head -n 60 || true
+          echo '==== FRONTEND SOCKET PROTOCOL DECODER ===='
+          f="$(find /tmp/decoded -path '*/com/bachatas4/android/runtime/protocol/RuntimeProtocol.smali' -print -quit)"
+          grep -nE '^.method|const-string|HELLO|Starting|BACHATA/1|FRAME' "$f" | head -n 200 || true
+          f="$(find /tmp/decoded -path '*/com/bachatas4/android/runtime/protocol/RuntimeProtocolKt.smali' -print -quit)"
+          grep -nE '^.method|const-string|HELLO|Starting|BACHATA/1|FRAME' "$f" | head -n 150 || true
+          echo '==== APP RUNTIME SERVICE FRAME HANDLER ===='
+          f="$(find /tmp/decoded -path '*/com/bachatas4/android/runtime/session/BachataRuntimeFrameHandler.smali' -print -quit)"
+          grep -n -A 15 -B 12 -E 'BACHATA/1 EVENT Running|BACHATA/1 EVENT Frame|BACHATA/1 ERROR code=' "$f" | head -n 190 || true
           echo '==== SMALI COMPILER PATCH CHECK ===='
           python3 -m py_compile bionic/apk/patch_frontend.py
           python3 bionic/apk/patch_frontend.py /tmp/decoded
