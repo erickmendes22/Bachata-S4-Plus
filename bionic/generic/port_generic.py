@@ -379,6 +379,33 @@ def apply(upstream: Path, overlay: Path) -> None:
         "endif()\n",
     )
 
+
+    # FEX must resolve the actual guest-imported "libc" namespace. The
+    # shipped FEX libc __cxa_atexit alias was registered under
+    # libSceLibcInternal only, leaving libc#libc imports on -ENOSYS.
+    cxa = upstream / "src/core/libraries/libc_internal/libc_internal_cxa.cpp"
+    replace(
+        cxa,
+        '    LIB_FUNCTION("tsvEmnenz48", "libSceLibcInternal", 1, "libSceLibcInternal",\n',
+        '    LIB_FUNCTION("tsvEmnenz48", "libc", 1, "libc", fex_libc_cxa_atexit);\n'
+        '    LIB_FUNCTION("tsvEmnenz48", "libSceLibcInternal", 1, "libSceLibcInternal",\n',
+    )
+    libc = upstream / "src/core/libraries/libc_internal/libc_internal.cpp"
+    replace(
+        libc,
+        "namespace Libraries::LibcInternal {\n",
+        "namespace Libraries::LibcInternal {\n"
+        "#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n"
+        "void RegisterFexLibcBootAliases(Core::Loader::SymbolsResolver* sym);\n"
+        "#endif\n",
+    )
+    replace(
+        libc,
+        "    RegisterFexLibcCxaAliases(sym);\n",
+        "    RegisterFexLibcCxaAliases(sym);\n"
+        "    RegisterFexLibcBootAliases(sym);\n",
+    )
+
     cmake = upstream / "CMakeLists.txt"
     replace(cmake, "add_executable(shadps4\n",
             "add_library(shadps4 SHARED\n")
@@ -412,13 +439,14 @@ def apply(upstream: Path, overlay: Path) -> None:
         raise RuntimeError("unable to attach Android native bridge to shadPS4")
     source = source.replace(anchor,
         'target_sources(shadps4 PRIVATE "' + str(overlay / "android_native_core.cpp") + '")\n'
+        'target_sources(shadps4 PRIVATE "' + str(overlay / "android_libc_boot.cpp") + '")\n'
         'target_include_directories(shadps4 PRIVATE "' + str(overlay) + '")\n'
         'target_link_libraries(shadps4 PRIVATE android log)\n'
         'set_target_properties(shadps4 PROPERTIES OUTPUT_NAME "bachata_bionic_core")\n'
         + anchor, 1)
     cmake.write_text(source, encoding="utf-8")
 
-    for file in ("android_surface.h", "android_window.cpp", "android_native_core.cpp"):
+    for file in ("android_surface.h", "android_window.cpp", "android_native_core.cpp", "android_libc_boot.cpp"):
         if not (overlay / file).is_file():
             raise RuntimeError(f"missing Android source: {file}")
     print("OK: generic shadPS4 core source patched for Android native surface and JNI")
