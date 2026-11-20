@@ -121,6 +121,68 @@ struct ScopedServiceProcessIO {
     }
 };
 
+// The frontend supplies the selected Vulkan driver and guest environment
+// to NativeRuntimeBridge.run(). They must be active BEFORE the core ELF is
+// loaded: Bionic ELF constructors can read HOME, XDG_* and Vulkan loader
+// settings during System.loadLibrary(), not only during BachataCoreMain().
+bool apply_service_environment(JNIEnv* env, jobjectArray environment) {
+    if (!environment) return true;
+    const jsize n = env->GetArrayLength(environment);
+    if (env->ExceptionCheck()) return false;
+    for (jsize i = 0; i < n; ++i) {
+        auto item = static_cast<jstring>(env->GetObjectArrayElement(environment, i));
+        if (env->ExceptionCheck()) return false;
+        if (!item) continue;
+        const char* raw = env->GetStringUTFChars(item, nullptr);
+        if (!raw) {
+            env->DeleteLocalRef(item);
+            return false;
+        }
+        const std::string setting(raw);
+        env->ReleaseStringUTFChars(item, raw);
+        env->DeleteLocalRef(item);
+        const auto eq = setting.find('=');
+        if (eq == std::string::npos || eq == 0) continue;
+        const std::string name = setting.substr(0, eq);
+        if (setenv(name.c_str(), setting.c_str() + eq + 1, 1) != 0) {
+            __android_log_print(ANDROID_LOG_ERROR, kTag,
+                                "Native service setenv failed: %s errno=%d",
+                                name.c_str(), errno);
+            throw_java(env, "Bachata Bionic: runtime environment initialization failed");
+            return false;
+        }
+    }
+    return true;
+}
+
+// Java helper is deliberately invoked AFTER cwd + environment are prepared.
+// Java's System.loadLibrary registers core JNI_OnLoad in this application's
+// ClassLoader. A raw dlopen alone does not do that, and manually calling
+// JNI_OnLoad from our adapter would create an inconsistent SDL runtime.
+bool load_core_from_service_classloader(JNIEnv* env) {
+    jclass bridge = env->FindClass(
+        "com/bachatas4/android/runtime/process/NativeRuntimeBridge");
+    if (!bridge || env->ExceptionCheck()) return false;
+    jmethodID init = env->GetStaticMethodID(bridge, "loadCoreAndSetupJNI", "()V");
+    if (!init || env->ExceptionCheck()) {
+        env->DeleteLocalRef(bridge);
+        return false;
+    }
+    env->CallStaticVoidMethod(bridge, init);
+    env->DeleteLocalRef(bridge);
+    if (env->ExceptionCheck()) {
+        __android_log_print(ANDROID_LOG_ERROR, kTag,
+                            "BIONIC_CORE_JAVA_LOAD_OR_SDL_SETUP_FAILED");
+        // The service already forwards the original exception; describe it
+        // to redirected STDERR as well, so shadps4.log cannot be empty.
+        env->ExceptionDescribe();
+        return false;
+    }
+    __android_log_print(ANDROID_LOG_INFO, kTag,
+                        "BIONIC_CORE_LOADED_AFTER_SERVICE_SETUP");
+    return true;
+}
+
 bool try_engine(const char* name) {
     void* h = dlopen(name, RTLD_NOW | RTLD_LOCAL);
     if (!h) {
@@ -171,6 +233,8 @@ Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run(
     // and log FD must be active BEFORE loading the native core.
     ScopedServiceProcessIO process_io(env, root, flags);
     if (!process_io.ok) return -1;
+    if (!apply_service_environment(env, environment)) return -1;
+    if (!load_core_from_service_classloader(env)) return -1;
     const Engine selected = choose_engine();
     if (!selected.run) {
         throw_java(env,
