@@ -10,7 +10,7 @@ on:
         description: Successful GitHub Actions run containing the updated Bionic core
         required: false
         type: string
-        default: '44778993482'
+        default: '44803289945'
 permissions:
   contents: read
   actions: read
@@ -56,7 +56,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends patchelf binutils
-          python3 -m py_compile bionic/apk/assemble_apk.py bionic/apk/patch_frontend.py
+          python3 -m py_compile bionic/apk/assemble_apk.py bionic/apk/patch_frontend.py bionic/apk/compact_runtime.py bionic/apk/prepare_slim_native.py
           bash -n bionic/apk/normalize_elf.sh
 
       - name: Fetch exact Bachata S4+ 0.2.7 Android frontend from Release
@@ -117,6 +117,15 @@ jobs:
         run: |
           set -euo pipefail
           bash bionic/apk/normalize_elf.sh out/bionic/stage/lib/arm64-v8a
+
+      - name: Strip Bionic native debug symbols and drop obsolete Uncharted cores
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK="$ANDROID_HOME/ndk/30.0.14904198"
+          python3 bionic/apk/prepare_slim_native.py out/bionic/stage \
+            --strip "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+          echo "SLIMMED_STAGED_BINARIES_READY"
 
       - name: Integrate newly compiled native runtime into 0.2.7 APK
         run: |
@@ -197,7 +206,7 @@ jobs:
       - name: Upload INSTALLABLE TEST APK (not another native-library ZIP)
         uses: actions/upload-artifact@v4
         with:
-          name: Bachata-S4Plus-0.2.7-Bionic-TEST-APK
+          name: Bachata-S4Plus-0.2.7-Bionic-SLIM-TEST-APK
           path: |
             out/apk/Bachata-S4Plus-0.2.7-Bionic-TEST.apk
             out/apk/SHA256SUMS
