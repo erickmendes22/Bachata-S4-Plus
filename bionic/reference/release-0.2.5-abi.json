@@ -1,0 +1,30 @@
+{
+  "source": "user-provided Bachata S4 Release 0.2.5 APK (local Library reference)",
+  "apk": {
+    "name": "bachatas4-0.2.5-release.apk",
+    "sha256": "1df49463f396df8b6f042230bdc1bb9f948b8e69894c378915920875c40ab0ee",
+    "size_bytes": 211009680
+  },
+  "runtime": {
+    "apk_entry": "lib/arm64-v8a/libbachata_native_runtime.so",
+    "size_bytes": 85583216,
+    "abi": "ELF64 AArch64 / Android Bionic",
+    "jni_class": "com.bachatas4.android.runtime.process.NativeRuntimeBridge",
+    "run": {
+      "signature": "(Landroid/view/Surface;Z[Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;I)I",
+      "symbol": "Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run"
+    },
+    "stop": {
+      "signature": "()V",
+      "symbol": "Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_stop"
+    },
+    "jni_onload": "JNI_OnLoad"
+  },
+  "compatibility_policy": {
+    "do_not_reuse_old_hle_fastpath_claims": true,
+    "the_official_runtime_already_has_fast_hle_borrow": true,
+    "the_official_runtime_already_has_async_vulkan_paths": true,
+    "port_main_so_is_not_compatible_with_the_runtime_bridge": true,
+    "do_not_distribute_original_apk_or_proprietary_so_as_source": true
+  }
+}
