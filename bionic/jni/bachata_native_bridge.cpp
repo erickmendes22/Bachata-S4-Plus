@@ -112,7 +112,7 @@ struct ScopedServiceProcessIO {
     }
 };
 
-bool try_engine(JNIEnv* env, const char* name) {
+bool try_engine(const char* name) {
     void* h = dlopen(name, RTLD_NOW | RTLD_LOCAL);
     if (!h) {
         const char* error = dlerror();
@@ -142,12 +142,12 @@ bool try_engine(JNIEnv* env, const char* name) {
     return true;
 }
 
-Engine choose_engine(JNIEnv* env) {
+Engine choose_engine() {
     std::lock_guard<std::mutex> guard(engine_lock);
     if (!engine.run) {
         // Native full shadPS4/FEX implementation takes priority.
         // Legacy v0.2.5 is a known-good Bionic compatibility baseline.
-        if (!try_engine(env, kCore) && !try_engine(env, kLegacy))
+        if (!try_engine(kCore) && !try_engine(kLegacy))
             return {};
     }
     return engine;
@@ -162,7 +162,7 @@ Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run(
     // and log FD must be active BEFORE loading the native core.
     ScopedServiceProcessIO process_io(env, root, flags);
     if (!process_io.ok) return -1;
-    const Engine selected = choose_engine(env);
+    const Engine selected = choose_engine();
     if (!selected.run) {
         throw_java(env,
             "No compatible native Bionic core. libmain.so is not a drop-in "
