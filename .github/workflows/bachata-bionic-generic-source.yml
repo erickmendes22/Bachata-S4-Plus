@@ -61,7 +61,7 @@ jobs:
             -o out/generic/android_native_core.o
           readelf -h out/generic/android_native_core.o | grep -q AArch64
           "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" out/generic/android_native_core.o \
-            | grep -q Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run
+            | grep -F Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run > /dev/null
           echo 'JNI entrypoint built as ARM64 Android Bionic object.'
 
       - name: Preserve generic source patch and object for integration
@@ -151,7 +151,7 @@ jobs:
           cmake --build out/bionic/jni-build -j2
           cp out/bionic/jni-build/libbachata_native_runtime.so out/bionic/stage/lib/arm64-v8a/
           readelf -Ws out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so \
-            | grep -q Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run
+            | grep -F Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run > /dev/null
           readelf -d out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so \
             | grep -q 'Shared library: \[libc.so\]'
 

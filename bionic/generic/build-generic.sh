@@ -52,6 +52,6 @@ test -s "$CORE" || { echo "Generic shadPS4 Android core not produced: $CORE" >&2
 readelf -h "$CORE" | grep -q AArch64
 readelf -d "$CORE" | grep -q 'Shared library: \[libc.so\]'
 ! readelf -d "$CORE" | grep -q 'Shared library: \[libc.so.6\]'
-readelf -Ws "$CORE" | grep -q 'Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run'
+readelf -Ws "$CORE" | grep -F 'Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run' > /dev/null
 cp -f "$CORE" "$STAGE/"
 echo "GENERIC_CORE_BUILD_SUCCESS: $STAGE/libbachata_bionic_core.so"

@@ -47,6 +47,11 @@ git -C "$FEX_DIR" submodule update -q --init --depth 1 \
   External/fmt External/xxhash External/range-v3 External/unordered_dense \
   External/rpmalloc External/jemalloc_glibc External/vixl External/zydis \
   Source/Common/cpp-optparse
+# Cached FEX source may already have all patches applied, and the reverse-check
+# of an early patch fails when later patches touch overlapping hunks.
+# Restore the pinned upstream baseline before applying the full patch series.
+git -C "$FEX_DIR" reset --hard "$FEX_REV"
+git -C "$FEX_DIR" clean -fd
 for patch in "$PORT"/android/scripts/port-arm64/patches/fex-*.patch; do
   if git -C "$FEX_DIR" apply --reverse --check "$patch" 2>/dev/null; then
     echo "already applied: $(basename "$patch")"
