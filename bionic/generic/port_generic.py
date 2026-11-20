@@ -229,6 +229,18 @@ def apply(upstream: Path, overlay: Path) -> None:
     cmake = upstream / "CMakeLists.txt"
     replace(cmake, "add_executable(shadps4\n",
             "add_library(shadps4 SHARED\n")
+    # pthread_* is provided by Bionic libc.so; -lpthread does not exist on Android.
+    # Leave desktop Linux and other host platforms unchanged.
+    replace(
+        cmake,
+        "    target_link_libraries(shadps4 PRIVATE ${FEXCORE_GUEST_CPU_LIBRARIES} pthread dl)\n",
+        "    if (ANDROID)\n"
+        "        target_link_libraries(shadps4 PRIVATE ${FEXCORE_GUEST_CPU_LIBRARIES} dl)\n"
+        "    else()\n"
+        "        target_link_libraries(shadps4 PRIVATE ${FEXCORE_GUEST_CPU_LIBRARIES} pthread dl)\n"
+        "    endif()\n",
+    )
+
     source = cmake.read_text(encoding="utf-8")
     n = source.count("src/sdl_window.cpp")
     if n < 1:
