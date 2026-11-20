@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/bachata-bionic-generic-source.yml'
       - 'bionic/generic/**'
+      - 'bionic/apk/**'
   workflow_dispatch:
 
 permissions:
@@ -188,3 +189,126 @@ jobs:
             out/bionic/adrenotools-android
             out/bionic/gpu-build
           key: bachata-full-bionic-r30-${{ github.sha }}
+
+  assemble-bionic-apk:
+    name: Assemble and sign Bachata S4+ 0.2.7 Bionic TEST APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    needs: [full-ps4-bionic]
+    env:
+      SIGN_KEYSTORE_BASE64: ${{ secrets.BACHATA_SIGNING_KEYSTORE_BASE64 }}
+      SIGN_STORE_PASSWORD: ${{ secrets.BACHATA_SIGNING_STORE_PASSWORD }}
+      SIGN_KEY_ALIAS: ${{ secrets.BACHATA_SIGNING_KEY_ALIAS }}
+      SIGN_KEY_PASSWORD: ${{ secrets.BACHATA_SIGNING_KEY_PASSWORD }}
+    steps:
+      - name: Checkout all packaging and integration source from GitHub
+        uses: actions/checkout@v4
+
+      - name: Retrieve freshly compiled Bionic core from THIS workflow run
+        uses: actions/download-artifact@v4
+        with:
+          name: Bachata-S4Plus-FULL-general-purpose-Bionic-core
+          path: out/bionic/stage
+
+      - name: Android build tools and ELF patching
+        uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            platform-tools
+            build-tools;36.0.0
+
+      - name: Install ELF tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends patchelf binutils
+          python3 -m py_compile bionic/apk/assemble_apk.py
+          bash -n bionic/apk/normalize_elf.sh
+
+      - name: Fetch exact Bachata S4+ 0.2.7 Android frontend from Release
+        run: |
+          set -euo pipefail
+          mkdir -p out/apk
+          curl -fL --retry 4 --retry-delay 3 \
+            'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.7/Bachata-S4-Plus-v0.2.7.apk' \
+            -o out/apk/Bachata-S4-Plus-v0.2.7-base.apk
+          echo '35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8  out/apk/Bachata-S4-Plus-v0.2.7-base.apk' | sha256sum -c -
+
+      - name: Normalize SONAMEs and audit JNI exports
+        run: |
+          set -euo pipefail
+          bash bionic/apk/normalize_elf.sh out/bionic/stage/lib/arm64-v8a
+
+      - name: Integrate newly compiled native runtime into 0.2.7 APK
+        run: |
+          set -euo pipefail
+          python3 bionic/apk/assemble_apk.py \
+            --base out/apk/Bachata-S4-Plus-v0.2.7-base.apk \
+            --stage out/bionic/stage \
+            --output out/apk/Bachata-S4Plus-Bionic-unsigned.apk \
+            --revision "$GITHUB_SHA"
+
+      - name: Align and sign testable Android APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/zipalign" -f -P 16 -v 4 \
+            out/apk/Bachata-S4Plus-Bionic-unsigned.apk \
+            out/apk/Bachata-S4Plus-Bionic-aligned.apk
+          STORE=out/apk/bionic-signing.jks
+          # Four secrets permit signed upgrades with a stable certificate.
+          count=0
+          for value in "$SIGN_KEYSTORE_BASE64" "$SIGN_STORE_PASSWORD" "$SIGN_KEY_ALIAS" "$SIGN_KEY_PASSWORD"; do
+            if [[ -n "$value" ]]; then count=$((count + 1)); fi
+          done
+          if [[ "$count" == 4 ]]; then
+            printf %s "$SIGN_KEYSTORE_BASE64" | base64 --decode > "$STORE"
+            alias_name="$SIGN_KEY_ALIAS"
+            store_pass="$SIGN_STORE_PASSWORD"
+            key_pass="$SIGN_KEY_PASSWORD"
+            signing_mode=github-secret-stable
+          elif [[ "$count" == 0 ]]; then
+            # Test-only fallback. Each run gets a different cert: do not
+            # install over an existing release; back up data first.
+            alias_name=bachata-bionic-test
+            store_pass=android
+            key_pass=android
+            signing_mode=temporary-test-only
+            keytool -genkeypair -noprompt -keystore "$STORE" \
+              -storepass "$store_pass" -keypass "$key_pass" \
+              -alias "$alias_name" -keyalg RSA -keysize 3072 \
+              -validity 90 -dname 'CN=Bachata S4+ temporary CI test build'
+            echo '::warning::No persistent signing secrets: experimental APK must be installed as a clean install. NEVER use as an updatable release.'
+          else
+            echo '::error::Set all four BACHATA_SIGNING_* secrets or none of them.'
+            exit 3
+          fi
+          "$BT/apksigner" sign \
+            --ks "$STORE" --ks-key-alias "$alias_name" \
+            --ks-pass "pass:$store_pass" --key-pass "pass:$key_pass" \
+            --v1-signing-enabled true --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out out/apk/Bachata-S4Plus-0.2.7-Bionic-TEST.apk \
+            out/apk/Bachata-S4Plus-Bionic-aligned.apk
+          "$BT/apksigner" verify --verbose --print-certs \
+            out/apk/Bachata-S4Plus-0.2.7-Bionic-TEST.apk \
+            | tee out/apk/apksigner-verification.txt
+          echo "$signing_mode" > out/apk/SIGNING-MODE.txt
+          sha256sum out/apk/Bachata-S4Plus-0.2.7-Bionic-TEST.apk > out/apk/SHA256SUMS
+          test -s out/apk/Bachata-S4Plus-0.2.7-Bionic-TEST.apk
+          rm -f "$STORE"
+          echo 'BIONIC_TEST_APK_SIGNED_AND_VERIFIED'
+
+      - name: Upload INSTALLABLE TEST APK (not another native-library ZIP)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bachata-S4Plus-0.2.7-Bionic-TEST-APK
+          path: |
+            out/apk/Bachata-S4Plus-0.2.7-Bionic-TEST.apk
+            out/apk/SHA256SUMS
+            out/apk/SIGNING-MODE.txt
+            out/apk/apksigner-verification.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
