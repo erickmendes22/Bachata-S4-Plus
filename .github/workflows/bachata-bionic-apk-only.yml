@@ -42,13 +42,14 @@ jobs:
           packages: >-
             platform-tools
             build-tools;36.0.0
+            ndk;30.0.14904198
 
       - name: Install ELF tools
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends patchelf binutils
-          python3 -m py_compile bionic/apk/assemble_apk.py
+          python3 -m py_compile bionic/apk/assemble_apk.py bionic/apk/patch_frontend.py
           bash -n bionic/apk/normalize_elf.sh
 
       - name: Fetch exact Bachata S4+ 0.2.7 Android frontend from Release
@@ -59,6 +60,43 @@ jobs:
             'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.7/Bachata-S4-Plus-v0.2.7.apk' \
             -o out/apk/Bachata-S4-Plus-v0.2.7-base.apk
           echo '35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8  out/apk/Bachata-S4-Plus-v0.2.7-base.apk' | sha256sum -c -
+
+
+      - name: Patch 0.2.7 frontend SDL3 JNI load (DEX only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 4 --retry-delay 3 \
+            'https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar' \
+            -o out/apk/apktool-2.12.1.jar
+          java -Xmx5G -jar out/apk/apktool-2.12.1.jar d -f -r \
+            out/apk/Bachata-S4-Plus-v0.2.7-base.apk -o out/apk/decoded > out/apk/apktool-decompile.log 2>&1
+          python3 bionic/apk/patch_frontend.py out/apk/decoded
+          java -Xmx5G -jar out/apk/apktool-2.12.1.jar b out/apk/decoded \
+            -o out/apk/recompiled-smali.apk > out/apk/apktool-rebuild.log 2>&1
+          unzip -p out/apk/recompiled-smali.apk classes8.dex > out/apk/classes8-bionic.dex
+          test -s out/apk/classes8-bionic.dex
+          echo "NativeRuntimeBridge SDL3 loader DEX prepared (rest of frontend preserved)"
+
+      - name: Compile ONLY lightweight Android JNI handoff (no shadPS4/FEX rebuild)
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK="$ANDROID_HOME/ndk/30.0.14904198"
+          CXX="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang++"
+          "$CXX" -std=c++17 -O2 -Wall -Wextra -Werror -fPIC -shared \
+            bionic/jni/bachata_native_bridge.cpp \
+            -o out/bionic/stage/lib/arm64-v8a/libbachata_native_runtime.so \
+            -landroid -llog -ldl
+          for symbol in \
+            Java_org_libsdl_app_SDLActivity_nativeSetupJNI \
+            Java_org_libsdl_app_SDLAudioManager_nativeSetupJNI \
+            Java_org_libsdl_app_SDLControllerManager_nativeSetupJNI; do
+            readelf -Ws out/bionic/stage/lib/arm64-v8a/libSDL3.so | grep -F "$symbol" > /dev/null || {
+              echo "::error::libSDL3.so missing mandatory Java JNI function: $symbol"; exit 2;
+            }
+          done
+          echo "JNI adapter rebuilt; SDL3 required Java JNI exports present"
 
       - name: Normalize SONAMEs and audit JNI exports
         run: |
@@ -72,6 +110,7 @@ jobs:
             --base out/apk/Bachata-S4-Plus-v0.2.7-base.apk \
             --stage out/bionic/stage \
             --output out/apk/Bachata-S4Plus-Bionic-unsigned.apk \
+            --patched-classes8 out/apk/classes8-bionic.dex \
             --revision "$GITHUB_SHA"
 
       - name: Align and sign testable Android APK
