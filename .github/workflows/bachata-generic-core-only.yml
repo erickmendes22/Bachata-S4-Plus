@@ -1,0 +1,131 @@
+name: Bachata game-generic Bionic full core integration - core only, NO APK
+on:
+  push:
+    branches: [feature/bionic-arm64-core-20261119]
+    paths: ['.github/workflows/bachata-generic-core-only.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: bachata-full-game-generic-core-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  full-ps4-bionic:
+    name: Verify full game-generic shadPS4 Bionic ARM64 core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 2G
+      CCACHE_COMPRESS: "true"
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      - name: Bachata S4+ Android JNI integration
+        uses: actions/checkout@v4
+
+      - name: Native Android FEX/Vulkan reference source
+        uses: actions/checkout@v4
+        with:
+          repository: erickmendes22/uncharted-android
+          ref: 148656bc7ae1b8b482d95e33d49f0729421ff477
+          path: port
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Complete game-generic PS4 HLE/loader/FEX source
+        uses: actions/checkout@v4
+        with:
+          repository: zenithblue-oss/shadps4-arm64
+          ref: be6bc2e9c60799e071dd2fafa6216e8d80ec619c
+          path: generic-upstream
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Android NDK r30
+        uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            platform-tools
+            ndk;30.0.14904198
+
+      - name: Host dependencies for full cross-compilation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang lld llvm git cmake ninja-build python3-venv \
+            bison flex pkg-config curl unzip zip glslang-tools binutils ccache
+          bash -n bionic/build-core.sh
+          bash -n bionic/generic/build-generic.sh
+
+      - name: Restore cross-build and compiler caches (pinned NDK and sources)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .ccache
+            out/bionic/deps
+            out/bionic/fex
+            out/bionic/fex-android
+            out/bionic/libadrenotools
+            out/bionic/adrenotools-android
+            out/bionic/gpu-build
+          key: bachata-full-bionic-r30-${{ github.sha }}
+          restore-keys: |
+            bachata-full-bionic-r30-
+
+      - name: Compile native FEXCore and Android Vulkan prerequisites
+        run: |
+          NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 bash bionic/build-core.sh
+
+      - name: Compile FULL game-generic shadPS4 as Android Bionic shared core
+        run: |
+          NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 \
+            bash bionic/generic/build-generic.sh
+
+      - name: Build original Bachata JNI ABI adapter for integrated core
+        run: |
+          set -euo pipefail
+          cmake -S bionic/jni -B out/bionic/jni-build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_HOME/ndk/30.0.14904198/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=33 -DCMAKE_BUILD_TYPE=Release
+          cmake --build out/bionic/jni-build -j2
+          cp out/bionic/jni-build/libbachata_native_runtime.so out/bionic/stage/lib/arm64-v8a/
+          readelf -Ws out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so \
+            | grep -F Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run > /dev/null
+          readelf -d out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so \
+            | grep -q 'Shared library: \[libc.so\]'
+
+      - name: Upload completed native game-generic PS4 core
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bachata-S4Plus-FULL-general-purpose-Bionic-core
+          path: out/bionic/stage/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Keep full-core CMake diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bachata-FULL-generic-build-failure-diagnostics
+          path: |
+            out/bionic/shadps4-generic-android/CMakeFiles/CMakeConfigureLog.yaml
+            out/bionic/shadps4-generic-android/CMakeCache.txt
+            out/bionic/deps/build/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Cache successfully compiled objects even after an unrelated link error
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .ccache
+            out/bionic/deps
+            out/bionic/fex
+            out/bionic/fex-android
+            out/bionic/libadrenotools
+            out/bionic/adrenotools-android
+            out/bionic/gpu-build
+          key: bachata-full-bionic-r30-${{ github.sha }}
+
