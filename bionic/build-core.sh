@@ -90,7 +90,7 @@ for name in libSDL3.so libavformat.so libavcodec.so libavutil.so \
   cp -Lf "$lib" "$S/lib/arm64-v8a/$name"
   # Android resolves DT_NEEDED against DT_SONAME (e.g. libavcodec.so.62),
   # not necessarily the unversioned linker name libavcodec.so.
-  soname="$(readelf -d "$lib" | sed -n 's/.*(SONAME).*\\[\\([^]]*\\)\\].*/\\1/p' | head -1)"
+  soname="$(readelf -d "$lib" | awk '/\(SONAME\)/ {sub(/.*\[/, ""); sub(/\].*/, ""); print; exit}')"
   if [[ -n "$soname" && "$soname" != "$name" ]]; then
     cp -Lf "$lib" "$S/lib/arm64-v8a/$soname"
   fi
