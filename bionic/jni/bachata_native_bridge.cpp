@@ -10,6 +10,11 @@
 #include <mutex>
 #include <atomic>
 #include <cstdio>
+#include <unistd.h>
+#include <fcntl.h>
+#include <cerrno>
+#include <cstring>
+#include <string>
 
 namespace {
 constexpr const char* kTag = "BachataBionic";
@@ -45,6 +50,69 @@ void throw_java(JNIEnv* env, const char* message) {
     }
 }
 
+// The original NativeRuntimeBridge.run receives a working directory AND an
+// output file descriptor. The JNI adapter must honor both: shadPS4 uses the
+// process working directory for configuration, and the Android UI only records
+// stdout/stderr that reach the supplied diagnostics descriptor.
+struct ScopedServiceProcessIO {
+    int previous_directory = -1;
+    int previous_stdout = -1;
+    int previous_stderr = -1;
+    bool ok = false;
+
+    ScopedServiceProcessIO(JNIEnv* env, jstring directory, jint output_fd) {
+        previous_directory = open(".", O_RDONLY | O_CLOEXEC);
+        if (previous_directory < 0) {
+            throw_java(env, "Bachata Bionic: cannot save working directory");
+            return;
+        }
+        if (!directory) {
+            throw_java(env, "Bachata Bionic: missing working directory");
+            return;
+        }
+        const char* path = env->GetStringUTFChars(directory, nullptr);
+        if (!path) return;
+        const int rc = chdir(path);
+        const int error = errno;
+        env->ReleaseStringUTFChars(directory, path);
+        if (rc != 0) {
+            __android_log_print(ANDROID_LOG_ERROR, kTag, "chdir failed: errno=%d", error);
+            throw_java(env, "Bachata Bionic: cannot enter runtime working directory");
+            return;
+        }
+        if (output_fd >= 0) {
+            fflush(nullptr);
+            previous_stdout = dup(STDOUT_FILENO);
+            previous_stderr = dup(STDERR_FILENO);
+            if (dup2(output_fd, STDOUT_FILENO) < 0 ||
+                dup2(output_fd, STDERR_FILENO) < 0) {
+                throw_java(env, "Bachata Bionic: cannot redirect runtime logs");
+                return;
+            }
+            // CRITICAL: the native service owns output_fd and closes it itself.
+            setvbuf(stdout, nullptr, _IONBF, 0);
+            setvbuf(stderr, nullptr, _IONBF, 0);
+        }
+        ok = true;
+    }
+
+    ~ScopedServiceProcessIO() {
+        fflush(nullptr);
+        if (previous_stdout >= 0) {
+            dup2(previous_stdout, STDOUT_FILENO);
+            close(previous_stdout);
+        }
+        if (previous_stderr >= 0) {
+            dup2(previous_stderr, STDERR_FILENO);
+            close(previous_stderr);
+        }
+        if (previous_directory >= 0) {
+            fchdir(previous_directory);
+            close(previous_directory);
+        }
+    }
+};
+
 bool try_engine(JNIEnv* env, const char* name) {
     void* h = dlopen(name, RTLD_NOW | RTLD_LOCAL);
     if (!h) {
@@ -57,6 +125,7 @@ bool try_engine(JNIEnv* env, const char* name) {
         // A port's SDL_main cannot be invoked by NativeRuntimeBridge.run.
         __android_log_print(ANDROID_LOG_WARN, kTag,
                             "%s lacks exact Bachata JNI ABI; skipping", name);
+        fprintf(stderr, "[BachataBionic] missing JNI run/stop export: %s\\n", name);
         dlclose(h);
         return false;
     }
@@ -92,6 +161,10 @@ extern "C" JNIEXPORT jint JNICALL
 Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run(
     JNIEnv* env, jobject receiver, jobject surface, jboolean option,
     jobjectArray arguments, jobjectArray environment, jstring root, jint flags) {
+    // The Binder worker passes this exact JNI contract: its working directory
+    // and log FD must be active BEFORE loading the native core.
+    ScopedServiceProcessIO process_io(env, root, flags);
+    if (!process_io.ok) return -1;
     const Engine selected = choose_engine(env);
     if (!selected.run) {
         throw_java(env,
