@@ -77,6 +77,36 @@ def apply(upstream: Path, overlay: Path) -> None:
         "}\n\nvoid Emulator::Restart(",
     )
 
+    # Bionic does not expose the glibc sigisemptyset helper, and Android's
+    # pthread_t is integer-valued rather than the glibc pointer typedef.
+    # Preserve desktop behavior and scan the actual POSIX mask on Android.
+    exception = upstream / "src/core/libraries/kernel/threads/exception.cpp"
+    replace(
+        exception,
+        "        if (!sigisemptyset(&native_oact.sa_mask)) {\n",
+        "#if defined(__ANDROID__)\n"
+        "        bool has_masked_signals = false;\n"
+        "        for (int native_signum = 1; native_signum <= SIGRTMAX; ++native_signum) {\n"
+        "            if (sigismember(&native_oact.sa_mask, native_signum) == 1) {\n"
+        "                has_masked_signals = true;\n"
+        "                break;\n"
+        "            }\n"
+        "        }\n"
+        "        if (has_masked_signals) {\n"
+        "#else\n"
+        "        if (!sigisemptyset(&native_oact.sa_mask)) {\n"
+        "#endif\n",
+    )
+    replace(
+        exception,
+        "    const auto pthr = reinterpret_cast<pthread_t>(thread->native_thr.GetHandle());\n",
+        "#if defined(__ANDROID__)\n"
+        "    const auto pthr = static_cast<pthread_t>(thread->native_thr.GetHandle());\n"
+        "#else\n"
+        "    const auto pthr = reinterpret_cast<pthread_t>(thread->native_thr.GetHandle());\n"
+        "#endif\n",
+    )
+
     cmake = upstream / "CMakeLists.txt"
     replace(cmake, "add_executable(shadps4\n",
             "add_library(shadps4 SHARED\n")
