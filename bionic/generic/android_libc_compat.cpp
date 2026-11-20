@@ -361,6 +361,55 @@ void AddPrintfAlias(Core::Loader::SymbolsResolver* sym, const char* nid, PrintKi
 }
 } // namespace
 
+
+void RegisterFexLibcGuestObjects(Core::Loader::SymbolsResolver* sym) {
+    // Resolve PS4 ELF STT_OBJECT imports as readable guest addresses.
+    // The vendor libc.prx is not shipped. These are compatible OrbisFILE
+    // objects, not host Bionic FILE* or native-pointer placeholders.
+    constexpr std::size_t GuestDataSize = 0x4000;
+    static_assert(0x100 + 3 * sizeof(OrbisFILE) <= GuestDataSize);
+    auto* memory = Core::Memory::Instance();
+    void* allocation = nullptr;
+    const auto error = memory->MapMemory(
+        &allocation, 0, GuestDataSize, Core::MemoryProt::CpuReadWrite,
+        Core::MemoryMapFlags::NoFlags, Core::VMAType::Flexible,
+        "BachataFexLibcObjects");
+    if (error != 0 || !allocation) {
+        // Do not register a host pointer or zero as an emulated PS4 symbol.
+        return;
+    }
+    std::memset(allocation, 0, GuestDataSize);
+    auto* need = static_cast<std::uint32_t*>(allocation);
+    *need = 1;  // OpenOrbis Need_sceLibc marker.
+    auto* streams = reinterpret_cast<OrbisFILE*>(
+        reinterpret_cast<std::uintptr_t>(allocation) + 0x100);
+    for (std::size_t i = 0; i < 3; ++i) {
+        auto* file = std::construct_at(&streams[i]);
+        file->_Idx = static_cast<u8>(i);
+        file->_Handle = static_cast<s32>(i);
+        file->_Mode = i == 0 ? 0x0001 : 0x2002;
+        file->_Buf = &file->_Cbuf;
+        file->_Bend = file->_Buf + 1;
+        file->_Next = file->_Buf;
+        file->_Rend = file->_Buf;
+        file->_Wend = file->_Buf;
+        file->_WRend = file->_Buf;
+        file->_WWend = file->_Buf;
+        file->_Rback = &file->_Cbuf;
+        file->_WRback = &file->unk1;
+    }
+    // The game uses libc#libc. A few modules import the same data from
+    // libSceLibcInternal; register both namespaces, retaining one backing.
+    LIB_OBJ("P330P3dFF68", "libc", 1, "libc", need);
+    LIB_OBJ("1TDo-ImqkJc", "libc", 1, "libc", &streams[0]);
+    LIB_OBJ("2sWzhYqFH4E", "libc", 1, "libc", &streams[1]);
+    LIB_OBJ("H8AprKeZtNg", "libc", 1, "libc", &streams[2]);
+    LIB_OBJ("P330P3dFF68", "libSceLibcInternal", 1, "libSceLibcInternal", need);
+    LIB_OBJ("1TDo-ImqkJc", "libSceLibcInternal", 1, "libSceLibcInternal", &streams[0]);
+    LIB_OBJ("2sWzhYqFH4E", "libSceLibcInternal", 1, "libSceLibcInternal", &streams[1]);
+    LIB_OBJ("H8AprKeZtNg", "libSceLibcInternal", 1, "libSceLibcInternal", &streams[2]);
+}
+
 void RegisterFexLibcCompatAliases(Core::Loader::SymbolsResolver* sym) {
 #define ALIAS(nid, function) LIB_FUNCTION(nid, "libc", 1, "libc", function)
     ALIAS("YQ0navp+YIc", GuestPuts);

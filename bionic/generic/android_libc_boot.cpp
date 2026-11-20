@@ -204,8 +204,10 @@ int PS4_SYSV_ABI GuestVsnprintf(char* dest, std::size_t capacity,
 void* FexLibcGuestAllocate(std::size_t bytes) { return GuestCalloc(1, bytes); }
 void FexLibcGuestFree(void* pointer) { GuestFree(pointer); }
 void RegisterFexLibcCompatAliases(Core::Loader::SymbolsResolver* sym);
+void RegisterFexLibcGuestObjects(Core::Loader::SymbolsResolver* sym);
 
 void RegisterFexLibcBootAliases(Core::Loader::SymbolsResolver* sym) {
+    RegisterFexLibcGuestObjects(sym);
     RegisterFexLibcCompatAliases(sym);
     LIB_FUNCTION("gQX+4GDQjpM", "libc", 1, "libc", GuestMalloc);
     LIB_FUNCTION("tIhsqj0qsFE", "libc", 1, "libc", GuestFree);
