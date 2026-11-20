@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import argparse
 import copy
+import io
 import hashlib
 import json
 import re
 import sys
 import zipfile
 from pathlib import Path
+
+from compact_runtime import compact_runtime, GLIBC_DROP, GLIBC_KEEP, RUNTIME_ZIP, RUNTIME_MANIFEST
 
 EXPECTED_BASE_SHA256 = "35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8"
 BASE_RELEASE = "0.2.7"
@@ -23,7 +26,6 @@ NATIVE_MANIFEST = "assets/runtime/native-runtime.json"
 REQUIRED_LIBRARIES = {"libbachata_native_runtime.so", "libbachata_bionic_core.so"}
 CRITICAL_PRESERVED = {
     "AndroidManifest.xml",
-    "assets/runtime/runtime.zip",
     "classes.dex",
     "resources.arsc",
 }
@@ -92,8 +94,11 @@ def main() -> None:
         changed["classes8.dex"] = patched_dex
     with zipfile.ZipFile(args.base) as original:
         names = set(original.namelist())
-        if not CRITICAL_PRESERVED.issubset(names) or NATIVE_MANIFEST not in names:
+        if not (CRITICAL_PRESERVED | {RUNTIME_ZIP, RUNTIME_MANIFEST}).issubset(names) or NATIVE_MANIFEST not in names:
             die("APK 0.2.7 missing the expected Android frontend files")
+        compact_zip, compact_manifest = compact_runtime(original)
+        changed[RUNTIME_ZIP] = compact_zip
+        changed[RUNTIME_MANIFEST] = compact_manifest
         original_manifest = json.loads(original.read(NATIVE_MANIFEST))
         if original_manifest.get("abi") != "android-bionic-arm64":
             die("Unexpected native runtime manifest ABI")
@@ -120,6 +125,8 @@ def main() -> None:
                 "nativeCoreSha256": sha256(changed[NATIVE_DIR + "libbachata_bionic_core.so"]),
                 "nativeCoreSourceRevision": core_source_revision,
                 "legacyFallback": False,
+                "glibcFallback": "025",
+                "removedGlibcVariants": ["020", "023", "024"],
                 "deviceTested": False,
             }, indent=2) + "\n"
         ).encode("utf-8")
@@ -143,6 +150,14 @@ def main() -> None:
         names = result.namelist()
         if len(names) != len(set(names)):
             die("Duplicate ZIP entries")
+        with zipfile.ZipFile(io.BytesIO(result.read(RUNTIME_ZIP))) as runtime:
+            names_in_runtime = set(runtime.namelist())
+            if GLIBC_KEEP not in names_in_runtime or GLIBC_DROP & names_in_runtime:
+                die("Wrong glibc runtime variants in slimmed APK")
+        new_runtime_manifest = json.loads(result.read(RUNTIME_MANIFEST))
+        all_runtime_paths = {x.get("path") for x in new_runtime_manifest.get("files", [])}
+        if GLIBC_KEEP not in all_runtime_paths or GLIBC_DROP & all_runtime_paths:
+            die("Wrong glibc variants still referenced by manifest")
         for filename in CRITICAL_PRESERVED:
             if sha256(original.read(filename)) != sha256(result.read(filename)):
                 die(f"Unexpected frontend change: {filename}")
