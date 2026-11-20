@@ -34,6 +34,12 @@ jobs:
           echo '==== SERVICE ARGS, SOCKET and DIRECTORY neighborhood ===='
           f="$(find /tmp/decoded -name 'NativeRuntimeProcessLauncher.smali' -print -quit)"
           grep -n -A 35 -B 30 -E 'const-string.*(--bachata-socket|--bachata-storage-root|--override-root)' "$f" | head -n 450 || true
+          echo '==== FULL NATIVE LAUNCH ARGUMENT CONSTRUCTION ===='
+          sed -n '1463,1820p' "$(find /tmp/decoded -name 'NativeRuntimeProcessLauncher.smali' -print -quit)"
+          echo '==== NATIVE BINDER JNI INVOCATION ===='
+          sed -n '215,385p' "$(find /tmp/decoded -name 'NativeRuntimeService*binder*1.smali' -print -quit)"
+          echo '==== BIONIC LAUNCH REQUIREMENTS ===='
+          sed -n '1,100p' "$(find /tmp/decoded -name 'BionicLaunchBridge.smali' -print -quit)"
           echo '==== SMALI COMPILER PATCH CHECK ===='
           python3 -m py_compile bionic/apk/patch_frontend.py
           python3 bionic/apk/patch_frontend.py /tmp/decoded
