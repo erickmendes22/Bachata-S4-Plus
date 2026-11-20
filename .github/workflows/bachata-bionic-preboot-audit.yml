@@ -40,6 +40,10 @@ jobs:
           sed -n '215,385p' "$(find /tmp/decoded -name 'NativeRuntimeService*binder*1.smali' -print -quit)"
           echo '==== BIONIC LAUNCH REQUIREMENTS ===='
           sed -n '1,100p' "$(find /tmp/decoded -name 'BionicLaunchBridge.smali' -print -quit)"
+          echo '==== FRONTEND UNIX RUNTIME IPC PROTOCOL MARKERS ===='
+          grep -R -n -E 'BACHATA/1|HELLO version=|EVENT Starting|EVENT Running|EVENT Frame|EVENT Stopped|--bachata-saf-socket|--bachata-saf-token' /tmp/decoded/smali* | head -n 110 || true
+          echo '==== IPC CORE CLASS CANDIDATES ===='
+          find /tmp/decoded -iname '*protocol*smali' -o -iname '*socket*smali' | grep -Ei '(runtime|bachata|session)' | head -n 60 || true
           echo '==== SMALI COMPILER PATCH CHECK ===='
           python3 -m py_compile bionic/apk/patch_frontend.py
           python3 bionic/apk/patch_frontend.py /tmp/decoded
