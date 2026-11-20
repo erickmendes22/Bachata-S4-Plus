@@ -444,6 +444,35 @@ def apply(upstream: Path, overlay: Path) -> None:
         "        *Kernel::__Error() = POSIX_ENOMEM;\n        return nullptr;\n    }\n\n    // Preserve mode and index\n")
 
 
+
+    # Four synchronous boot checkpoints to attribute an early Android exit
+    # to kernel HLE vs libc HLE vs guest VMM, not to the last buffered line.
+    libs = upstream / "src/core/libraries/libs.cpp"
+    replace(
+        libs,
+        '#include "common/arch.h"\n',
+        '#include "common/arch.h"\n#include "common/logging/log.h"\n',
+    )
+    replace(
+        libs,
+        "    Libraries::Kernel::RegisterLib(sym);\n"
+        "    Libraries::LibcInternal::ForceRegisterLib(sym);\n",
+        "#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n"
+        "    LOG_INFO(Lib_Kernel, \"BIONIC_BOOT_STAGE=KERNEL_HLE_BEGIN\");\n"
+        "    Common::Log::Flush();\n"
+        "#endif\n"
+        "    Libraries::Kernel::RegisterLib(sym);\n"
+        "#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n"
+        "    LOG_INFO(Lib_Kernel, \"BIONIC_BOOT_STAGE=KERNEL_HLE_END\");\n"
+        "    Common::Log::Flush();\n"
+        "#endif\n"
+        "    Libraries::LibcInternal::ForceRegisterLib(sym);\n"
+        "#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n"
+        "    LOG_INFO(Lib_Kernel, \"BIONIC_BOOT_STAGE=LIBC_HLE_END\");\n"
+        "    Common::Log::Flush();\n"
+        "#endif\n",
+    )
+
     # Registration only fills the HLE resolver. Delay libc global guest-VMM
     # allocation until after registration and before the eboot's relocations.
     emulator = upstream / "src/emulator.cpp"
