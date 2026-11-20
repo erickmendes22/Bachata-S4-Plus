@@ -1,0 +1,40 @@
+name: Validate corrected Bachata Bionic JNI adapter (no APK or core rebuild)
+on:
+  push:
+    branches: [feature/bionic-arm64-core-20261119]
+    paths:
+      - '.github/workflows/bachata-bionic-jni-correctness.yml'
+      - 'bionic/jni/bachata_native_bridge.cpp'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify-adapter:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            ndk;30.0.14904198
+      - name: Compile only JNI adapter against real Android NDK with -Werror
+        shell: bash
+        run: |
+          set -euo pipefail
+          clang="$ANDROID_HOME/ndk/30.0.14904198/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang++"
+          "$clang" -std=c++17 -O2 -Wall -Wextra -Werror -fPIC -shared \
+            bionic/jni/bachata_native_bridge.cpp -o /tmp/libbachata_native_runtime.so \
+            -landroid -llog -ldl
+          readelf --dyn-syms --wide /tmp/libbachata_native_runtime.so |
+            awk '$4=="FUNC" && $5=="GLOBAL" && $7!="UND" {print $8}' > /tmp/exports.txt
+          for name in JNI_OnLoad \
+            Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run \
+            Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_stop; do
+            grep -Fx "$name" /tmp/exports.txt
+          done
+          grep -Fq 'RegisterNatives' bionic/jni/bachata_native_bridge.cpp
+          ! grep -Fq 'onload(vm, nullptr)' bionic/jni/bachata_native_bridge.cpp
+          python3 -m py_compile bionic/apk/assemble_apk.py bionic/apk/patch_frontend.py
+          grep -Fq 'const-string v0, "bachata_bionic_core"' bionic/apk/patch_frontend.py
+          echo 'BIONIC_JNI_ADAPTER_COMPILED_AND_BOOTSTRAP_STATIC_CHECKS_PASSED'
