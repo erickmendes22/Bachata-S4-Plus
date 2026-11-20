@@ -1,10 +1,7 @@
 name: Bachata S4+ Bionic APK ONLY - repackage existing ARM64 core
 on:
-  push:
-    branches: [feature/bionic-arm64-core-20261119]
-    paths:
-      - '.github/workflows/bachata-bionic-apk-only.yml'
-      - 'bionic/apk/**'
+  # Explicitly controlled: do not publish experimental APKs just because
+  # a JNI/DEX change landed; the permanent P36 secrets must be configured.
   workflow_dispatch:
     inputs:
       source_run_id:
