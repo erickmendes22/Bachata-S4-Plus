@@ -1,0 +1,72 @@
+name: Bachata S4+ generic shadPS4 Android/Bionic source integration
+on:
+  push:
+    branches: [feature/bionic-arm64-core-20261119]
+    paths:
+      - '.github/workflows/bachata-bionic-generic-source.yml'
+      - 'bionic/generic/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generic-shadps4-android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Bachata S4+ JNI and Android frontend overlay
+        uses: actions/checkout@v4
+
+      - name: Full generic shadPS4/FEX source (not old onRps4 runtime)
+        uses: actions/checkout@v4
+        with:
+          repository: zenithblue-oss/shadps4-arm64
+          ref: be6bc2e9c60799e071dd2fafa6216e8d80ec619c
+          path: upstream
+          submodules: false
+          persist-credentials: false
+
+      - name: Apply Android native JNI and Vulkan WSI integration
+        run: |
+          set -euo pipefail
+          python3 -m py_compile bionic/generic/port_generic.py
+          python3 bionic/generic/port_generic.py upstream
+          git -C upstream diff --check
+          grep -q 'add_library(shadps4 SHARED' upstream/CMakeLists.txt
+          grep -q 'BachataCoreMain' upstream/src/main.cpp
+          grep -q 'createAndroidSurfaceKHR' upstream/src/video_core/renderer_vulkan/vk_platform.cpp
+          grep -q 'bionic_core' upstream/CMakeLists.txt
+          if grep -Ri 'dev-Ali2008/onRps4-runtime' bionic/generic/; then
+            echo "Obsolete onRps4 runtime reference in native integration" >&2
+            exit 1
+          fi
+
+      - name: Android NDK r30
+        uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            platform-tools
+            ndk;30.0.14904198
+
+      - name: Compile real ARM64/Bionic JNI core entrypoint
+        run: |
+          set -euo pipefail
+          NDK="$ANDROID_HOME/ndk/30.0.14904198"
+          CXX="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang++"
+          mkdir -p out/generic
+          "$CXX" -std=c++23 -O2 -Wall -Wextra -Werror -fPIC \
+            -I bionic/generic \
+            -c bionic/generic/android_native_core.cpp \
+            -o out/generic/android_native_core.o
+          readelf -h out/generic/android_native_core.o | grep -q AArch64
+          llvm-nm out/generic/android_native_core.o \
+            | grep -q Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run
+          echo 'JNI entrypoint built as ARM64 Android Bionic object.'
+
+      - name: Preserve generic source patch and object for integration
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bachata-generic-shadPS4-Bionic-JNI-source-validation
+          path: out/generic/android_native_core.o
+          retention-days: 14
