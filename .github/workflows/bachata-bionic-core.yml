@@ -1,13 +1,7 @@
 name: Bachata S4+ experimental ARM64 Bionic source core
 on:
-  push:
-    branches:
-      - feature/bionic-arm64-core-20261119
-    paths:
-      - '.github/workflows/bachata-bionic-core.yml'
-      - 'bionic/build-core.sh'
-      - 'bionic/generic/**'
-      - 'bionic/reference/**'
+  # Hold long native-core compilations until the complete pre-boot contract
+  # and Android integration are implemented; never rebuild per partial patch.
   workflow_dispatch:
 
 permissions:
