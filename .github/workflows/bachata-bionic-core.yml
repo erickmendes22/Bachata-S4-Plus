@@ -6,7 +6,6 @@ on:
     paths:
       - '.github/workflows/bachata-bionic-core.yml'
       - 'bionic/build-core.sh'
-      - 'bionic/jni/**'
       - 'bionic/generic/**'
       - 'bionic/reference/**'
   workflow_dispatch:
