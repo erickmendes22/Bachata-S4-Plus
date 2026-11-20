@@ -222,6 +222,9 @@ jobs:
             bash bionic/generic/build-generic.sh
           grep -aFq 'BIONIC_VULKAN_LOADER_READY' out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so
           echo 'BIONIC_VULKAN_LOADER_RESOLVER_INCLUDED_IN_CORE'
+          # Cache hit/miss counts determine whether a future native build can
+          # be reduced further without dropping required emulator components.
+          ccache --show-stats || true
 
       - name: Build original Bachata JNI ABI adapter for integrated core
         run: |
