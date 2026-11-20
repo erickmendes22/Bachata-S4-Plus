@@ -5,7 +5,10 @@ on:
       - feature/bionic-arm64-core-20261119
     paths:
       - '.github/workflows/bachata-bionic-core.yml'
-      - 'bionic/**'
+      - 'bionic/build-core.sh'
+      - 'bionic/jni/**'
+      - 'bionic/generic/**'
+      - 'bionic/reference/**'
   workflow_dispatch:
 
 permissions:
