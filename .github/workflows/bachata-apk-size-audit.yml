@@ -47,6 +47,8 @@ jobs:
                           print('NESTED_ENTRIES',len(r.infolist()))
                           for j in sorted(r.infolist(),key=lambda x:x.file_size,reverse=True)[:75]:
                               print('NESTED_ENTRY_MB',mb(j.file_size),mb(j.compress_size),j.filename)
+          root=Path('out/bionic/stage/lib/arm64-v8a')
+          files=sorted(root.glob('*.so'))
           print('=== GLIBC RUNTIME MANIFEST REFERENCES ===')
           import re
           with zipfile.ZipFile('/tmp/base.apk') as z:
