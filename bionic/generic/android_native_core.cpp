@@ -4,15 +4,19 @@
 #include <android/native_window_jni.h>
 #include <android/log.h>
 #include <jni.h>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <cstdlib>
+#include <filesystem>
+#include <system_error>
 #include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "android_surface.h"
+#include "common/path_util.h"
 
 namespace BachataAndroid {
 std::atomic<ANativeWindow*> surface{nullptr};
@@ -55,6 +59,49 @@ bool ReadArray(JNIEnv* env, jobjectArray array, std::vector<std::string>& out) {
         env->ReleaseStringUTFChars(item, utf);
         env->DeleteLocalRef(item);
     }
+    return true;
+}
+
+// The monolithic Bionic core is loaded during NativeRuntimeBridge.<clinit>,
+// before the Android runtime service switches to the game work directory.
+// shadPS4's static UserPaths map is consequently initialized in the wrong
+// process directory. Rebind every path to the service-owned runtime root
+// before logging, PS4 user initialization, cache loading, or game startup.
+// Preserve the portable "user/" hierarchy used by shadPS4.
+bool ConfigureAndroidUserPaths(JNIEnv* env) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path base = fs::current_path(ec) / "user";
+    if (ec) {
+        Fail(env, "Bachata Bionic: Android runtime root is unavailable");
+        return false;
+    }
+    using T = Common::FS::PathType;
+    static constexpr std::array<std::pair<T, const char*>, 18> paths{{
+        {T::UserDir, ""},            {T::LogDir, "log"},
+        {T::ScreenshotsDir, "screenshots"}, {T::ShaderDir, "shader"},
+        {T::GameDataDir, "data"},    {T::TempDataDir, "temp"},
+        {T::SysModuleDir, "sys_modules"}, {T::DownloadDir, "download"},
+        {T::CapturesDir, "captures"}, {T::CheatsDir, "cheats"},
+        {T::PatchesDir, "patches"},  {T::MetaDataDir, "game_data"},
+        {T::CustomTrophy, "custom_trophy"}, {T::CustomConfigs, "custom_configs"},
+        {T::CacheDir, "cache"},      {T::FontsDir, "fonts"},
+        {T::HomeDir, "home"},        {T::CustomModulesDir, "custom_modules"},
+    }};
+    for (const auto& [type, suffix] : paths) {
+        const fs::path dir = suffix[0] ? base / suffix : base;
+        fs::create_directories(dir, ec);
+        if (ec || !fs::is_directory(dir)) {
+            __android_log_print(ANDROID_LOG_ERROR, kTag,
+                                "Failed to prepare managed shadPS4 user path: %s error=%d",
+                                dir.c_str(), ec.value());
+            Fail(env, "Bachata Bionic: cannot initialize runtime user directory");
+            return false;
+        }
+        Common::FS::SetUserPath(type, dir);
+    }
+    __android_log_print(ANDROID_LOG_INFO, kTag,
+                        "BIONIC_MANAGED_USER_PATH_READY: %s", base.c_str());
     return true;
 }
 
@@ -103,6 +150,10 @@ Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run(
     for (auto& arg : args) argv.push_back(arg.data());
     argv.push_back(nullptr);
     ApplyEnvironment(envp);
+    if (!ConfigureAndroidUserPaths(env)) {
+        ANativeWindow_release(window);
+        return -1;
+    }
     BachataAndroid::stop_requested.store(false, std::memory_order_release);
     BachataAndroid::surface.store(window, std::memory_order_release);
     __android_log_print(ANDROID_LOG_INFO, kTag, "native generic shadPS4 launch");
