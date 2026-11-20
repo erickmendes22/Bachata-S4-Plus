@@ -173,9 +173,14 @@ bool load_core_from_service_classloader(JNIEnv* env) {
     if (env->ExceptionCheck()) {
         __android_log_print(ANDROID_LOG_ERROR, kTag,
                             "BIONIC_CORE_JAVA_LOAD_OR_SDL_SETUP_FAILED");
-        // The service already forwards the original exception; describe it
-        // to redirected STDERR as well, so shadps4.log cannot be empty.
-        env->ExceptionDescribe();
+        // Include the actual JNI/ELF exception in Android logcat, but do
+        // not swallow it: the service must still receive the cause.
+        jthrowable failure = env->ExceptionOccurred();
+        env->ExceptionDescribe();  // JNI clears the pending exception.
+        if (failure) {
+            env->Throw(failure);
+            env->DeleteLocalRef(failure);
+        }
         return false;
     }
     __android_log_print(ANDROID_LOG_INFO, kTag,
