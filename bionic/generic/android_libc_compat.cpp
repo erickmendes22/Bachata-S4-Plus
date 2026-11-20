@@ -25,6 +25,7 @@
 #include "core/memory.h"
 
 namespace Libraries::LibcInternal {
+void* FexLibcGuestAllocate(std::size_t bytes);
 namespace {
 bool GuestAccess(std::uintptr_t address, std::size_t count, bool write) {
     if (count == 0) return true;
@@ -74,6 +75,24 @@ int PS4_SYSV_ABI GuestPuts(const char* str) {
     return static_cast<int>(text.size() + 1);
 }
 int PS4_SYSV_ABI GuestPutchar(int ch) { return std::putchar(ch); }
+
+char* PS4_SYSV_ABI GuestStrerror(int code) {
+    thread_local char* output = nullptr;
+    if (!output) output = static_cast<char*>(FexLibcGuestAllocate(256));
+    if (!output) return nullptr;
+    const char* message = std::strerror(code);
+    std::snprintf(output, 256, "%s", message ? message : "Unknown error");
+    return output;
+}
+char* PS4_SYSV_ABI GuestStrdup(const char* input) {
+    std::string value;
+    if (!GuestString(input, 1024 * 1024, value)) return nullptr;
+    char* output = static_cast<char*>(FexLibcGuestAllocate(value.size() + 1));
+    if (!output) return nullptr;
+    std::memcpy(output, value.c_str(), value.size() + 1);
+    return output;
+}
+
 std::size_t PS4_SYSV_ABI GuestStrnlen(const char* s, std::size_t n) {
     if (n == 0) return 0;
     std::string text;
@@ -360,6 +379,8 @@ void RegisterFexLibcCompatAliases(Core::Loader::SymbolsResolver* sym) {
     ALIAS("St9nbxSoezk", GuestClearerr);
     ALIAS("SHlt7EhOtqA", GuestFgetpos);
     ALIAS("5jNubw4vlAA", GuestStrnlen);
+    ALIAS("RIa6GnWp+iU", GuestStrerror);
+    ALIAS("g7zzzLDYGw0", GuestStrdup);
     ALIAS("6sJWiWSRuqk", GuestStrncpy);
     ALIAS("aesyjrHVWy4", GuestStrncmp);
     ALIAS("kHg45qPC6f0", GuestStrncat);

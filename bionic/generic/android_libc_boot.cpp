@@ -222,6 +222,10 @@ void RegisterFexLibcBootAliases(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("+P6FRGH4LfA", "libc", 1, "libc", FexMemmove);
     LIB_FUNCTION("fJnpuVVBbKk", "libc", 1, "libc", FexOperatorNew);
     LIB_FUNCTION("hdm0YfMa7TQ", "libc", 1, "libc", FexOperatorNew);
+    LIB_FUNCTION("ryUxD-60bKM", "libc", 1, "libc", FexOperatorNew);
+    LIB_FUNCTION("Jh5qUcwiSEk", "libc", 1, "libc", FexOperatorNew);
+    LIB_FUNCTION("lYDzBVE5mZs", "libc", 1, "libc", FexOperatorDelete);
+    LIB_FUNCTION("FOt55ZNaVJk", "libc", 1, "libc", FexOperatorDelete);
     LIB_FUNCTION("z+P+xCnWLBk", "libc", 1, "libc", FexOperatorDelete);
     LIB_FUNCTION("MLWl90SFWNE", "libc", 1, "libc", FexOperatorDelete);
 }
