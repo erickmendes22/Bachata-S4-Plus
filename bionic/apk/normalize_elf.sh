@@ -37,7 +37,7 @@ for f in libbachata_native_runtime.so libbachata_bionic_core.so; do
   test -s "$LIBDIR/$f" || { echo "Missing $f" >&2; exit 2; }
   for method in run stop; do
     if ! readelf -Ws "$LIBDIR/$f" |
-      grep -q "Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_$method$"; then
+      grep -F "Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_$method" >/dev/null; then
       echo "Required JNI symbol missing: $f $method" >&2; exit 2
     fi
   done
