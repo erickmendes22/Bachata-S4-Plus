@@ -1,0 +1,88 @@
+name: Bachata Bionic BOOT contract gate - core + JNI + DEX (no APK)
+on:
+  push:
+    branches: [feature/bionic-arm64-core-20261119]
+    paths: ['.github/workflows/bachata-bionic-boot-gate.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  verify-boot-chain:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Bachata-S4Plus-FULL-general-purpose-Bionic-core
+          run-id: '44778993482'
+          path: out/bionic/stage
+          github-token: ${{ github.token }}
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            ndk;30.0.14904198
+      - name: Compile adapter and verify real core JNI symbols
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK="$ANDROID_HOME/ndk/30.0.14904198"
+          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang++" \
+            -std=c++17 -O2 -Wall -Wextra -Werror -fPIC -shared \
+            bionic/jni/bachata_native_bridge.cpp -o /tmp/libbachata_native_runtime.so \
+            -landroid -llog -ldl
+          LIB=out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so
+          test -s "$LIB"
+          for symbol in JNI_OnLoad \
+            Java_org_libsdl_app_SDLActivity_nativeSetupJNI \
+            Java_org_libsdl_app_SDLAudioManager_nativeSetupJNI \
+            Java_org_libsdl_app_SDLControllerManager_nativeSetupJNI \
+            Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run \
+            Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_stop; do
+            readelf --dyn-syms --wide "$LIB" |
+              awk -v name="$symbol" '$4=="FUNC" && $5=="GLOBAL" && $7!="UND" && $8==name {ok=1} END {exit !ok}' || {
+                echo "::error::Generic core missing dynamic JNI symbol: $symbol"; exit 2
+              }
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          cpp=Path('bionic/jni/bachata_native_bridge.cpp').read_text()
+          run=cpp.split('Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run(\n',1)[1].split('Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_stop(',1)[0]
+          steps=['ScopedServiceProcessIO process_io(', 'apply_service_environment(env, environment)', 'load_core_from_service_classloader(env)', 'const Engine selected = choose_engine()', 'selected.run(']
+          positions=[run.index(x) for x in steps]
+          assert positions==sorted(positions), 'BIONIC_BOOT_GATE_FAIL: native service order'
+          assert 'onload(vm, nullptr)' not in cpp, 'double JNI_OnLoad'
+          assert 'GetStaticMethodID(bridge, "loadCoreAndSetupJNI", "()V")' in cpp
+          print('BIONIC_BOOT_GATE_NATIVE_ORDER_OK')
+          PY
+      - name: Verify original Android DEX can be patched, assembled and defers core load
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 4 'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.7/Bachata-S4-Plus-v0.2.7.apk' -o /tmp/base.apk
+          echo '35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8  /tmp/base.apk' | sha256sum -c -
+          curl -fLsS --retry 4 'https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar' -o /tmp/apktool.jar
+          java -Xmx5G -jar /tmp/apktool.jar d -r -f /tmp/base.apk -o /tmp/decoded > /tmp/apktool-decode.log 2>&1
+          python3 bionic/apk/patch_frontend.py /tmp/decoded
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/decoded/smali_classes8/com/bachatas4/android/runtime/process/NativeRuntimeBridge.smali')
+          s=p.read_text()
+          clinit=s.split('.method static constructor <clinit>()V',1)[1].split('.end method',1)[0]
+          helper=s.split('.method public static final loadCoreAndSetupJNI()V',1)[1].split('.end method',1)[0]
+          assert 'loadLibrary(Ljava/lang/String;)V' in clinit
+          assert 'bachata_bionic_core' not in clinit
+          assert 'SDL;->setupJNI()V' not in clinit
+          assert 'bachata_bionic_core' in helper
+          assert 'SDL;->setupJNI()V' in helper
+          assert helper.index('bachata_bionic_core') < helper.index('SDL;->setupJNI')
+          assert s.count('.method public static final loadCoreAndSetupJNI()V') == 1
+          print('BIONIC_BOOT_GATE_JAVA_DEFERRED_LOADER_OK')
+          PY
+          java -Xmx5G -jar /tmp/apktool.jar b /tmp/decoded -o /tmp/dex-audit.apk > /tmp/apktool-compile.log 2>&1 || {
+            tail -n 120 /tmp/apktool-compile.log
+            exit 2
+          }
+          unzip -p /tmp/dex-audit.apk classes8.dex | strings | grep -F 'loadCoreAndSetupJNI'
+          echo 'BIONIC_BOOT_CHAIN_STAGED_AND_JAVA_DEX_COMPILED'
