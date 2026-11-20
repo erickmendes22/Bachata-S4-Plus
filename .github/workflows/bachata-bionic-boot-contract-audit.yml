@@ -1,0 +1,42 @@
+name: Bachata Bionic 0.2.7 pre-socket contract audit (no APK)
+on:
+  push:
+    branches: [feature/bionic-arm64-core-20261119]
+    paths: ['.github/workflows/bachata-bionic-boot-contract-audit.yml']
+  workflow_dispatch:
+permissions: { contents: read }
+jobs:
+  audit-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract unmodified 0.2.7 Java runtime contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 3 'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.7/Bachata-S4-Plus-v0.2.7.apk' -o /tmp/base.apk
+          echo '35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8  /tmp/base.apk' | sha256sum -c -
+          curl -fLsS --retry 3 'https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar' -o /tmp/apktool.jar
+          java -jar /tmp/apktool.jar d -f -r /tmp/base.apk -o /tmp/decode >/tmp/decode.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path("/tmp/decode")
+          names=['NativeRuntimeBridge','NativeRuntimeProcessLauncher','NativeRuntimeProcessService','NativeRuntimeService','RuntimeProcessRequest','RuntimeProcessController','ExternalDirectRuntimeBridge']
+          triggers=['NativeRuntimeBridge;->run','NativeRuntimeBridge;->stop','--bachata-socket','--bachata-storage-root','--bachata-saf-socket','--bachata-saf-token','--override-root','shadPS4 exited before socket connect','getArguments()','->getArguments(', '->getEnvironment(', '->getWorkingDirectory(', '->getOutput', 'nativeArguments(', '->run(']
+          for name in names:
+              found=list(root.glob(f'smali*/**/{name}.smali'))
+              print(f'\n====== CLASS {name} matches={len(found)} ======')
+              for p in found:
+                  lines=p.read_text().splitlines()
+                  print(f'PATH {p} LINES {len(lines)}')
+                  print('\n'.join(f'{i+1}: {line}' for i,line in enumerate(lines) if line.startswith('.method ') or line.startswith('.field '))[:12000])
+                  indices=[i for i,l in enumerate(lines) if any(t in l for t in triggers)]
+                  seen=set()
+                  for idx in indices[:40]:
+                      a=max(0,idx-22);b=min(len(lines),idx+28)
+                      if any(x in seen for x in range(a,b)): continue
+                      print(f'\n----- {p.name}:{idx+1} ------')
+                      for k in range(a,b):print(f'{k+1}: {lines[k]}')
+                      seen.update(range(a,b))
+          PY
