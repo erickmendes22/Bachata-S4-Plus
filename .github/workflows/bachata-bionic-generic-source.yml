@@ -187,7 +187,10 @@ jobs:
           key: bachata-full-bionic-r30-${{ github.sha }}
 
   assemble-bionic-apk:
-    name: Assemble and sign Bachata S4+ 0.2.7 Bionic TEST APK
+    # Superseded: this job contains the old unvalidated SDL3 JNI + signing
+    # logic. Use bachata-bionic-apk-only.yml after a full-core boot gate.
+    if: false
+    name: DISABLED - obsolete APK packaging (use P36 APK-only workflow)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     needs: [full-ps4-bionic]
