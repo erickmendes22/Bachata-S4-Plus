@@ -20,13 +20,20 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
-      SIGN_KEYSTORE_BASE64: ${{ secrets.BACHATA_SIGNING_KEYSTORE_BASE64 }}
-      SIGN_STORE_PASSWORD: ${{ secrets.BACHATA_SIGNING_STORE_PASSWORD }}
-      SIGN_KEY_ALIAS: ${{ secrets.BACHATA_SIGNING_KEY_ALIAS }}
-      SIGN_KEY_PASSWORD: ${{ secrets.BACHATA_SIGNING_KEY_PASSWORD }}
+      BACHATA_P36_PRIVATE_KEY: ${{ secrets.BACHATA_P36_PRIVATE_KEY }}
+      BACHATA_P36_CERT: ${{ secrets.BACHATA_P36_CERT }}
     steps:
       - name: Checkout all packaging and integration source from GitHub
         uses: actions/checkout@v4
+
+      - name: Require permanent Bachata S4+ P36 signing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$BACHATA_P36_PRIVATE_KEY" || -z "$BACHATA_P36_CERT" ]]; then
+            echo '::error::P36 signing key or certificate is not configured. Add GitHub Actions repository secrets BACHATA_P36_PRIVATE_KEY and BACHATA_P36_CERT, then rerun APK-only. Temporary signing has been disabled.'
+            exit 3
+          fi
 
       - name: Retrieve freshly compiled Bionic core from THIS workflow run
         uses: actions/download-artifact@v4
@@ -121,37 +128,37 @@ jobs:
           "$BT/zipalign" -f -P 16 4 \
             out/apk/Bachata-S4Plus-Bionic-unsigned.apk \
             out/apk/Bachata-S4Plus-Bionic-aligned.apk
-          STORE=out/apk/bionic-signing.jks
-          # Four secrets permit signed upgrades with a stable certificate.
-          count=0
-          for value in "$SIGN_KEYSTORE_BASE64" "$SIGN_STORE_PASSWORD" "$SIGN_KEY_ALIAS" "$SIGN_KEY_PASSWORD"; do
-            if [[ -n "$value" ]]; then count=$((count + 1)); fi
-          done
-          if [[ "$count" == 4 ]]; then
-            printf %s "$SIGN_KEYSTORE_BASE64" | base64 --decode > "$STORE"
-            alias_name="$SIGN_KEY_ALIAS"
-            store_pass="$SIGN_STORE_PASSWORD"
-            key_pass="$SIGN_KEY_PASSWORD"
-            signing_mode=github-secret-stable
-          elif [[ "$count" == 0 ]]; then
-            # Test-only fallback. Each run gets a different cert: do not
-            # install over an existing release; back up data first.
-            alias_name=bachata-bionic-test
-            store_pass=android
-            key_pass=android
-            signing_mode=temporary-test-only
-            keytool -genkeypair -noprompt -keystore "$STORE" \
-              -storepass "$store_pass" -keypass "$key_pass" \
-              -alias "$alias_name" -keyalg RSA -keysize 3072 \
-              -validity 90 -dname 'CN=Bachata Bionic Temporary CI Test'
-            echo '::warning::No persistent signing secrets: experimental APK must be installed as a clean install. NEVER use as an updatable release.'
-          else
-            echo '::error::Set all four BACHATA_SIGNING_* secrets or none of them.'
-            exit 3
+          KEY=out/apk/bachata-p36-private.pem
+          CERT=out/apk/bachata-p36-cert.pem
+          trap 'rm -f "$KEY" "$CERT"' EXIT
+          # GitHub Secrets provide the ORIGINAL PEM key and X.509 certificate.
+          # Never commit them or generate a new certificate during CI.
+          umask 077
+          printf '%s\n' "$BACHATA_P36_PRIVATE_KEY" > "$KEY"
+          printf '%s\n' "$BACHATA_P36_CERT" > "$CERT"
+          EXPECTED_P36_SHA256=d04ef2a865f8ed5ab8f98321be93ed2881eaa64f844fbaf480e18a8336620a72
+          actual_cert_sha256="$(openssl x509 -in "$CERT" -outform DER | sha256sum | cut -d' ' -f1)"
+          if [[ "$actual_cert_sha256" != "$EXPECTED_P36_SHA256" ]]; then
+            echo "::error::P36 certificate mismatch: $actual_cert_sha256"
+            exit 4
+          fi
+          key_public="$(openssl pkey -in "$KEY" -pubout -outform DER | sha256sum | cut -d' ' -f1)"
+          cert_public="$(openssl x509 -in "$CERT" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum | cut -d' ' -f1)"
+          if [[ "$key_public" != "$cert_public" ]]; then
+            echo "::error::P36 private key does not match certificate"
+            exit 4
+          fi
+          # Ensure that test builds can update the ORIGINAL 0.2.7 app
+          # without wiping existing game saves and settings.
+          "$BT/apksigner" verify --verbose --print-certs \
+            out/apk/Bachata-S4-Plus-v0.2.7-base.apk > out/apk/base-signer-verification.txt
+          base_sha256="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' out/apk/base-signer-verification.txt | head -n1)"
+          if [[ "$base_sha256" != "$EXPECTED_P36_SHA256" ]]; then
+            echo "::error::Base 0.2.7 is signed by $base_sha256, not P36. Refusing a non-updatable build."
+            exit 4
           fi
           "$BT/apksigner" sign \
-            --ks "$STORE" --ks-key-alias "$alias_name" \
-            --ks-pass "pass:$store_pass" --key-pass "pass:$key_pass" \
+            --key "$KEY" --cert "$CERT" \
             --v1-signing-enabled true --v2-signing-enabled true \
             --v3-signing-enabled true \
             --out out/apk/Bachata-S4Plus-0.2.7-Bionic-TEST.apk \
@@ -159,11 +166,15 @@ jobs:
           "$BT/apksigner" verify --verbose --print-certs \
             out/apk/Bachata-S4Plus-0.2.7-Bionic-TEST.apk \
             | tee out/apk/apksigner-verification.txt
-          echo "$signing_mode" > out/apk/SIGNING-MODE.txt
+          signed_sha256="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' out/apk/apksigner-verification.txt | head -n1)"
+          if [[ "$signed_sha256" != "$EXPECTED_P36_SHA256" ]]; then
+            echo "::error::Output APK signer is not original P36"
+            exit 5
+          fi
+          printf 'P36 original certificate SHA256: %s\n' "$EXPECTED_P36_SHA256" > out/apk/SIGNING-MODE.txt
           sha256sum out/apk/Bachata-S4Plus-0.2.7-Bionic-TEST.apk > out/apk/SHA256SUMS
           test -s out/apk/Bachata-S4Plus-0.2.7-Bionic-TEST.apk
-          rm -f "$STORE"
-          echo 'BIONIC_TEST_APK_SIGNED_AND_VERIFIED'
+          echo 'BIONIC_TEST_APK_P36_SIGNED_AND_VERIFIED'
 
       - name: Upload INSTALLABLE TEST APK (not another native-library ZIP)
         uses: actions/upload-artifact@v4
