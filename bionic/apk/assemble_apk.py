@@ -43,6 +43,8 @@ def main() -> None:
     parser.add_argument("--stage", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--revision", required=True)
+    parser.add_argument("--patched-classes8", type=Path, required=False,
+                        help="Only the 0.2.7 native bridge SDL JNI loading fix")
     args = parser.parse_args()
 
     base_bytes_sha256 = hashlib.file_digest(args.base.open("rb"), "sha256").hexdigest()
@@ -66,6 +68,13 @@ def main() -> None:
     # icons and managed glibc runtime; overwrite ONLY compiled native libs
     # and the native-runtime checksum manifest.
     changed = {NATIVE_DIR + name: file.read_bytes() for name, file in staged.items()}
+    if args.patched_classes8 is not None:
+        patched_dex = args.patched_classes8.read_bytes()
+        if not patched_dex.startswith(b"dex\\n") or len(patched_dex) < 1024:
+            die("Patched classes8.dex is invalid")
+        if b"SDL3" not in patched_dex:
+            die("Rebuilt classes8.dex lacks the shared SDL3 initialization string")
+        changed["classes8.dex"] = patched_dex
     with zipfile.ZipFile(args.base) as original:
         names = set(original.namelist())
         if not CRITICAL_PRESERVED.issubset(names) or NATIVE_MANIFEST not in names:
@@ -121,6 +130,11 @@ def main() -> None:
         for filename in CRITICAL_PRESERVED:
             if sha256(original.read(filename)) != sha256(result.read(filename)):
                 die(f"Unexpected frontend change: {filename}")
+        if args.patched_classes8 is not None:
+            if result.read("classes8.dex") == original.read("classes8.dex"):
+                die("Native runtime SDL3 JNI loader DEX was NOT updated")
+            if result.read("classes8.dex") != args.patched_classes8.read_bytes():
+                die("Patched classes8.dex did not match assembled DEX")
         for filename, staged_file in staged.items():
             if sha256(result.read(NATIVE_DIR + filename)) != sha256(staged_file.read_bytes()):
                 die(f"Native .so not injected correctly: {filename}")
