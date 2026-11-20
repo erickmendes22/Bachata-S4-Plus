@@ -55,10 +55,22 @@ jobs:
           test -f "$ANDROID_HOME/ndk/30.0.14904198/source.properties"
 
       - name: Build FEXCore, native PS4 loader and Vulkan renderer against Android Bionic
-        env:
-          NDK: ${{ env.ANDROID_HOME }}/ndk/30.0.14904198
-          BACHATA_JOBS: '2'
-        run: bash bionic/build-core.sh
+        run: |
+          NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 bash bionic/build-core.sh
+
+      - name: Build original Bachata JNI ABI adapter
+        run: |
+          set -euo pipefail
+          cmake -S bionic/jni -B out/bionic/jni-build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_HOME/ndk/30.0.14904198/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=33 -DCMAKE_BUILD_TYPE=Release
+          cmake --build out/bionic/jni-build -j2
+          cp out/bionic/jni-build/libbachata_native_runtime.so out/bionic/stage/lib/arm64-v8a/
+          readelf -Ws out/bionic/stage/lib/arm64-v8a/libbachata_native_runtime.so \
+            | grep -q 'Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run'
+          readelf -Ws out/bionic/stage/lib/arm64-v8a/libbachata_native_runtime.so \
+            | grep -q 'Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_stop'
+          (cd out/bionic/stage && find lib tools -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
 
       - name: Verify ABI and native dependencies
         run: |
@@ -67,6 +79,7 @@ jobs:
           test -s "$L/libmain.so"
           test -s "$L/libbbgpu.so"
           test -s "$L/libbbprepare.so"
+          test -s "$L/libbachata_native_runtime.so"
           for lib in "$L"/libmain.so "$L"/libbbgpu.so "$L"/libbbprepare.so; do
             readelf -h "$lib" | grep -q AArch64
             readelf -d "$lib" | grep -q 'Shared library: \[libc.so\]'
