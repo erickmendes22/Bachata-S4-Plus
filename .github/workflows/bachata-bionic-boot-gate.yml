@@ -87,6 +87,18 @@ jobs:
             sort -u | tee /tmp/new-adapter-jni-exports.txt
           echo '=== JNI removed from original adapter (must be supplied by core if needed) ==='
           comm -23 /tmp/official-jni-exports.txt /tmp/new-adapter-jni-exports.txt || true
+          echo '=== JNI provided by new generic Bionic core ==='
+          readelf --dyn-syms --wide out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so |
+            awk '$4=="FUNC" && $5=="GLOBAL" && $7!="UND" && ($8 ~ /^Java_/ || $8=="JNI_OnLoad") {print $8}' |
+            sort -u > /tmp/new-core-jni-exports.txt
+          cat /tmp/new-core-jni-exports.txt /tmp/new-adapter-jni-exports.txt | sort -u > /tmp/combined-jni-exports.txt
+          comm -23 /tmp/official-jni-exports.txt /tmp/combined-jni-exports.txt > /tmp/missing-java-jni.txt
+          if [[ -s /tmp/missing-java-jni.txt ]]; then
+            echo '::error::Bionic core + adapter lose original Java JNI exports:'
+            cat /tmp/missing-java-jni.txt
+            exit 3
+          fi
+          echo 'BIONIC_BOOT_GATE_ALL_OFFICIAL_JNI_EXPORTS_PRESERVED'
           python3 bionic/apk/patch_frontend.py /tmp/decoded
           python3 - <<'PY'
           from pathlib import Path
