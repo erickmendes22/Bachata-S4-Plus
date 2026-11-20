@@ -205,8 +205,12 @@ int PS4_SYSV_ABI GuestFputs(const char* str, OrbisFILE* file) {
     return written == static_cast<std::int64_t>(value.size()) ? 0 : EOF;
 }
 int PS4_SYSV_ABI GuestFgetc(OrbisFILE* file) {
+    if (!file || !GuestAccess(reinterpret_cast<std::uintptr_t>(file),
+                              sizeof(*file), true)) return EOF;
     char ch{};
-    return GuestFread(&ch, 1, 1, file) == 1 ? static_cast<unsigned char>(ch) : EOF;
+    // Internal read executes on the host and uses a native stack temporary.
+    return internal_fread(&ch, 1, 1, file) == 1 ?
+        static_cast<unsigned char>(ch) : EOF;
 }
 int PS4_SYSV_ABI GuestFflush(OrbisFILE* file) { return internal_fflush(file); }
 int PS4_SYSV_ABI GuestFseek(OrbisFILE* file, long offset, int whence) {
