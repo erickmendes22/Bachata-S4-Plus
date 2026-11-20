@@ -120,6 +120,5 @@ Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_stop(JNIEnv*, job
     BachataAndroid::stop_requested.store(true, std::memory_order_release);
 }
 
-extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM*, void*) {
-    return JNI_VERSION_1_6;
-}
+// SDL3's static Android backend owns JNI_OnLoad for the host Java VM.
+// This library exports only the Bachata NativeRuntimeBridge JNI entrypoints.
