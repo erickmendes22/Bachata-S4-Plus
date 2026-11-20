@@ -1,0 +1,57 @@
+name: Bachata native Android pre-boot ABI audit (no APK build)
+on:
+  push:
+    branches: [feature/bionic-arm64-core-20261119]
+    paths: ['.github/workflows/bachata-bionic-abi-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Bachata-S4Plus-FULL-general-purpose-Bionic-core
+          path: out/bionic/stage
+          run-id: '44751437665'
+          github-token: ${{ github.token }}
+      - name: Inspect all native ELF dependencies from existing core (no compilation)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd out/bionic/stage/lib/arm64-v8a
+          echo '=== STAGED LIBRARIES ==='
+          ls -lh *.so
+          echo '=== DT_NEEDED, DT_RUNPATH, SONAME for all original build libraries ==='
+          for file in *.so; do
+            echo "NATIVE ELF: $file"
+            readelf -d "$file" | grep -E 'NEEDED|RUNPATH|RPATH|SONAME' || true
+          done
+          echo '=== JNI EXPORTS ==='
+          for file in libbachata_native_runtime.so libbachata_bionic_core.so libSDL3.so; do
+            echo "$file JNI SYMBOLS:"
+            readelf --dyn-syms --wide "$file" | grep -E 'JNI_OnLoad|Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_(run|stop)|Java_org_libsdl_app_(SDLActivity|SDLAudioManager|SDLControllerManager)_nativeSetupJNI' || true
+          done
+      - name: Compare Java NativeLaunch arguments with pinned generic CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 4 'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.7/Bachata-S4-Plus-v0.2.7.apk' -o /tmp/base.apk
+          curl -fLsS --retry 4 'https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar' -o /tmp/apktool.jar
+          java -Xmx5G -jar /tmp/apktool.jar d -f -r /tmp/base.apk -o /tmp/decode >/tmp/apktool-decode.log 2>&1
+          for file in ExternalDirectRuntimeBridge NativeRuntimeProcessLauncher NativeRuntimeBridge; do
+            f="$(find /tmp/decode -name "$file.smali" -print -quit)"
+            echo "=== $file: $f ==="
+            if [[ "$file" == ExternalDirectRuntimeBridge && -f "$f" ]]; then
+              grep -nE '^.method|const-string|->nativeArguments|nativeArguments\(' "$f" | head -n 280 || true
+              grep -n -A 200 -B 3 'nativeArguments(' "$f" | head -n 250 || true
+            elif [[ "$file" == NativeRuntimeProcessLauncher && -f "$f" ]]; then
+              grep -n -A 420 -B 15 '^.method.*prepareLaunch' "$f" | head -n 520 || true
+              grep -n -B 50 -A 60 'ExternalDirectRuntimeBridge;->nativeArguments' "$f" || true
+            elif [[ -f "$f" ]]; then
+              grep -n -A 30 -B 4 '^.method static constructor' "$f" || true
+            fi
+          done
