@@ -70,7 +70,7 @@ jobs:
           echo '35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8  out/apk/Bachata-S4-Plus-v0.2.7-base.apk' | sha256sum -c -
 
 
-      - name: Patch 0.2.7 frontend SDL3 JNI load (DEX only)
+      - name: Patch 0.2.7 frontend to register real Bionic core JNI (DEX only)
         shell: bash
         run: |
           set -euo pipefail
@@ -84,7 +84,7 @@ jobs:
             -o out/apk/recompiled-smali.apk > out/apk/apktool-rebuild.log 2>&1
           unzip -p out/apk/recompiled-smali.apk classes8.dex > out/apk/classes8-bionic.dex
           test -s out/apk/classes8-bionic.dex
-          echo "NativeRuntimeBridge SDL3 loader DEX prepared (rest of frontend preserved)"
+          echo "NativeRuntimeBridge Bionic core JNI loader DEX prepared (rest of frontend preserved)"
 
       - name: Compile ONLY lightweight Android JNI handoff (no shadPS4/FEX rebuild)
         shell: bash
@@ -96,15 +96,23 @@ jobs:
             bionic/jni/bachata_native_bridge.cpp \
             -o out/bionic/stage/lib/arm64-v8a/libbachata_native_runtime.so \
             -landroid -llog -ldl
+          # The Java SDL.setupJNI() methods are exported from the monolithic
+          # libbachata_bionic_core.so, *not* from libSDL3.so. Check only global
+          # defined DYNAMIC symbols, which Android's dlsym can actually resolve.
+          CORE=out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so
           for symbol in \
+            JNI_OnLoad \
             Java_org_libsdl_app_SDLActivity_nativeSetupJNI \
             Java_org_libsdl_app_SDLAudioManager_nativeSetupJNI \
-            Java_org_libsdl_app_SDLControllerManager_nativeSetupJNI; do
-            readelf -Ws out/bionic/stage/lib/arm64-v8a/libSDL3.so | grep -F "$symbol" > /dev/null || {
-              echo "::error::libSDL3.so missing mandatory Java JNI function: $symbol"; exit 2;
-            }
+            Java_org_libsdl_app_SDLControllerManager_nativeSetupJNI \
+            Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run \
+            Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_stop; do
+            if ! readelf --dyn-syms --wide "$CORE" |
+              awk -v target="$symbol" '$4 == "FUNC" && $5 == "GLOBAL" && $7 != "UND" && $8 == target { found=1 } END { exit !found }'; then
+              echo "::error::Bionic core lacks globally exported JNI symbol $symbol"; exit 2
+            fi
           done
-          echo "JNI adapter rebuilt; SDL3 required Java JNI exports present"
+          echo "JNI adapter rebuilt; core SDL + Bachata ABI exports validated for Android"
 
       - name: Normalize SONAMEs and audit JNI exports
         run: |
