@@ -44,7 +44,9 @@ cmake -S "$SRC" -B "$BUILD" -G Ninja \
   -DCMAKE_PREFIX_PATH="$WORK/deps/prefix" \
   -DCMAKE_FIND_ROOT_PATH="$WORK/deps/prefix"
 
-cmake --build "$BUILD" --target shadps4 -j "$JOBS"
+# Keep compiling independent translation units after an error so one run reveals
+# ALL Android portability failures instead of the first failing source.
+cmake --build "$BUILD" --target shadps4 -j "$JOBS" -- -k 0
 CORE="$BUILD/libbachata_bionic_core.so"
 test -s "$CORE" || { echo "Generic shadPS4 Android core not produced: $CORE" >&2; exit 3; }
 readelf -h "$CORE" | grep -q AArch64
