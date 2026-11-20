@@ -440,13 +440,14 @@ def apply(upstream: Path, overlay: Path) -> None:
     source = source.replace(anchor,
         'target_sources(shadps4 PRIVATE "' + str(overlay / "android_native_core.cpp") + '")\n'
         'target_sources(shadps4 PRIVATE "' + str(overlay / "android_libc_boot.cpp") + '")\n'
+        'target_sources(shadps4 PRIVATE "' + str(overlay / "android_libc_compat.cpp") + '")\n'
         'target_include_directories(shadps4 PRIVATE "' + str(overlay) + '")\n'
         'target_link_libraries(shadps4 PRIVATE android log)\n'
         'set_target_properties(shadps4 PROPERTIES OUTPUT_NAME "bachata_bionic_core")\n'
         + anchor, 1)
     cmake.write_text(source, encoding="utf-8")
 
-    for file in ("android_surface.h", "android_window.cpp", "android_native_core.cpp", "android_libc_boot.cpp"):
+    for file in ("android_surface.h", "android_window.cpp", "android_native_core.cpp", "android_libc_boot.cpp", "android_libc_compat.cpp"):
         if not (overlay / file).is_file():
             raise RuntimeError(f"missing Android source: {file}")
     print("OK: generic shadPS4 core source patched for Android native surface and JNI")
