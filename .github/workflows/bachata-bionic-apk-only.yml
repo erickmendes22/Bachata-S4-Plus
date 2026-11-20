@@ -4,6 +4,7 @@ on:
     branches: [feature/bionic-arm64-core-20261119]
     paths:
       - '.github/workflows/bachata-bionic-apk-only.yml'
+      - 'bionic/apk/**'
   workflow_dispatch:
     inputs:
       source_run_id:
