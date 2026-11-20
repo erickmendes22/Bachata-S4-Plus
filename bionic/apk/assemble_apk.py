@@ -64,6 +64,21 @@ def main() -> None:
     if "libbachata_release_legacy.so" in staged:
         die("Legacy fallback would disguise a failure of the new Bionic core")
 
+    # Reject the old pinned native artifact even when the JNI adapter or DEX is
+    # new. That artifact does NOT include the Android managed-path bootstrap
+    # or the source-controlled custom Vulkan loader integration.
+    source_revision_file = args.stage / "BIONIC_SOURCE_REVISION.txt"
+    if not source_revision_file.is_file():
+        die("Native core artifact predates full pre-boot integration; rebuild core first")
+    core_source_revision = source_revision_file.read_text(encoding="ascii").strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", core_source_revision):
+        die("Native core source revision metadata is invalid")
+    core_binary = staged["libbachata_bionic_core.so"].read_bytes()
+    for marker in (b"BIONIC_MANAGED_USER_PATH_READY", b"SDL_VULKAN_LIBRARY",
+                   b"Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run"):
+        if marker not in core_binary:
+            die(f"Compiled native core is missing required boot integration: {marker!r}")
+
     # Preserve all of the v0.2.7 UI, settings, DEX, drivers, patches,
     # icons and managed glibc runtime; overwrite ONLY compiled native libs
     # and the native-runtime checksum manifest.
@@ -103,6 +118,7 @@ def main() -> None:
                 "revision": args.revision,
                 "backend": "generic-shadps4-fex-android-bionic",
                 "nativeCoreSha256": sha256(changed[NATIVE_DIR + "libbachata_bionic_core.so"]),
+                "nativeCoreSourceRevision": core_source_revision,
                 "legacyFallback": False,
                 "deviceTested": False,
             }, indent=2) + "\n"
