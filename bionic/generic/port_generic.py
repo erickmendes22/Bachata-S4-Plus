@@ -85,6 +85,65 @@ def apply(upstream: Path, overlay: Path) -> None:
         "    VULKAN_HPP_DEFAULT_DISPATCHER.init(get_instance_proc);",
     )
 
+    # The Android 0.2.7 frontend sends an independent SAF broker session
+    # alongside its BACHATA/1 control socket. The upstream generic CLI did
+    # not recognize these flags. CLI11 preserves them as extras, which hit
+    # main.cpp's "unhandled flags" guard before any ELF file can be loaded.
+    # Keep the two values separate from the control socket; do not interpret
+    # the abstract SAF socket name as a filesystem pathname.
+    main = upstream / "src/main.cpp"
+    replace(
+        main,
+        "    std::optional<std::filesystem::path> patchSessionPath;\n",
+        "    std::optional<std::filesystem::path> patchSessionPath;\n"
+        "    std::optional<std::string> bachataSafSocket;\n"
+        "    std::optional<std::string> bachataSafToken;\n",
+    )
+    replace(
+        main,
+        '    app.add_option("--patch-session", patchSessionPath,\n'
+        '                   "Managed patch launch session file (frozen snapshot staged by Android)");\n',
+        '    app.add_option("--patch-session", patchSessionPath,\n'
+        '                   "Managed patch launch session file (frozen snapshot staged by Android)");\n'
+        '    app.add_option("--bachata-saf-socket", bachataSafSocket,\n'
+        '                   "Android SAF game-content broker abstract socket name");\n'
+        '    app.add_option("--bachata-saf-token", bachataSafToken,\n'
+        '                   "Android SAF game-content broker per-session token");\n',
+    )
+    # Do not silently accept an unmatched SAF session. Both values are
+    # required together; the native override-root path remains the ordinary
+    # host file path until the separate SAF file transport is implemented.
+    replace(
+        main,
+        '    if (bachataStorageRoot.has_value()) {\n',
+        '    if (bachataSafSocket.has_value() != bachataSafToken.has_value()) {\n'
+        '        std::cerr << "Both --bachata-saf-socket and --bachata-saf-token are required\\n";\n'
+        '        runtime_client.SendError("CONTENT_INVALID");\n'
+        '        runtime_client.SendStopped(1);\n'
+        '        return 1;\n'
+        '    }\n'
+        '    if (bachataStorageRoot.has_value()) {\n',
+    )
+    # The frontend deliberately uses -g eboot.bin rather than an absolute
+    # path; its --override-root is the actual selected game directory.
+    # Resolve this before the generic desktop 'find game ID' fallback, which
+    # would otherwise search unrelated install folders from the app cwd.
+    replace(
+        main,
+        '    std::filesystem::path ebootPath(*gamePath);\n'
+        '    if (!std::filesystem::exists(ebootPath)) {\n',
+        '    std::filesystem::path ebootPath(*gamePath);\n'
+        '#ifdef ENABLE_BACHATA_RUNTIME\n'
+        '    if (!ebootPath.is_absolute() && overrideRoot.has_value()) {\n'
+        '        const auto managedEboot = *overrideRoot / ebootPath;\n'
+        '        if (std::filesystem::is_regular_file(managedEboot)) {\n'
+        '            ebootPath = managedEboot;\n'
+        '        }\n'
+        '    }\n'
+        '#endif\n'
+        '    if (!std::filesystem::exists(ebootPath)) {\n',
+    )
+
     replace(upstream / "src/main.cpp",
             "int main(int argc, char* argv[]) {",
             "int BachataCoreMain(int argc, char* argv[]) {")
