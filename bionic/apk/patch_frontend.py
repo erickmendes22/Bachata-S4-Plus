@@ -23,13 +23,11 @@ NEW = """    const-string v0, "bachata_native_runtime"
 
     invoke-static {v0}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V
 
-    # The monolithic Bionic core must NOT be loaded in <clinit>.
-    # Its ELF constructors initialize filesystem paths and Vulkan/SDL
-    # before the service supplies cwd, runtime environment and log FD.
-    # The JNI adapter defers this helper until its run() has applied them.
-    return-void
-.end method
-
+    # Loading the large Bionic core in <clinit> is premature: the Java
+    # service has not provided its working directory or driver environment.
+    # The JNI adapter loads the core via loadCoreAndSetupJNI() after setup.
+    .line 14"""
+CORE_HELPER = """
 .method public static final loadCoreAndSetupJNI()V
     .locals 1
 
@@ -40,6 +38,7 @@ NEW = """    const-string v0, "bachata_native_runtime"
     invoke-static {}, Lorg/libsdl/app/SDL;->setupJNI()V
 
     return-void
+.end method
 """
 
 
@@ -54,6 +53,9 @@ def main() -> None:
     if body.count(OLD) != 1:
         raise SystemExit("Refusing wrong dex: NativeRuntimeBridge.<clinit> anchor mismatch")
     body = body.replace(OLD, NEW, 1)
+    if "loadCoreAndSetupJNI()V" in body:
+        raise SystemExit("Core boot helper already present: refuse double patch")
+    body += CORE_HELPER
     file.write_text(body, encoding="utf-8")
     print("BIONIC_FRONTEND_DEFERRED_CORE_LOAD_READY: adapter first; core and SDL initialized after service setup")
 
