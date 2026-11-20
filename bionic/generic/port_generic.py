@@ -107,6 +107,48 @@ def apply(upstream: Path, overlay: Path) -> None:
         "#endif\n",
     )
 
+    # libuuid is a glibc/Linux dependency; Android Bionic provides a secure
+    # arc4random_buf() implementation. Produce RFC 4122 UUIDv4 bytes without
+    # linking libuuid, preserving desktop behavior and the PS4's 16-byte ABI.
+    kernel = upstream / "src/core/libraries/kernel/kernel.cpp"
+    replace(
+        kernel,
+        "#ifdef _WIN64\n"
+        "#include <Rpc.h>\n"
+        "#else\n"
+        "#include <uuid/uuid.h>\n"
+        "#endif\n",
+        "#ifdef _WIN64\n"
+        "#include <Rpc.h>\n"
+        "#elif defined(__ANDROID__)\n"
+        "#include <stdlib.h>\n"
+        "#else\n"
+        "#include <uuid/uuid.h>\n"
+        "#endif\n",
+    )
+    replace(
+        kernel,
+        "    if (UuidCreate(&uuid) != RPC_S_OK) {\n"
+        "        return ORBIS_KERNEL_ERROR_EFAULT;\n"
+        "    }\n"
+        "#else\n"
+        "    uuid_t uuid;\n"
+        "    uuid_generate(uuid);\n"
+        "#endif\n",
+        "    if (UuidCreate(&uuid) != RPC_S_OK) {\n"
+        "        return ORBIS_KERNEL_ERROR_EFAULT;\n"
+        "    }\n"
+        "#elif defined(__ANDROID__)\n"
+        "    u8 uuid[sizeof(OrbisKernelUuid)];\n"
+        "    arc4random_buf(uuid, sizeof(uuid));\n"
+        "    uuid[6] = (uuid[6] & 0x0f) | 0x40; // RFC 4122 version 4\n"
+        "    uuid[8] = (uuid[8] & 0x3f) | 0x80; // RFC 4122 variant\n"
+        "#else\n"
+        "    uuid_t uuid;\n"
+        "    uuid_generate(uuid);\n"
+        "#endif\n",
+    )
+
     cmake = upstream / "CMakeLists.txt"
     replace(cmake, "add_executable(shadps4\n",
             "add_library(shadps4 SHARED\n")
