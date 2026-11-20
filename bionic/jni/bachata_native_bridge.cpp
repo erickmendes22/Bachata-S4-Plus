@@ -30,7 +30,6 @@ constexpr const char* kLegacy = "libbachata_release_legacy.so";
 using Run = jint (*)(JNIEnv*, jobject, jobject, jboolean,
                      jobjectArray, jobjectArray, jstring, jint);
 using Stop = void (*)(JNIEnv*, jobject);
-using OnLoad = jint (*)(JavaVM*, void*);
 
 struct Engine {
     void* handle = nullptr;
@@ -116,7 +115,12 @@ struct ScopedServiceProcessIO {
 bool try_engine(JNIEnv* env, const char* name) {
     void* h = dlopen(name, RTLD_NOW | RTLD_LOCAL);
     if (!h) {
-        __android_log_print(ANDROID_LOG_INFO, kTag, "%s absent: %s", name, dlerror());
+        const char* error = dlerror();
+        __android_log_print(ANDROID_LOG_ERROR, kTag, "BIONIC_CORE_DLOPEN_FAILED: %s: %s", name,
+                            error ? error : "unknown linker error");
+        fprintf(stderr, "BIONIC_CORE_DLOPEN_FAILED: %s: %s\\n", name,
+                error ? error : "unknown linker error");
+        fflush(stderr);
         return false;
     }
     auto run = reinterpret_cast<Run>(dlsym(h, kRunSymbol));
@@ -129,17 +133,10 @@ bool try_engine(JNIEnv* env, const char* name) {
         dlclose(h);
         return false;
     }
-    auto onload = reinterpret_cast<OnLoad>(dlsym(h, "JNI_OnLoad"));
-    if (onload) {
-        JavaVM* vm = nullptr;
-        if (env->GetJavaVM(&vm) != JNI_OK ||
-            onload(vm, nullptr) == JNI_ERR || env->ExceptionCheck()) {
-            __android_log_print(ANDROID_LOG_ERROR, kTag,
-                                "%s failed JNI_OnLoad", name);
-            dlclose(h);
-            return false;
-        }
-    }
+    // Core is preloaded through Java System.loadLibrary in the actual
+    // application ClassLoader, which calls JNI_OnLoad exactly once.
+    // Calling JNI_OnLoad again from a raw dlopen is invalid for SDL's
+    // registration and can leave duplicate or corrupted Java global refs.
     engine = {h, run, stop, name};
     __android_log_print(ANDROID_LOG_INFO, kTag, "using Bionic engine: %s", name);
     return true;
@@ -189,6 +186,31 @@ Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_stop(
     if (stop) stop(env, receiver);
 }
 
-extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM*, void*) {
+extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
+    // Both the adapter and core export NativeRuntimeBridge.run/stop. Bind
+    // these methods explicitly to this adapter, so ART's ClassLoader library
+    // search order cannot bypass the required cwd, diagnostics FD and
+    // native-core dispatch.
+    JNIEnv* env = nullptr;
+    if (!vm || vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK)
+        return JNI_ERR;
+    jclass bridge = env->FindClass(
+        "com/bachatas4/android/runtime/process/NativeRuntimeBridge");
+    if (!bridge) return JNI_ERR;
+    JNINativeMethod methods[] = {
+        {const_cast<char*>("run"),
+         const_cast<char*>("(Landroid/view/Surface;Z[Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;I)I"),
+         reinterpret_cast<void*>(Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run)},
+        {const_cast<char*>("stop"), const_cast<char*>("()V"),
+         reinterpret_cast<void*>(Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_stop)},
+    };
+    const jint status = env->RegisterNatives(bridge, methods, 2);
+    env->DeleteLocalRef(bridge);
+    if (status != JNI_OK) {
+        __android_log_print(ANDROID_LOG_ERROR, kTag,
+                            "BIONIC_ADAPTER_JNI_REGISTRATION_FAILED");
+        return JNI_ERR;
+    }
+    __android_log_print(ANDROID_LOG_INFO, kTag, "BIONIC_ADAPTER_JNI_REGISTERED");
     return JNI_VERSION_1_6;
 }
