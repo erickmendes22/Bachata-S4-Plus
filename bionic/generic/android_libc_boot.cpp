@@ -207,7 +207,7 @@ void RegisterFexLibcCompatAliases(Core::Loader::SymbolsResolver* sym);
 void RegisterFexLibcGuestObjects(Core::Loader::SymbolsResolver* sym);
 
 void RegisterFexLibcBootAliases(Core::Loader::SymbolsResolver* sym) {
-    RegisterFexLibcGuestObjects(sym);
+    // Pure HLE registration: never map guest VMM pages from this call.
     RegisterFexLibcCompatAliases(sym);
     LIB_FUNCTION("gQX+4GDQjpM", "libc", 1, "libc", GuestMalloc);
     LIB_FUNCTION("tIhsqj0qsFE", "libc", 1, "libc", GuestFree);

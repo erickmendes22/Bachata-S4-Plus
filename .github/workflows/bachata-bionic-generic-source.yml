@@ -19,6 +19,34 @@ permissions:
   actions: write  # Cancel runs started before this concurrency rule existed.
 
 jobs:
+  bionic-source-preflight:
+    name: Fast Bionic/FEX source and ABI audit (no APK)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout Bachata sources
+        uses: actions/checkout@v4
+      - name: Checkout pinned shadPS4 source without recursive dependencies
+        uses: actions/checkout@v4
+        with:
+          repository: zenithblue-oss/shadps4-arm64
+          ref: be6bc2e9c60799e071dd2fafa6216e8d80ec619c
+          path: generic-upstream
+          submodules: false
+          persist-credentials: false
+      - name: Validate overlays and native source patch application
+        run: |
+          set -euo pipefail
+          python3 -m py_compile bionic/generic/*.py
+          python3 bionic/generic/audit_fex_libc.py --upstream generic-upstream
+          python3 bionic/generic/port_generic.py generic-upstream
+          git -C generic-upstream diff --check
+          grep -Fq 'BIONIC_BOOT_STAGE=HLE_REGISTER_END' generic-upstream/src/emulator.cpp
+          grep -Fq 'BIONIC_BOOT_STAGE=GUEST_LIBC_OBJECTS_END' generic-upstream/src/emulator.cpp
+          grep -Fq 'RegisterFexLibcGuestObjects' generic-upstream/src/core/libraries/libc_internal/libc_internal.h
+          grep -Fq 'android_libc_compat.cpp' generic-upstream/CMakeLists.txt
+          echo 'Fast Bionic source preflight passed; full build is deliberately opt-in.'
+
   generic-shadps4-android:
     # The full core job below compiles and validates the actual source.
     # Skip an obsolete isolated compilation not required for the APK.
@@ -83,6 +111,11 @@ jobs:
           retention-days: 14
 
   full-ps4-bionic:
+    # Do not spend ~20 minutes compiling for each speculative source change.
+    # Full core and P36 APK build only on explicit workflow_dispatch or
+    # an intentional commit message carrying [build-apk].
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-apk]') }}
+    needs: [bionic-source-preflight]
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:

@@ -443,6 +443,46 @@ def apply(upstream: Path, overlay: Path) -> None:
     replace(io, "        *Kernel::__Error() = POSIX_ENOMEM;\n    }\n\n    // Preserve mode and index\n",
         "        *Kernel::__Error() = POSIX_ENOMEM;\n        return nullptr;\n    }\n\n    // Preserve mode and index\n")
 
+
+    # Registration only fills the HLE resolver. Delay libc global guest-VMM
+    # allocation until after registration and before the eboot's relocations.
+    emulator = upstream / "src/emulator.cpp"
+    replace(
+        emulator,
+        "#include \"core/libraries/kernel/kernel.h\"\n",
+        "#include \"core/libraries/kernel/kernel.h\"\n"
+        "#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n"
+        "#include \"core/libraries/libc_internal/libc_internal.h\"\n"
+        "#endif\n",
+    )
+    replace(
+        upstream / "src/core/libraries/libc_internal/libc_internal.h",
+        "void ForceRegisterLib(Core::Loader::SymbolsResolver* sym);\n",
+        "void ForceRegisterLib(Core::Loader::SymbolsResolver* sym);\n"
+        "#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n"
+        "void RegisterFexLibcGuestObjects(Core::Loader::SymbolsResolver* sym);\n"
+        "#endif\n",
+    )
+    replace(
+        emulator,
+        "    Libraries::InitHLELibs(&linker->GetHLESymbols());\n\n"
+        "    // Load the module with the linker\n",
+        "#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n"
+        "    LOG_INFO(Loader, \"BIONIC_BOOT_STAGE=HLE_REGISTER_BEGIN\");\n"
+        "    Common::Log::Flush();\n"
+        "#endif\n"
+        "    Libraries::InitHLELibs(&linker->GetHLESymbols());\n"
+        "#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n"
+        "    LOG_INFO(Loader, \"BIONIC_BOOT_STAGE=HLE_REGISTER_END\");\n"
+        "    Common::Log::Flush();\n"
+        "    LOG_INFO(Loader, \"BIONIC_BOOT_STAGE=GUEST_LIBC_OBJECTS_BEGIN\");\n"
+        "    Common::Log::Flush();\n"
+        "    Libraries::LibcInternal::RegisterFexLibcGuestObjects(&linker->GetHLESymbols());\n"
+        "    LOG_INFO(Loader, \"BIONIC_BOOT_STAGE=GUEST_LIBC_OBJECTS_END\");\n"
+        "    Common::Log::Flush();\n"
+        "#endif\n"
+        "    // Load the module with the linker\n",
+    )
     cmake = upstream / "CMakeLists.txt"
     replace(cmake, "add_executable(shadps4\n",
             "add_library(shadps4 SHARED\n")
