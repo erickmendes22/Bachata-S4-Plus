@@ -1,0 +1,42 @@
+name: Bachata glibc 025 selection and manifest references audit
+on:
+  push:
+    branches: [feature/bionic-arm64-core-20261119]
+    paths: ['.github/workflows/bachata-glibc-launch-refs.yml']
+  workflow_dispatch:
+permissions: { contents: read }
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Audit glibc manifest and UI references in original 0.2.7
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 4 'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.7/Bachata-S4-Plus-v0.2.7.apk' -o /tmp/base.apk
+          curl -fLsS --retry 4 'https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar' -o /tmp/apktool.jar
+          java -Xmx4G -jar /tmp/apktool.jar d -f -r /tmp/base.apk -o /tmp/decoded >/tmp/apktool.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,zipfile
+          with zipfile.ZipFile('/tmp/base.apk') as z:
+              m=json.loads(z.read('assets/runtime/manifest.json'))
+              for x in m['components']:
+                  if x.get('name')=='glibc-packages':
+                      print('GLIBC_COMPONENT',str(x)[:5000])
+              for f in m['files']:
+                  if 'shadps4-arm64-' in f.get('path',''):
+                      print('GLIBC_MANIFEST_ENTRY',f)
+          root=Path('/tmp/decoded')
+          total=0
+          for p in root.rglob('*.smali'):
+              text=p.read_text(errors='replace')
+              found=[(i+1,line.strip()) for i,line in enumerate(text.splitlines()) if
+                  any(x in line for x in ('shadps4-arm64-020','shadps4-arm64-023','shadps4-arm64-024','shadps4-arm64-025'))]
+              if found:
+                  total+=len(found)
+                  print('GLIBC_FRONTEND_FILE',p.relative_to(root))
+                  for i,line in found[:70]:print('GLIBC_FRONTEND_REFERENCE',i,line)
+          print('TOTAL_GLIBC_FRONTEND_REFERENCES',total)
+          PY
