@@ -74,6 +74,12 @@ jobs:
   full-ps4-bionic:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 2G
+      CCACHE_COMPRESS: "true"
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
     steps:
       - name: Bachata S4+ Android JNI integration
         uses: actions/checkout@v4
@@ -108,9 +114,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential clang lld llvm git cmake ninja-build python3-venv \
-            bison flex pkg-config curl unzip zip glslang-tools binutils
+            bison flex pkg-config curl unzip zip glslang-tools binutils ccache
           bash -n bionic/build-core.sh
           bash -n bionic/generic/build-generic.sh
+
+      - name: Restore cross-build and compiler caches (pinned NDK and sources)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .ccache
+            out/bionic/deps
+            out/bionic/fex
+            out/bionic/fex-android
+            out/bionic/libadrenotools
+            out/bionic/adrenotools-android
+            out/bionic/gpu-build
+          key: bachata-full-bionic-r30-${{ github.sha }}
+          restore-keys: |
+            bachata-full-bionic-r30-
 
       - name: Compile native FEXCore and Android Vulkan prerequisites
         run: |
@@ -153,3 +174,17 @@ jobs:
             out/bionic/deps/build/*.log
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Cache successfully compiled objects even after an unrelated link error
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .ccache
+            out/bionic/deps
+            out/bionic/fex
+            out/bionic/fex-android
+            out/bionic/libadrenotools
+            out/bionic/adrenotools-android
+            out/bionic/gpu-build
+          key: bachata-full-bionic-r30-${{ github.sha }}
