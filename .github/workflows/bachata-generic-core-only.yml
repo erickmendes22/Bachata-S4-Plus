@@ -1,8 +1,7 @@
 name: Bachata game-generic Bionic full core integration - core only, NO APK
 on:
-  push:
-    branches: [feature/bionic-arm64-core-20261119]
-    paths: ['.github/workflows/bachata-generic-core-only.yml']
+  # Manual only. Never rebuild the 400 MB core when a source change is
+  # integrated before we know the complete Android boot contract is ready.
   workflow_dispatch:
 permissions:
   contents: read
