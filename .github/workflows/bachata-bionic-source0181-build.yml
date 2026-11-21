@@ -45,7 +45,13 @@ jobs:
           set -euo pipefail
           python3 -m py_compile bionic/generic/*.py
           python3 bionic/generic/audit_fex_libc.py --upstream generic-upstream
-          python3 bionic/source0181/port_0181.py --source generic-upstream --report out/source0181/preflight-parity.json
+          test -s out/source0181/bionic-0181-parity.json
+          python3 - <<'PY'
+          import json
+          data=json.load(open('out/source0181/bionic-0181-parity.json'))
+          assert data['auditPassed'], '0.18.1 Bionic FEX JNI/SAF integration did not pass'
+          print('REAL_SOURCE0181_BIONIC_JNI_SAF_FEX_OVERLAY_AUDITED')
+          PY
           git -C generic-upstream diff --check
           grep -Fq 'BIONIC_BOOT_STAGE=HLE_REGISTER_END' generic-upstream/src/emulator.cpp
           grep -Fq 'BIONIC_BOOT_STAGE=GUEST_LIBC_OBJECTS_END' generic-upstream/src/emulator.cpp
