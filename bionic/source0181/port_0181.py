@@ -64,11 +64,14 @@ def main() -> None:
     error=None
     source_registry=None
     modern_fs_adapter=None
+    arm64_host_adapter=None
     try:
         mod.apply(args.source.resolve(),base/"generic")
         if not misses:
             from modern_saf_port import apply as apply_modern_saf
             modern_fs_adapter=apply_modern_saf(args.source.resolve())
+            from arm64_signal_port import apply as apply_arm64_signal
+            arm64_host_adapter=apply_arm64_signal(args.source.resolve())
             from reconcile_cmake import reconcile
             source_registry=reconcile(args.source.resolve())
             print("REAL_SHADPS4_0181_CMAKE_REGISTRY_RECONCILED",source_registry["changedGroups"])
@@ -82,6 +85,7 @@ def main() -> None:
         "otherError":error,
         "cmakeSourceRegistry":source_registry,
         "modernFsSafAdapter":modern_fs_adapter,
+        "arm64SignalAdapter":arm64_host_adapter,
         "auditPassed":not misses and error is None,
     }
     args.report.parent.mkdir(parents=True,exist_ok=True)
