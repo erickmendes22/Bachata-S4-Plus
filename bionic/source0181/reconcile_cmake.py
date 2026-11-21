@@ -61,7 +61,7 @@ def reconcile(root: Path) -> dict:
         begin=upstream.index("# shadNet protobuf generation")
         finish=upstream.index("if (APPLE)",begin)
         block=upstream[begin:finish]
-        marker="if(NOT ENABLE_TESTS)\n\nadd_executable(shadps4"
+        # The Android JNI overlay converts upstream executable into a shared ELF.\n        marker="if(NOT ENABLE_TESTS)\n\nadd_library(shadps4 SHARED"
         if current.count(marker)!=1:raise RuntimeError("shadPS4 executable declaration changed")
         current=current.replace(marker,block+marker,1)
         marker2="    ${EMULATOR}\n    src/main.cpp"
