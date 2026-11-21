@@ -40,12 +40,14 @@ def integrate(source: Path) -> None:
     print("BIONIC_021_TIME_ALREADY_COMPATIBLE")
 
     exception = source / "src/core/libraries/kernel/threads/exception.cpp"
-    replace_once(
-        exception,
-        """        if (!sigisemptyset(&native_oact.sa_mask)) {
+    signals = exception.read_text()
+    old_mask = """        if (!sigisemptyset(&native_oact.sa_mask)) {
             LOG_ERROR(Lib_Kernel, "Unhandled sa_mask");
-        }""",
-        """#if defined(__ANDROID__)
+        }"""
+    if old_mask in signals:
+        replace_once(
+            exception, old_mask,
+            """#if defined(__ANDROID__)
         // BIONIC_021_NATIVE_SIGNAL_MASK: sigisemptyset is a glibc extension.
         bool masked = false;
         for (int s = 1; s <= SIGRTMAX; ++s) {
@@ -62,19 +64,29 @@ def integrate(source: Path) -> None:
             LOG_ERROR(Lib_Kernel, "Unhandled sa_mask");
         }
 #endif""",
-    )
-    replace_once(
-        exception,
-        "    const auto pthr = reinterpret_cast<pthread_t>(thread->native_thr.GetHandle());\n",
-        """#if defined(__ANDROID__)
+        )
+        print("BIONIC_021_NATIVE_SIGNAL_MASK_PORTED")
+    else:
+        if "posix_sigisemptyset" not in signals:
+            raise RuntimeError("Modern kernel signal API is not recognized")
+        print("BIONIC_021_NATIVE_SIGNAL_MASK_OLD_ANCHOR_REMOVED")
+
+    old_handle = "    const auto pthr = reinterpret_cast<pthread_t>(thread->native_thr.GetHandle());\n"
+    if old_handle in exception.read_text():
+        replace_once(
+            exception, old_handle,
+            """#if defined(__ANDROID__)
     // BIONIC_021_NATIVE_PTHREAD_HANDLE: Android pthread_t is integer-valued.
     const auto pthr = static_cast<pthread_t>(thread->native_thr.GetHandle());
 #else
     const auto pthr = reinterpret_cast<pthread_t>(thread->native_thr.GetHandle());
 #endif
 """,
-    )
-    print("BIONIC_021_KERNEL_POSIX_ADAPTATIONS_INTEGRATED")
+        )
+        print("BIONIC_021_NATIVE_PTHREAD_HANDLE_PORTED")
+    else:
+        print("BIONIC_021_NATIVE_PTHREAD_HANDLE_OLD_ANCHOR_REMOVED")
+    print("BIONIC_021_KERNEL_POSIX_AUDIT_COMPLETED")
 
 
 if __name__ == "__main__":
