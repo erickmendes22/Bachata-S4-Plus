@@ -289,6 +289,28 @@ jobs:
             -DBACHATA_ANDROID_FFMPEG_PREFIX="$root/deps/prefix" \
             -DCMAKE_PREFIX_PATH="$root/deps/prefix" \
             2>&1 | tee "$root/configure.log"
+          # Compile Android-specific interfaces before 2,000 other objects.
+          # Catch modern header drift and proto mismatches immediately.
+          mapfile -t object_targets < <(ninja -C "$root/build" -t targets all |
+            awk '/^CMakeFiles\/shadps4.dir\// {
+              if ($1 ~ /android_window.cpp.o:$/ ||
+                  $1 ~ /threads\/pthread.cpp.o:$/ ||
+                  $1 ~ /shadnet.pb.cc.o:$/) {
+                sub(/:$/, "", $1); print $1
+              }
+            }')
+          for expected in android_window.cpp.o pthread.cpp.o shadnet.pb.cc.o; do
+            matched=0
+            for target in "${object_targets[@]}"; do
+              [[ "$target" == *"$expected" ]] && matched=1
+            done
+            if [[ "$matched" != 1 ]]; then
+              echo "::error::Missing 0.21.1 early compile target $expected"
+              exit 3
+            fi
+          done
+          ninja -C "$root/build" -j3 "${object_targets[@]}"
+          echo "BIONIC_021_CRITICAL_INTERFACES_COMPILED"
           cmake --build "$root/build" --target shadps4 -j3 -- -k 8 \
             2>&1 | tee "$root/compiler.log"
           core="$root/build/libbachata_bionic_core.so"

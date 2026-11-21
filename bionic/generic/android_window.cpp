@@ -3,7 +3,7 @@
 // This replaces src/sdl_window.cpp ONLY in the native Bionic core build.
 #include <android/native_window.h>
 #include <chrono>
-#include <filesystem>
+#include <span>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -46,7 +46,9 @@ void WindowSDL::InitTimers() {
     // bound to a non-existent SDL_Window. Controller injection is a separate path.
 }
 
-void WindowSDL::SetIcon(const std::filesystem::path&) {}
+// The modern 0.21.1 frontend takes decoded icon bytes; Android uses the
+// Java application icon and has no SDL window to decorate.
+void WindowSDL::SetIcon(std::span<const u8>) {}
 void WindowSDL::RequestKeyboard() { ++keyboard_grab; }
 void WindowSDL::ReleaseKeyboard() {
     if (keyboard_grab > 0) --keyboard_grab;
