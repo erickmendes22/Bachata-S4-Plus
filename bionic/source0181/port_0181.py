@@ -50,11 +50,11 @@ def main() -> None:
             # implementation. Its full SAF adapter runs after the generic
             # platform overlay; never apply the obsolete 0.16.1 text patch.
             if path.name == "fs.cpp" and path.parent.name == "file_sys":
-                if "callback(entry.path(), !entry.is_directory());" in old and \
-                        "class MergedDirectory final" in source and \
-                        "MntPoints::OpenDir(" in source:
-                    already_upstream.append(str(path)+" (new VFS adapter required)")
-                    return
+                if "class MergedDirectory final" in source and "MntPoints::OpenDir(" in source:
+                    if "callback(entry.path(), !entry.is_directory());" in old or \
+                            "Pass 3: Any files that exist only in the mod directory" in old:
+                        already_upstream.append(str(path)+" (0.18 VFS replacement pending)")
+                        return
             misses.append({"source":str(path),"expected":count,"found":actual,
                            "anchor":old[:450],"replacement":new[:450]})
             return
