@@ -65,6 +65,7 @@ def main() -> None:
     source_registry=None
     modern_fs_adapter=None
     arm64_host_adapter=None
+    modern_api_adapter=None
     try:
         mod.apply(args.source.resolve(),base/"generic")
         if not misses:
@@ -72,6 +73,10 @@ def main() -> None:
             modern_fs_adapter=apply_modern_saf(args.source.resolve())
             from arm64_signal_port import apply as apply_arm64_signal
             arm64_host_adapter=apply_arm64_signal(args.source.resolve())
+            # Reconcile every independent 0.16->0.18 public API found by
+            # full NDK compilation, not just the first failing translation unit.
+            from compatibility_port import apply as apply_modern_apis
+            modern_api_adapter=apply_modern_apis(args.source.resolve())
             from reconcile_cmake import reconcile
             source_registry=reconcile(args.source.resolve())
             print("REAL_SHADPS4_0181_CMAKE_REGISTRY_RECONCILED",source_registry["changedGroups"])
@@ -86,6 +91,7 @@ def main() -> None:
         "cmakeSourceRegistry":source_registry,
         "modernFsSafAdapter":modern_fs_adapter,
         "arm64SignalAdapter":arm64_host_adapter,
+        "modern0181ApiReconciliation":modern_api_adapter,
         "auditPassed":not misses and error is None,
     }
     args.report.parent.mkdir(parents=True,exist_ok=True)
