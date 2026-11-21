@@ -112,6 +112,11 @@ bool Configure(const std::string& socket,const std::string& token,
             if(!GetStat(s,"sce_sys/param.sfo"))s.prefix.clear();
         }
     }
+    // A valid socket is not sufficient: reject an unrelated SAF tree.
+    if(!GetStat(s,"sce_sys/param.sfo") && !GetStat(s,"eboot.bin")) {
+        Warn("GAME_ROOT_MISMATCH",game_root.string());
+        return false;
+    }
     s.active=true;
     const auto playgo=GetStat(s,"sce_sys/playgo-chunk.dat");
     const auto libc=GetStat(s,"sce_module/libc.prx");
@@ -157,6 +162,15 @@ std::optional<fs::path> Resolve(std::string_view guest) {
         Warn("SYMLINK_FAILED",*relative,ec.value());close(reply.fd);
         return std::nullopt;
     }
+    // The alias handles only stat/path lookup. Real game reads request an
+    // independent provider fd, so old aliases can be evicted safely.
+    if(s.handles.size()>=512) {
+        const auto previous=s.handles.begin();
+        std::error_code ignore;
+        fs::remove(s.shadow/previous->first,ignore);
+        close(previous->second);
+        s.handles.erase(previous);
+    }
     s.handles.emplace(*relative,reply.fd);
     std::fprintf(stderr,"BIONIC_SAF_OPEN relative=%s size=%llu\n",
         relative->c_str(),static_cast<unsigned long long>(meta->size));
@@ -168,13 +182,17 @@ bool List(std::string_view guest,std::vector<Entry>& out) {
     auto& s=S();std::scoped_lock lk(s.lock);
     return s.active && GetList(s,*relative,out);
 }
+bool IsVirtualPath(const fs::path& path) {
+    auto& s=S();std::scoped_lock lk(s.lock);
+    if(!s.active)return false;
+    auto relative=path.lexically_relative(s.shadow).generic_string();
+    return Valid(relative);
+}
 std::optional<int> DuplicateFd(const fs::path& host) {
     auto& s=S();std::scoped_lock lk(s.lock);
     if(!s.active)return std::nullopt;
     auto relative=host.lexically_relative(s.shadow).generic_string();
     if(!Valid(relative))return std::nullopt;
-    auto it=s.handles.find(relative);
-    if(it==s.handles.end())return std::nullopt;
     // Fresh provider handle: dup() would share file offset across game readers.
     auto reply=Protocol::Request(s.socket,s.token,3,Remote(s,relative));
     if(reply.status!=0 || reply.fd<0) {
