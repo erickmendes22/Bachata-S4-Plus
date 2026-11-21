@@ -132,6 +132,43 @@ def reconcile(root: Path) -> dict:
         ext_current=ext_current.rstrip()+"\n\n"+section
         changes.append({"group":"ZARCHIVE","externalUpstream0181":"added zstd + zarchive"})
     ext_file.write_text(ext_current.rstrip()+"\n")
+    # Android NDK CMake would otherwise generate a target AArch64 ImGui
+    # font encoder and attempt to execute it on the Ubuntu x86_64 runner.
+    # Use the real HOST binary already compiled in build-generic.sh.
+    font_cmake=root/"src/imgui/renderer/CMakeLists.txt"
+    font_text=font_cmake.read_text()
+    font_target="add_executable(Dear_ImGui_FontEmbed ${CMAKE_SOURCE_DIR}/externals/imgui/misc/fonts/binary_to_compressed_c.cpp)"
+    if font_text.count(font_target)!=1:
+        raise RuntimeError("0.18.1 ImGui font target structure changed")
+    font_text=font_text.replace(font_target,
+        'if(ANDROID)\n'
+        '    if(NOT EXISTS "${IMGUI_FONT_EMBED_EXECUTABLE}")\n'
+        '        message(FATAL_ERROR "Host ImGui font encoder is missing")\n'
+        '    endif()\n'
+        '    add_executable(Dear_ImGui_FontEmbed IMPORTED GLOBAL)\n'
+        '    set_target_properties(Dear_ImGui_FontEmbed PROPERTIES\n'
+        '        IMPORTED_LOCATION "${IMGUI_FONT_EMBED_EXECUTABLE}")\n'
+        'else()\n'
+        '    '+font_target+'\n'
+        'endif()',1)
+    font_cmake.write_text(font_text)
+    # glslang::glslang-standalone is an Android executable under NDK.
+    # The host shader generator runs at BUILD time on the Linux runner and
+    # must resolve its own x86_64 glslangValidator via NO_CMAKE_FIND_ROOT_PATH.
+    shader_cmake=root/"src/video_core/host_shaders/CMakeLists.txt"
+    shader_text=shader_cmake.read_text()
+    marker="set(SHADER_INCLUDE ${CMAKE_CURRENT_BINARY_DIR}/include)"
+    if shader_text.count(marker)!=1:
+        raise RuntimeError("0.18.1 host shader CMake structure changed")
+    shader_text=shader_text.replace(marker,
+        'if(ANDROID)\n'
+        '    find_program(BACHATA_HOST_GLSLANG_VALIDATOR\n'
+        '        NAMES glslangValidator NO_CMAKE_FIND_ROOT_PATH REQUIRED)\n'
+        '    set(GLSLANG_COMPILER "${BACHATA_HOST_GLSLANG_VALIDATOR}")\n'
+        'endif()\n\n'+marker,1)
+    shader_cmake.write_text(shader_text)
+    changes.append({"group":"CROSS_COMPILE_BUILD_TOOLS",
+        "hostTools":["ImGui font encoder x86_64","glslangValidator x86_64"]})
     if "add_subdirectory(protobuf" not in ext_current or "add_library(ZArchive::zarchive" not in ext_current:
         raise RuntimeError("Full 0.18.1 external zarchive and protobuf source targets missing")
     # Removing obsolete 0.16.1 entries may leave whitespace-only lines.
