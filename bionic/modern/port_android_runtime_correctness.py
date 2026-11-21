@@ -25,8 +25,8 @@ def fix_io_file(root: Path) -> None:
     p = root / "src/common/io_file.cpp"
     replace_once(
         p,
-        '#include "common/io_file.h"\\n',
-        '#include "common/io_file.h"\\n#ifndef _WIN32\\n#include <sys/stat.h>\\n#endif\\n',
+        '#include "common/io_file.h"\n',
+        '#include "common/io_file.h"\n#ifndef _WIN32\n#include <sys/stat.h>\n#endif\n',
     )
     replace_once(
         p,
