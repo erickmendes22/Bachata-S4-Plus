@@ -1,4 +1,4 @@
-name: Bachata Bionic shadPS4 0.21.1 native integration (source verification)
+name: Bachata Bionic shadPS4 0.21.1 native build
 
 on:
   workflow_dispatch:
@@ -26,7 +26,7 @@ jobs:
   source-rebase:
     name: Verify shadPS4 0.21.1 + FEX/SAF source and audit Android compatibility
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 180
     steps:
       - name: Checkout current Bachata Bionic implementation
         uses: actions/checkout@v4
@@ -130,6 +130,135 @@ jobs:
             grep -Fq Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run
           echo "BIONIC_021_JNI_AARCH64_OBJECT_BUILD_OK"
 
+      - name: Checkout pinned Android FEX + dependency recipes
+        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-modern]')
+        uses: actions/checkout@v4
+        with:
+          repository: erickmendes22/uncharted-android
+          ref: 148656bc7ae1b8b482d95e33d49f0729421ff477
+          path: port
+          submodules: false
+          persist-credentials: false
+
+      - name: Prepare full modern Android build and host tools
+        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-modern]')
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            clang lld llvm cmake ninja-build bison flex pkg-config \
+            build-essential nasm git unzip curl binutils ccache
+          mkdir -p out/bionic-modern
+          python3 bionic/modern/port_android_deps.py --source modern-core
+          grep -Fq 'BIONIC_021_NDK_FFMPEG' modern-core/externals/CMakeLists.txt
+          grep -Fq 'BIONIC_021_OPENAL_NO_LINUX_AUDIO' modern-core/externals/CMakeLists.txt
+
+      - name: Check out pinned 0.21.1 submodules (skip macOS-only tree)
+        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-modern]')
+        run: |
+          set -euo pipefail
+          base="https://raw.githubusercontent.com/$MODERN_PORT_REPO/$MODERN_PORT_REF"
+          curl -fLsS --retry 3 "$base/config/gitmodules" -o modern-core/.gitmodules
+          while read -r module sha; do
+            test -n "$module" || continue
+            git -C modern-core update-index --add --cacheinfo "160000,$sha,$module"
+          done < /tmp/shadps4-0211-modules.txt
+          while read -r module; do
+            test -n "$module" || continue
+            if ! grep -Fq "path = $module" modern-core/.gitmodules; then
+              git -C modern-core update-index --force-remove "$module"
+            fi
+          done < <(git -C modern-core ls-files -s | awk '$1=="160000" {print $4}')
+          git -C modern-core submodule sync
+          mapfile -t modules < <(awk '$1 !~ /^(externals\/mesa-kosmickrisp|externals\/bachata-xserver|externals\/vulkan-loader|externals\/ffmpeg-core|externals\/discord-rpc|externals\/ext-wepoll|externals\/epoll-shim|externals\/date)$/ {print $1}' /tmp/shadps4-0211-modules.txt)
+          git -C modern-core submodule update --init --jobs 6 -- "${modules[@]}"
+          test -s modern-core/externals/imgui/imgui.cpp
+          test -s modern-core/externals/sdl3/CMakeLists.txt
+          echo BIONIC_021_SUBMODULES_PINNED
+
+      - name: Compile Android FFmpeg and native FEXCore
+        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-modern]')
+        run: |
+          set -euo pipefail
+          export NDK="$ANDROID_HOME/ndk/30.0.14904198"
+          export DEPS="$GITHUB_WORKSPACE/out/bionic-modern/deps"
+          export BACHATA_JOBS=3
+          mkdir -p "$DEPS"
+          sed -i 's/^J=$(nproc)$/J=3/' port/android/scripts/port-arm64/android_deps.sh
+          bash port/android/scripts/port-arm64/android_deps.sh ffmpeg
+          test -s "$DEPS/prefix/lib/libavcodec.so"
+          FEX_REV=f2b679f6028ce1c38875233aecfcf5d3f8ebecec
+          FEX_SRC="$GITHUB_WORKSPACE/out/bionic-modern/fex"
+          FEX_BUILD="$GITHUB_WORKSPACE/out/bionic-modern/fex-android"
+          git clone -q https://github.com/FEX-Emu/FEX.git "$FEX_SRC"
+          git -C "$FEX_SRC" checkout -q "$FEX_REV"
+          git -C "$FEX_SRC" submodule update -q --init --jobs 4 \
+            External/fmt External/xxhash External/range-v3 External/unordered_dense \
+            External/rpmalloc External/jemalloc_glibc External/vixl External/zydis \
+            Source/Common/cpp-optparse
+          for patch in port/android/scripts/port-arm64/patches/fex-*.patch; do
+            git -C "$FEX_SRC" apply --check "$GITHUB_WORKSPACE/$patch"
+            git -C "$FEX_SRC" apply "$GITHUB_WORKSPACE/$patch"
+          done
+          SRC="$FEX_SRC" OUT="$FEX_BUILD" TUNE_CPU=cortex-a78 \
+            bash port/android/scripts/port-arm64/build_fex_android.sh \
+            2>&1 | tee out/bionic-modern/fex-build.log
+          test -s "$FEX_BUILD/FEXCore/Source/libFEXCore.a"
+          echo BIONIC_021_FEX_ANDROID_COMPILED
+
+      - name: Configure and compile complete 0.21.1 Android native core
+        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-modern]')
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/out/bionic-modern"
+          NDK="$ANDROID_HOME/ndk/30.0.14904198"
+          cmake -S modern-core -B "$root/build" -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=33 \
+            -DANDROID_STL=c++_shared -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DENABLE_DISCORD_RPC=OFF -DENABLE_UPDATER=OFF -DENABLE_TESTS=OFF \
+            -DENABLE_BACHATA_RUNTIME=ON -DENABLE_FEX_GUEST_CPU=ON \
+            -DFEXCORE_GUEST_CPU_SOURCE_DIR="$root/fex" \
+            -DFEXCORE_GUEST_CPU_BUILD_DIR="$root/fex-android" \
+            -DBACHATA_ANDROID_FFMPEG_PREFIX="$root/deps/prefix" \
+            -DCMAKE_PREFIX_PATH="$root/deps/prefix" \
+            2>&1 | tee "$root/configure.log"
+          cmake --build "$root/build" --target shadps4 -j3 -- -k 8 \
+            2>&1 | tee "$root/compiler.log"
+          core="$root/build/libbachata_native_runtime.so"
+          test -s "$core"
+          readelf -h "$core" | grep -q AArch64
+          readelf -d "$core" | grep -Fq 'Shared library: [libc.so]'
+          ! readelf -d "$core" | grep -Eq 'libc.so.6|ld-linux-aarch64'
+          readelf -Ws "$core" | grep -Fq Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run
+          echo BIONIC_021_REAL_CORE_COMPILED
+
+      - name: Upload native shadPS4 0.21.1 Bionic library and media deps
+        if: success() && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-modern]'))
+        uses: actions/upload-artifact@v4
+        with:
+          name: bachata-shadps4-0211-real-bionic-core
+          path: |
+            out/bionic-modern/build/libbachata_native_runtime.so
+            out/bionic-modern/deps/prefix/lib/libav*.so*
+            out/bionic-modern/deps/prefix/lib/libsw*.so*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload modern Bionic build errors
+        if: failure() && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-modern]'))
+        uses: actions/upload-artifact@v4
+        with:
+          name: bachata-shadps4-0211-build-diagnostics
+          path: |
+            out/bionic-modern/configure.log
+            out/bionic-modern/compiler.log
+            out/bionic-modern/fex-build.log
+            out/bionic-modern/deps/build/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Upload compact source compatibility report (no APK)
         if: always()
         uses: actions/upload-artifact@v4
@@ -138,5 +267,4 @@ jobs:
           path: /tmp/modern-core-audit.json
           if-no-files-found: ignore
 
-# NOTE: No full APK or kernel build. No old APK is repackaged. The source audit
-# must establish all changed interfaces before porting and compiling 0.21.1.
+# Full modern build runs on explicit [build-modern] commit, never recycles old core.
