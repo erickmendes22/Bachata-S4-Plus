@@ -264,7 +264,8 @@ jobs:
           assert data["auditPassed"]
           api = data["modern0181ApiReconciliation"]
           assert api and len(api["restoredMatchingImplementations"]) >= 13
-          assert len(api["portedInterfaces"]) >= 8
+          assert len(api["portedInterfaces"]) >= 9
+          assert any("FEX pthread semaphores" in item for item in api["fexAdaptersKept"])
           print("FULL_BIONIC_0181_SUBSYSTEM_API_COHERENCE_VERIFIED")
           print(json.dumps(api, indent=2))
           PY
