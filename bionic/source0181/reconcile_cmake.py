@@ -171,6 +171,22 @@ def reconcile(root: Path) -> dict:
         "hostTools":["ImGui font encoder x86_64","glslangValidator x86_64"]})
     if "add_subdirectory(protobuf" not in ext_current or "add_library(ZArchive::zarchive" not in ext_current:
         raise RuntimeError("Full 0.18.1 external zarchive and protobuf source targets missing")
+    # The old ARM64 fork registered a separate per-file no-LTO rule for
+    # vk_dispatch_reload.cpp. 0.18.1 no longer has this translation unit.
+    # Drop BOTH the source entry (handled above) and its orphaned property
+    # declaration; otherwise CMake still references a non-existent file.
+    old_vk_dispatch_rule = (
+        "set_source_files_properties(\\n"
+        "    src/video_core/buffer_cache/vk_dispatch_reload.cpp\\n"
+        "    PROPERTIES COMPILE_FLAGS \\"-fno-lto\\"\\n"
+        ")\\n"
+    )
+    old_vk_dispatch_rule = old_vk_dispatch_rule.replace("\\\\n", "\\n")
+    if not (root/"src/video_core/buffer_cache/vk_dispatch_reload.cpp").is_file():
+        if old_vk_dispatch_rule in current:
+            current = current.replace(old_vk_dispatch_rule, "", 1)
+            changes.append({"group":"OBSOLETE_ARM64_DISPATCH_RULE",
+                            "removed":"vk_dispatch_reload.cpp no-LTO registration"})
     # Removing obsolete 0.16.1 entries may leave whitespace-only lines.
     # Normalize trailing spaces before strict git diff --check preflight.
     current="\n".join(line.rstrip() for line in current.split("\n"))
