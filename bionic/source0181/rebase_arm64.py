@@ -170,6 +170,11 @@ def main() -> None:
     still = git(root, "diff", "--name-only", "--diff-filter=U").splitlines()
     if still:
         raise RuntimeError("Unresolved merge conflicts: "+str(still[:20]))
+    # Upstream 0.18.1 emits x86_64 Xbyak stubs (mov rdi/rax); on Bionic
+    # AArch64 those registers/instructions do not exist. Preserve the
+    # already working native-FEX ARM64 stub table from the host fork.
+    git(root, "restore", "--source", WORKING, "--staged", "--worktree",
+        "--", "src/core/aerolib/stubs.cpp")
     # Complete source-version reconciliation is necessary even where Git
     # reports *no conflict*. A source/header pair must come from one engine.
     preserved = {}
