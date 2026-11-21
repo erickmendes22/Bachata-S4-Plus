@@ -48,6 +48,13 @@ mkdir -p "$OUT/host-protoc-smoketest"
   "$SRC/src/shadnet/shadnet.proto"
 test -s "$OUT/host-protoc-smoketest/shadnet.pb.cc"
 test -s "$OUT/host-protoc-smoketest/shadnet.pb.h"
+# Compile the real generated translation unit against the exact headers
+# used by the shadPS4 fork. A matching --version is NOT an ABI guarantee.
+"${HOST_CXX:-c++}" -std=c++23 -fsyntax-only \
+  -I "$OUT/host-protoc-smoketest" -I "$PROTOSRC/src" \
+  -I "$PROTOSRC/third_party/utf8_range" -I "$PREFIX/include" \
+  "$OUT/host-protoc-smoketest/shadnet.pb.cc"
+echo "BIONIC_SHADNET_GENERATED_CPP_HEADER_ABI_PASS"
 if grep -Fq 'TcParser::MpUnknownFields' "$OUT/host-protoc-smoketest/shadnet.pb.cc"; then
   echo "::error::Pinned host protoc generated an unsupported protobuf parser ABI" >&2
   exit 3
