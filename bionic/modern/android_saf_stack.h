@@ -104,7 +104,8 @@ public:
         // HostFile calls IOFile, which receives a NEW broker fd through
         // SetFdOpenHook. We never share read offsets between game handles.
         auto file = std::make_unique<HostFile>(host, mode, true);
-        return file->IsOpen() ? std::move(file) : nullptr;
+        if (!file->IsOpen()) return nullptr;
+        return file;
     }
 
     std::unique_ptr<IDirectory> OpenDir(std::string_view relative) override {
