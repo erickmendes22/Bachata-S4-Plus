@@ -375,6 +375,9 @@ jobs:
           path: |
             out/bionic/shadps4-generic-android/CMakeFiles/CMakeConfigureLog.yaml
             out/bionic/shadps4-generic-android/CMakeCache.txt
+            out/bionic/host-protoc-build/CMakeCache.txt
+            out/bionic/host-absl-build/CMakeCache.txt
+            out/bionic/ndk-errors-summary.txt
             out/bionic/deps/build/*.log
           if-no-files-found: ignore
           retention-days: 7
