@@ -11,6 +11,7 @@ import subprocess
 from pathlib import Path
 
 UPSTREAM = "3912336fdfffbd5c99b59d92e997ea6ebd62216c"
+FEX_HOST = "be6bc2e9c60799e071dd2fafa6216e8d80ec619c"
 
 # These implementation units have no Android-specific hooks and must match
 # the 0.18.1 interfaces that consume them, not their 0.16.1 ancestors.
@@ -21,7 +22,6 @@ MATCH_0181 = (
     "src/core/libraries/libs.cpp",
     "src/core/libraries/kernel/file_system.cpp",
     "src/core/libraries/kernel/file_system.h",
-    "src/core/libraries/kernel/threads/semaphore.cpp",
     "src/core/libraries/pad/pad.cpp",
     "src/core/libraries/sysmodule/sysmodule_internal.cpp",
     "src/video_core/renderer_vulkan/vk_instance.cpp",
@@ -87,6 +87,29 @@ def apply(root: Path) -> dict:
         check=True)
     result["restoredMatchingImplementations"].extend(
         family + "/*" for family in modern_hle_families)
+
+    # The pinned FEX pthread.h has an int critical_count and no
+    # PthreadCancelInterrupt(). Modern 0.18 semaphore.cpp expects an atomic
+    # critical_count and that new interrupt API, so it cannot be linked to
+    # the native ARM64/Bionic kernel host. Retain the proven FEX semaphore
+    # implementation and adapt only its SlotVector calls to modern names.
+    sem_rel = "src/core/libraries/kernel/threads/semaphore.cpp"
+    sem = root / sem_rel
+    sem.write_bytes(subprocess.check_output(
+        ["git", "-C", str(root), "show", FEX_HOST + ":" + sem_rel]))
+    require_replace(sem, ".insert(std::move(", ".Insert(std::move(",
+                    "FEX semaphore new SlotVector Insert")
+    sem_text = sem.read_text()
+    replaced = sem_text.count("orbis_sems.is_allocated(")
+    if replaced < 4:
+        raise RuntimeError("FEX sem structure unexpected (is_allocated count)")
+    sem_text = sem_text.replace("orbis_sems.is_allocated(", "orbis_sems.IsAllocated(")
+    if sem_text.count("orbis_sems.erase(") != 1:
+        raise RuntimeError("FEX sem erase API unexpected")
+    sem_text = sem_text.replace("orbis_sems.erase(", "orbis_sems.Erase(")
+    sem.write_text(sem_text)
+    result["fexAdaptersKept"].append("FEX pthread semaphores with 0.18 SlotVector API")
+    result["portedInterfaces"].append("FEX semaphore SlotVector allocation API")
 
     # The 0.18 version removes FEX's crucial boot markers when restoring libs.
     # Reattach all checkpoints to the REAL 0.18 registration implementation.
