@@ -96,6 +96,15 @@ jobs:
           grep -Fq 'BIONIC_021_SAF_EBOOT_RESOLVED' modern-core/src/emulator.cpp
           echo 'BIONIC_021_SAF_IBackend_ALL_PATHS_INTEGRATED'
 
+      - name: Restore early FEX libc aliases and AvPlayer HLE before game import resolution
+        run: |
+          set -euo pipefail
+          python3 -m py_compile bionic/modern/port_android_fex_hle.py
+          python3 bionic/modern/port_android_fex_hle.py --source modern-core
+          grep -Fq BIONIC_021_FEX_EARLY_AVPLAYER_HLE modern-core/src/core/libraries/libs.cpp
+          grep -Fq BIONIC_021_FEX_LIBC_ALIASES modern-core/src/core/libraries/libs.cpp
+          echo BIONIC_021_FEX_BOOT_HLE_PATCH_APPLIED
+
       - name: Audit modern kernel timezone and rebase remaining POSIX signals
         run: |
           set -euo pipefail
@@ -309,11 +318,12 @@ jobs:
                   $1 ~ /threads\/pthread.cpp.o:$/ ||
                   $1 ~ /shadnet.pb.cc.o:$/ ||
                   $1 ~ /core\/file_sys\/fs.cpp.o:$/ ||
-                  $1 ~ /core\/file_sys\/saf_fs_backend.cpp.o:$/) {
+                  $1 ~ /core\/file_sys\/saf_fs_backend.cpp.o:$/ ||
+                  $1 ~ /core\/libraries\/libs.cpp.o:$/) {
                 sub(/:$/, "", $1); print $1
               }
             }')
-          for expected in android_window.cpp.o pthread.cpp.o shadnet.pb.cc.o fs.cpp.o saf_fs_backend.cpp.o; do
+          for expected in android_window.cpp.o pthread.cpp.o shadnet.pb.cc.o fs.cpp.o saf_fs_backend.cpp.o libs.cpp.o; do
             matched=0
             for target in "${object_targets[@]}"; do
               [[ "$target" == *"$expected" ]] && matched=1
