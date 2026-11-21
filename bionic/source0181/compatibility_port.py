@@ -288,6 +288,23 @@ void GameController::PollState() {
     # retain only the intended Android no-idle-present behavior if the marker
     # exists, rather than restoring the entire obsolete 0.16 video queue.
     driver = root / "src/core/libraries/videoout/driver.cpp"
+    prefix_include(driver, "#include <atomic>", "Android present guard")
+    require_replace(driver,
+        "                    if (!main_port.is_open) {\n"
+        "                        DrawBlankFrame();\n"
+        "                    } else if (ImGui::Core::MustKeepDrawing()) {\n",
+        "                    if (!main_port.is_open) {\n"
+        "#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n"
+        "                        // No GPU present before Android VideoOut opens.\n"
+        "                        static std::atomic<bool> once{false};\n"
+        "                        if (!once.exchange(true)) {\n"
+        '                            LOG_INFO(Lib_VideoOut, "BIONIC_PRESENT_IDLE_SKIP");\n'
+        "                        }\n"
+        "#else\n"
+        "                        DrawBlankFrame();\n"
+        "#endif\n"
+        "                    } else if (ImGui::Core::MustKeepDrawing()) {\n",
+        "0.18 Android pre-VideoOut present guard")
     driver_text = driver.read_text()
     result["modernVideooutUsesLiverpoolQueue"] = "EnqueueCommand(" not in driver_text
     if not result["modernVideooutUsesLiverpoolQueue"]:
