@@ -512,6 +512,77 @@ def apply(upstream: Path, overlay: Path) -> None:
         "#endif\n"
         "    // Load the module with the linker\n",
     )
+
+    # Fully installed PS4 content can omit its optional PlayGo chunk table.
+    # Without metadata, upstream leaves file_size=0, so scePlayGoOpen returns
+    # NOT_SUPPORT_PLAYGO immediately before The Order's null read. Expose
+    # one complete, local chunk 0 only for an absent file under FEX. Never
+    # mask a present-but-malformed PlayGo table.
+    playgo = upstream / "src/core/libraries/playgo/playgo.cpp"
+    replace(
+        playgo,
+        '    if (!playgo->Open(file_path)) {\n'
+        '        LOG_WARNING(Lib_PlayGo, "Could not open PlayGo file");\n'
+        '    }\n',
+        '    if (!playgo->Open(file_path)) {\n'
+        '#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n'
+        '        if (!std::filesystem::exists(file_path)) {\n'
+        '            // No PlayGo table means no partial-installation metadata.\n'
+        '            // Model the already extracted, fully installed chunk 0.\n'
+        '            playgo->GetPlaygoHeader().file_size = 1;\n'
+        '            playgo->GetPlaygoHeader().chunk_count = 1;\n'
+        '            playgo->chunks.push_back(PlaygoChunk{0, 0, 0, "installed"});\n'
+        '            LOG_WARNING(Lib_PlayGo,\n'
+        '                        "BIONIC_FEX_PLAYGO_FULLY_INSTALLED_FALLBACK: metadata missing, "\n'
+        '                        "single chunk 0 exposed as LocalFast");\n'
+        '        } else {\n'
+        '            LOG_WARNING(Lib_PlayGo, "Could not parse existing PlayGo file");\n'
+        '        }\n'
+        '#else\n'
+        '        LOG_WARNING(Lib_PlayGo, "Could not open PlayGo file");\n'
+        '#endif\n'
+        '    }\n',
+    )
+    replace(
+        playgo,
+        '    if (playgo->GetPlaygoHeader().file_size == 0) {\n'
+        '        return ORBIS_PLAYGO_ERROR_NOT_SUPPORT_PLAYGO;\n'
+        '    }\n\n'
+        '    playgo->handle = *outHandle = PlaygoHandle;\n',
+        '    if (playgo->GetPlaygoHeader().file_size == 0) {\n'
+        '        LOG_WARNING(Lib_PlayGo, "BIONIC_FEX_PLAYGO_OPEN_RESULT=NOT_SUPPORT_PLAYGO");\n'
+        '        return ORBIS_PLAYGO_ERROR_NOT_SUPPORT_PLAYGO;\n'
+        '    }\n\n'
+        '    playgo->handle = *outHandle = PlaygoHandle;\n'
+        '    LOG_INFO(Lib_PlayGo, "BIONIC_FEX_PLAYGO_OPEN_RESULT=OK handle={}", *outHandle);\n',
+    )
+    # The libkernel preload list includes libc.prx (index 4). On Android FEX
+    # the console's proprietary libc PRX is not part of the extracted game.
+    # Only acknowledge the *already registered* HLE module when the file is
+    # actually absent; never pretend unsupported CRT NIDs are implemented.
+    sysmodule = upstream / "src/core/libraries/sysmodule/sysmodule_internal.cpp"
+    replace(
+        sysmodule,
+        '    s32 start_result = 0;\n'
+        '    // Fios2 has opposite failure modes per title.',
+        '    s32 start_result = 0;\n'
+        '#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n'
+        '    if (index == 4) {\n'
+        '        const auto& game_libc = mnt->GetHostPath("/app0/sce_module/libc.prx");\n'
+        '        if (!std::filesystem::exists(game_libc)) {\n'
+        '            static constexpr s32 FexLibcHleHandle = 0x4004;\n'
+        '            mod.handle = FexLibcHleHandle;\n'
+        '            mod.is_loaded = 1;\n'
+        '            if (res_out != nullptr) *res_out = ORBIS_OK;\n'
+        '            LOG_WARNING(Lib_SysModule,\n'
+        '                        "BIONIC_FEX_LIBC_HLE_PRELOAD: libc.prx missing, "\n'
+        '                        "using registered libc HLE (unsupported CRT symbols remain explicit)");\n'
+        '            return ORBIS_OK;\n'
+        '        }\n'
+        '    }\n'
+        '#endif\n'
+        '    // Fios2 has opposite failure modes per title.',
+    )
     cmake = upstream / "CMakeLists.txt"
     replace(cmake, "add_executable(shadps4\n",
             "add_library(shadps4 SHARED\n")

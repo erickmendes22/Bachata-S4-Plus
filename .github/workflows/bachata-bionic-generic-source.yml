@@ -45,6 +45,9 @@ jobs:
           grep -Fq 'BIONIC_BOOT_STAGE=GUEST_LIBC_OBJECTS_END' generic-upstream/src/emulator.cpp
           grep -Fq 'RegisterFexLibcGuestObjects' generic-upstream/src/core/libraries/libc_internal/libc_internal.h
           grep -Fq 'android_libc_compat.cpp' generic-upstream/CMakeLists.txt
+          grep -Fq 'BIONIC_FEX_PLAYGO_FULLY_INSTALLED_FALLBACK' generic-upstream/src/core/libraries/playgo/playgo.cpp
+          grep -Fq 'BIONIC_FEX_LIBC_HLE_PRELOAD' generic-upstream/src/core/libraries/sysmodule/sysmodule_internal.cpp
+          grep -Fq 'BIONIC_FEX_PLAYGO_OPEN_RESULT=OK' generic-upstream/src/core/libraries/playgo/playgo.cpp
           echo 'Fast Bionic source preflight passed; full build is deliberately opt-in.'
 
   generic-shadps4-android:
