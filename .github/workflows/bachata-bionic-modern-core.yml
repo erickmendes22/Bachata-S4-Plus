@@ -78,6 +78,8 @@ jobs:
           python3 bionic/modern/port_android_wsi.py --source modern-core
           python3 bionic/modern/port_android_entry.py --source modern-core --overlay bionic/generic
           grep -Fq 'BIONIC_021_ANDROID_SURFACE_READY' modern-core/src/video_core/renderer_vulkan/vk_platform.cpp
+          grep -Fq '#if defined(__ANDROID__) || defined(ANDROID)' modern-core/src/video_core/renderer_vulkan/vk_platform.cpp
+          grep -Fq 'target_compile_definitions(shadps4 PRIVATE ANDROID=1)' modern-core/CMakeLists.txt
           grep -Fq 'Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run' bionic/generic/android_native_core.cpp
           grep -Fq 'OUTPUT_NAME "bachata_native_runtime"' modern-core/CMakeLists.txt
           grep -Fq 'BIONIC_021_RETURN_FROM_EMULATOR' modern-core/src/emulator.cpp
