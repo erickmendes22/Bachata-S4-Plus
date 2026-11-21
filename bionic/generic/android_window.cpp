@@ -3,6 +3,7 @@
 // This replaces src/sdl_window.cpp ONLY in the native Bionic core build.
 #include <android/native_window.h>
 #include <chrono>
+#include <filesystem>
 #include <stdexcept>
 #include <thread>
 #include <vector>

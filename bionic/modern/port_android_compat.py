@@ -86,6 +86,20 @@ def integrate(source: Path) -> None:
         print("BIONIC_021_NATIVE_PTHREAD_HANDLE_PORTED")
     else:
         print("BIONIC_021_NATIVE_PTHREAD_HANDLE_OLD_ANCHOR_REMOVED")
+    # In Android/Bionic pthread_t is integer-valued. The four remaining
+    # upstream pthread reinterpret_cast uses are invalid on AArch64 clang.
+    # Apply only to this Android build's copy of 0.21.1, never glibc.
+    pthread_source = source / "src/core/libraries/kernel/threads/pthread.cpp"
+    native_source = pthread_source.read_text()
+    bad = "reinterpret_cast<pthread_t>("
+    if native_source.count(bad) != 4:
+        raise RuntimeError(
+            f"0.21.1 pthread ABI changed: expected 4 casts, "
+            f"found {native_source.count(bad)}")
+    pthread_source.write_text(native_source.replace(
+        bad, "static_cast<pthread_t>("))
+    print("BIONIC_021_NATIVE_PTHREAD_INTEGER_ABI_PORTED")
+
     print("BIONIC_021_KERNEL_POSIX_AUDIT_COMPLETED")
 
 
