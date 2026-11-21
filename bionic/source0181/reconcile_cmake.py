@@ -89,10 +89,21 @@ def reconcile(root: Path) -> dict:
             raise RuntimeError("Cross-compiled ARM64 protoc still in host generator")
         block=(
             'if(ANDROID)\n'
-            '    find_program(BACHATA_HOST_PROTOC_EXECUTABLE protoc NO_CMAKE_FIND_ROOT_PATH)\n'
-            '    if(NOT BACHATA_HOST_PROTOC_EXECUTABLE)\n'
-            '        message(FATAL_ERROR "Host protoc required for 0.18.1 shadNet")\n'
+            '    # Do not trust a restored CMakeCache.txt: older builds cached\n'
+            '    # /usr/bin/protoc even after host protoc 36 was installed.\n'
+            '    find_program(BACHATA_HOST_PROTOC_EXECUTABLE NAMES protoc NO_CMAKE_FIND_ROOT_PATH)\n'
+            '    if(NOT BACHATA_HOST_PROTOC_EXECUTABLE OR\n'
+            '       NOT EXISTS "${BACHATA_HOST_PROTOC_EXECUTABLE}")\n'
+            '        message(FATAL_ERROR "Missing host protoc for 0.18.1 shadNet: ${BACHATA_HOST_PROTOC_EXECUTABLE}")\n'
             '    endif()\n'
+            '    execute_process(COMMAND "${BACHATA_HOST_PROTOC_EXECUTABLE}" --version\n'
+            '        RESULT_VARIABLE BACHATA_PROTOC_RESULT\n'
+            '        OUTPUT_VARIABLE BACHATA_PROTOC_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE)\n'
+            '    if(NOT BACHATA_PROTOC_RESULT EQUAL 0 OR\n'
+            '       NOT BACHATA_PROTOC_VERSION STREQUAL "libprotoc 36.0")\n'
+            '        message(FATAL_ERROR "shadNet requires host protoc 36.0, got: ${BACHATA_HOST_PROTOC_EXECUTABLE} (${BACHATA_PROTOC_VERSION})")\n'
+            '    endif()\n'
+            '    message(STATUS "BACHATA_HOST_PROTOC_VERIFIED=${BACHATA_HOST_PROTOC_EXECUTABLE} (${BACHATA_PROTOC_VERSION})")\n'
             'endif()\n'
         )+block
         # This entire new component did not exist in the FEX 0.16.1 build.
