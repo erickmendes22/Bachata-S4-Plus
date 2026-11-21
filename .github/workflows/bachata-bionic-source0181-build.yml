@@ -43,7 +43,13 @@ jobs:
       - name: Validate overlays and native source patch application
         run: |
           set -euo pipefail
-          python3 -m py_compile bionic/generic/*.py
+          python3 -m py_compile bionic/generic/*.py bionic/source0181/*.py
+          bash -n bionic/generic/build-generic.sh
+          # Fail the cheap preflight if the host protobuf generator can again
+          # become a cached /usr/bin/protoc after restoring CMakeCache.txt.
+          grep -Fq 'BACHATA_HOST_PROTOC_EXECUTABLE:FILEPATH' bionic/generic/build-generic.sh
+          grep -Fq 'BIONIC_SHADNET_HOST_PROTOC_36_GENERATION_PASS' bionic/generic/build-generic.sh
+          grep -Fq 'BACHATA_HOST_PROTOC_VERIFIED' bionic/source0181/reconcile_cmake.py
           python3 bionic/generic/audit_fex_libc.py --upstream generic-upstream
           test -s out/source0181/bionic-0181-parity.json
           python3 - <<'PY'
