@@ -51,6 +51,8 @@ def audit(root: Path) -> None:
         "src/core/libraries/libs.cpp": ('"core/libraries/np/np_commerce.h"',),
         "src/core/libraries/kernel/file_system.cpp": ("deci_tty6_device.h",),
         "src/core/memory.cpp": ("file->f.",),
+        "src/core/libraries/kernel/threads/semaphore.cpp": (
+            "PthreadCancelInterrupt(", "critical_count.fetch_add("),
         "src/core/libraries/videoout/driver.cpp": ("liverpool->EnqueueCommand(",),
         "src/core/libraries/videoout/video_out.cpp": ("FlipLabelTracker::kInvalidGeneration",),
         "src/core/libraries/videoout/driver.h": ("lock_generation",),
