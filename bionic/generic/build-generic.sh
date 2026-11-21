@@ -84,7 +84,7 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == 1 ]]; then
     echo "::error::CMake still has a stale host protoc FILEPATH" >&2; exit 3;
   }
   ninja -C "$BUILD" -t commands shadnet_proto_gen/shadnet.pb.cc |
-    grep -Fq "$HOST_PROTOC" || {
+    grep -F "$HOST_PROTOC" >/dev/null || {
       echo "::error::Generated shadNet rule is not using protoc 36.0" >&2; exit 3;
     }
   ninja -C "$BUILD" shadnet_proto_gen/shadnet.pb.cc
