@@ -99,7 +99,7 @@ void Emulator::Restart(""")
         'target_include_directories(shadps4 PRIVATE "' + str(overlay) + '")\n'
         "target_compile_definitions(shadps4 PRIVATE ANDROID=1)\n"
         "target_link_libraries(shadps4 PRIVATE android log)\n"
-        'set_target_properties(shadps4 PROPERTIES OUTPUT_NAME "bachata_native_runtime")\n'
+        'set_target_properties(shadps4 PROPERTIES OUTPUT_NAME "bachata_bionic_core")\n'
     )
     data = data.replace(anchor, additions + anchor, 1)
 
@@ -116,7 +116,7 @@ void Emulator::Restart(""")
     data = data.replace(old_link, new_link, 1)
     cmake.write_text(data)
     assert "BIONIC_021_ANDROID_NATIVE_CORE" in data
-    assert 'OUTPUT_NAME "bachata_native_runtime"' in data
+    assert 'OUTPUT_NAME "bachata_bionic_core"' in data
     assert "src/sdl_window.cpp" not in data
     print("BIONIC_021_JNI_FULL_CORE_SOURCE_INTEGRATED")
 
