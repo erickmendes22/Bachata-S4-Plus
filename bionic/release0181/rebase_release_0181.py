@@ -111,8 +111,6 @@ def build(base: Path, release: Path, out: Path, report_out: Path) -> None:
         name_set = set(names)
         if len(names) != len(name_set):
             raise RuntimeError("Base APK contains duplicate ZIP entries")
-        missing = set(MUST_PRESERVE) | set(overrides) | {NATIVE_MANIFEST} - name_set
-        # Union subtraction must apply to the entire required set.
         missing = (set(MUST_PRESERVE) | set(overrides) | {NATIVE_MANIFEST}) - name_set
         if missing:
             raise RuntimeError(f"Original 0.2.7 frontend missing required files: {sorted(missing)}")
