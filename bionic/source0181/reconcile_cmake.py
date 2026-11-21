@@ -79,6 +79,22 @@ def reconcile(root: Path) -> dict:
         begin=upstream.index("# shadNet protobuf generation")
         finish=upstream.index("if (APPLE)",begin)
         block=upstream[begin:finish]
+        # protoc is a BUILD-HOST executable. In the Android cross-toolchain
+        # protobuf::protoc would be an AArch64 binary and cannot run on Ubuntu.
+        block=block.replace(
+            "    COMMAND protobuf::protoc\n",
+            "    COMMAND \\"\\$"+"{BACHATA_HOST_PROTOC_EXECUTABLE}\\"\n",
+        )
+        if "protobuf::protoc" in block:
+            raise RuntimeError("Cross-compiled ARM64 protoc still in host generator")
+        block=(
+            'if(ANDROID)\n'
+            '    find_program(BACHATA_HOST_PROTOC_EXECUTABLE protoc NO_CMAKE_FIND_ROOT_PATH)\n'
+            '    if(NOT BACHATA_HOST_PROTOC_EXECUTABLE)\n'
+            '        message(FATAL_ERROR "Host protoc required for 0.18.1 shadNet")\n'
+            '    endif()\n'
+            'endif()\n'
+        )+block
         # This entire new component did not exist in the FEX 0.16.1 build.
         # All its real 0.18.1 source files must be restored, not stubbed.
         for ref in set(SOURCE.findall(block)):
@@ -99,6 +115,25 @@ def reconcile(root: Path) -> dict:
         changes.append({"group":"SHADNET","upstream0181Added":["protobuf generator","client.cpp","server_probe.cpp"]})
     if missing_required:
         raise RuntimeError("Missing required 0.18.1 sources: "+json.dumps(missing_required[:24]))
+    # Restore the 0.18.1 host networking and zarchive static build targets.
+    # The older FEX externals CMake file never declared those dependencies,
+    # even though the upstream shader and filesystem code now require them.
+    ext_file=root/"externals"/"CMakeLists.txt"
+    ext_current=ext_file.read_text()
+    ext_new=subprocess.check_output(
+        ["git","-C",str(root),"show",UPSTREAM_0181+":externals/CMakeLists.txt"],
+        text=True)
+    if "add_subdirectory(protobuf" not in ext_current:
+        section=ext_new[ext_new.index("# abseil (for protobuf)"):]
+        ext_current=ext_current.rstrip()+"\n\n"+section
+        changes.append({"group":"PROTOBUF_ZARCHIVE","externalUpstream0181":"added both libraries"})
+    elif "add_library(ZArchive::zarchive" not in ext_current:
+        section=ext_new[ext_new.index("# ZArchive (.zar archive support)"):]
+        ext_current=ext_current.rstrip()+"\n\n"+section
+        changes.append({"group":"ZARCHIVE","externalUpstream0181":"added zstd + zarchive"})
+    ext_file.write_text(ext_current.rstrip()+"\n")
+    if "add_subdirectory(protobuf" not in ext_current or "add_library(ZArchive::zarchive" not in ext_current:
+        raise RuntimeError("Full 0.18.1 external zarchive and protobuf source targets missing")
     # Removing obsolete 0.16.1 entries may leave whitespace-only lines.
     # Normalize trailing spaces before strict git diff --check preflight.
     current="\n".join(line.rstrip() for line in current.split("\n"))
