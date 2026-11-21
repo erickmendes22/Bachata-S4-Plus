@@ -1,0 +1,79 @@
+name: Inspect full shadPS4 0.21.1 SAF boot and filesystem paths
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/bionic-shadps4-0211-20261121
+    paths:
+      - '.github/workflows/bachata-0211-saf-inspect.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rehydrate exact deployed core 0.21.1 source
+        run: |
+          set -euo pipefail
+          git init -q modern-core
+          git -C modern-core remote add origin https://github.com/Nyces/shadps4-arm64.git
+          git -C modern-core fetch -q --no-tags --depth 1 origin 3d4ff9a9b112cdbec7458b85c76c14db1047f161 ||
+            git -C modern-core fetch -q --no-tags origin '+refs/heads/*:refs/remotes/origin/*'
+          git -C modern-core checkout -q --detach 3d4ff9a9b112cdbec7458b85c76c14db1047f161
+          base=https://raw.githubusercontent.com/zgj3880888/shadps4-arm64-021/0e713b0d6a7e92ce50c7b011e804b41b235f39bd
+          curl -fLsS --retry 3 "$base/patches/0001-upstream-021-arm64-port.patch" -o /tmp/0211.patch
+          curl -fLsS --retry 3 "$base/config/submodule-shas.txt" -o /tmp/0211-modules.txt
+          exclusions=(--exclude=.gitmodules)
+          while read -r name sha; do
+            test -z "$name" || exclusions+=("--exclude=$name")
+          done </tmp/0211-modules.txt
+          git -C modern-core apply --binary "${exclusions[@]}" /tmp/0211.patch
+          echo 'SHADPS4_0211_FULL_SOURCE_READY'
+
+      - name: Print exact native SAF mount, VFS and file-open control flow
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python3 - <<'PY' | tee out/0211-saf-source-inspection.txt
+          from pathlib import Path
+          import re
+          root=Path("modern-core/src")
+          paths=[
+              "main.cpp", "emulator.cpp","core/file_sys/fs.cpp","core/file_sys/fs.h",
+              "common/io_file.cpp","common/io_file.h",
+          ]
+          rx=re.compile(r'bachata.?saf|MountSaf|SafFsBackend|SafBrokerClient|SetFdOpenHook|\bOpenHook\b|overrideRoot|override.root|/app0|ebootPath|GetHostPath|IsElfFile|No splash image|GetDirectory|RegisterMount|Mount\(|GetFileSystem|BachataCoreMain|storageRoot',re.I)
+          for p in sorted(root.rglob("*.cpp"))+sorted(root.rglob("*.h")):
+              s=p.read_text(errors="replace")
+              if "SafFsBackend" in s or "SafBrokerClient" in s or "SetFdOpenHook" in s:
+                  relative=p.relative_to(root).as_posix()
+                  if relative not in paths: paths.append(relative)
+          for rel in paths:
+              p=root/rel
+              if not p.is_file(): continue
+              lines=p.read_text(errors="replace").splitlines()
+              marked=set()
+              for i,l in enumerate(lines):
+                  if rx.search(l):
+                      for j in range(max(0,i-8),min(len(lines),i+21)):marked.add(j)
+              if not marked: continue
+              print(f"\n########## {rel} {len(lines)} lines ##########")
+              prev=-2
+              for j in sorted(marked):
+                  if j>prev+1: print("  ...")
+                  print(f"{j+1:5d} {lines[j]}")
+                  prev=j
+          PY
+          echo 'BIONIC_021_SAF_SOURCE_REVIEW_PRINTED'
+
+      - name: Save exact port source SAF report
+        uses: actions/upload-artifact@v4
+        with:
+          name: shadps4-0211-saf-source-review
+          path: out/0211-saf-source-inspection.txt
+          retention-days: 7
