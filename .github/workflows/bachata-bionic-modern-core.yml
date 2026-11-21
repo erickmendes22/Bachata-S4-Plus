@@ -198,10 +198,28 @@ jobs:
             out/bionic-modern/fex
             out/bionic-modern/fex-android
             out/bionic-modern/build
+            out/bionic-modern/host-protoc-build
             .ccache
           key: bachata-bionic-0211-r30-${{ github.sha }}
           restore-keys: |
             bachata-bionic-0211-r30-
+
+      - name: Compile protoc from SAME pinned protobuf source as the Android runtime
+        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-modern]')
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/out/bionic-modern"
+          cmake -S bionic/modern/host-protoc -B "$root/host-protoc-build" -G Ninja \
+            -DSHADPS4_SOURCE_ROOT="$GITHUB_WORKSPACE/modern-core" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build "$root/host-protoc-build" --target protoc -j3 \
+            2>&1 | tee "$root/host-protoc.log"
+          test -x "$root/host-protoc-build/protobuf/protoc"
+          "$root/host-protoc-build/protobuf/protoc" --version
+          grep -Fq '7.36.0' modern-core/externals/protobuf/CMakeLists.txt
+          echo "BIONIC_021_PINNED_PROTOC_HOST_BUILT"
 
       - name: Compile Android FFmpeg and native FEXCore
         if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-modern]')
@@ -250,21 +268,11 @@ jobs:
           test -s "$host_font"
           c++ -std=c++17 -O2 "$host_font" -o "$root/imgui-font-host"
           test -x "$root/imgui-font-host"
-          # Protobuf submodule 5917ee2 is pre-v36 (June 2026).
-          # Its TcParser API lacks MpUnknownFields emitted by protoc 36.0.
-          # Use v35.1 generator compatible with this pinned runtime API.
-          # The ARM64 protoc target cannot execute on an Ubuntu runner.
-          protoc_archive="$root/protoc-35.1-linux-x86_64.zip"
-          curl -fL --retry 3 --retry-delay 3 \
-            'https://github.com/protocolbuffers/protobuf/releases/download/v35.1/protoc-35.1-linux-x86_64.zip' \
-            -o "$protoc_archive"
-          printf '%s  %s\n' \
-            6930ebf62bd4ea607b98fff052596c6ee564b9835b4ce172c75a3f53ae9d91b7 \
-            "$protoc_archive" | sha256sum -c -
-          mkdir -p "$root/host-protoc"
-          unzip -oq "$protoc_archive" -d "$root/host-protoc"
-          test -x "$root/host-protoc/bin/protoc"
-          "$root/host-protoc/bin/protoc" --version | grep -F 'libprotoc 35.1'
+          test -x "$root/host-protoc-build/protobuf/protoc"
+          # Discard cached gencode made by mismatched protoc 35.1/36.0.
+          # Ninja then regenerates headers and C++ with the pinned host tool.
+          rm -f "$root/build/shadnet_proto_gen/shadnet.pb.h" \
+                "$root/build/shadnet_proto_gen/shadnet.pb.cc"
           cmake -S modern-core -B "$root/build" -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=33 \
@@ -275,7 +283,7 @@ jobs:
             -DFEXCORE_GUEST_CPU_SOURCE_DIR="$root/fex" \
             -DFEXCORE_GUEST_CPU_BUILD_DIR="$root/fex-android" \
             -DIMGUI_FONT_EMBED_EXECUTABLE="$root/imgui-font-host" \
-            -DWITH_PROTOC="$root/host-protoc/bin/protoc" \
+            -DWITH_PROTOC="$root/host-protoc-build/protobuf/protoc" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DBACHATA_ANDROID_FFMPEG_PREFIX="$root/deps/prefix" \
@@ -312,6 +320,7 @@ jobs:
             out/bionic-modern/configure.log
             out/bionic-modern/compiler.log
             out/bionic-modern/fex-build.log
+            out/bionic-modern/host-protoc.log
             out/bionic-modern/deps/build/*.log
           if-no-files-found: ignore
           retention-days: 7
@@ -325,6 +334,7 @@ jobs:
             out/bionic-modern/fex
             out/bionic-modern/fex-android
             out/bionic-modern/build
+            out/bionic-modern/host-protoc-build
             .ccache
           key: bachata-bionic-0211-r30-${{ github.sha }}
 
