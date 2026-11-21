@@ -170,11 +170,29 @@ def main() -> None:
     still = git(root, "diff", "--name-only", "--diff-filter=U").splitlines()
     if still:
         raise RuntimeError("Unresolved merge conflicts: "+str(still[:20]))
-    # Upstream 0.18.1 emits x86_64 Xbyak stubs (mov rdi/rax); on Bionic
-    # AArch64 those registers/instructions do not exist. Preserve the
-    # already working native-FEX ARM64 stub table from the host fork.
-    git(root, "restore", "--source", WORKING, "--staged", "--worktree",
-        "--", "src/core/aerolib/stubs.cpp")
+    # FEX platform implementation and public headers must agree on exact
+    # 0.16.1 ABI. The newer shader/HLE code can then be adapted to them.
+    # Previously these headers silently stayed at 0.18.1 while .cpp and
+    # linker were retained from 0.16.1, causing unmatched Unmap(), MMIO
+    # arguments and SymbolRecord access. Preserve each complete host pair.
+    FEX_HOST_COHERENT_FILES = (
+        "src/core/aerolib/stubs.cpp",   # x86 Xbyak stubs cannot build on AArch64
+        "src/core/address_space.h",    # matches FEX address_space.cpp
+        "src/core/memory.h",           # matches FEX guest memory.cpp
+        "src/core/module.cpp",         # matches retained FEX linker/loader
+        "src/core/module.h",
+        "src/common/assert.cpp",       # matches retained ARM64 SignalDispatch
+        "src/common/signal_context.cpp",
+        "src/common/signal_context.h",
+    )
+    for rel in FEX_HOST_COHERENT_FILES:
+        git(root, "restore", "--source", WORKING, "--staged", "--worktree",
+            "--", rel)
+        checked = subprocess.run(
+            ["git", "-C", str(root), "show", WORKING+":"+rel],
+            check=True, capture_output=True).stdout
+        if (root/rel).read_bytes() != checked:
+            raise RuntimeError("FEX host source mismatched after restore: "+rel)
     # Complete source-version reconciliation is necessary even where Git
     # reports *no conflict*. A source/header pair must come from one engine.
     preserved = {}
@@ -261,6 +279,7 @@ def main() -> None:
         "newShaderRecompilerExactlyUpstream0181":True,
         "coherent0181FilesVerified":len(source_parity),
         "hostVulkanAdaptersPreserved":list(preserved),
+        "fexHostPairsVerified":list(FEX_HOST_COHERENT_FILES),
         "note":"Source integration prepared; actual NDK link and Android boot still required",
     }
     (output/"rebase-report.json").write_text(json.dumps(report,indent=2)+"\n")
