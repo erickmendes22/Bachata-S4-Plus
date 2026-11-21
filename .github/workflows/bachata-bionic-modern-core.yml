@@ -1,0 +1,86 @@
+name: Bachata Bionic shadPS4 0.21.1 migration (source-only)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/bionic-shadps4-0211-20261121
+    paths:
+      - 'bionic/modern/**'
+      - '.github/workflows/bachata-bionic-modern-core.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bachata-bionic-modern-source-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MODERN_PORT_REPO: zgj3880888/shadps4-arm64-021
+  MODERN_PORT_REF: 0e713b0d6a7e92ce50c7b011e804b41b235f39bd
+  MODERN_ARM64_BASE: https://github.com/Nyces/shadps4-arm64.git
+  MODERN_BASE_REF: 3d4ff9a9b112cdbec7458b85c76c14db1047f161
+
+jobs:
+  source-rebase:
+    name: Verify shadPS4 0.21.1 + FEX/SAF source and audit Android compatibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout current Bachata Bionic implementation
+        uses: actions/checkout@v4
+
+      - name: Fetch pinned ARM64 port base (no submodules)
+        run: |
+          set -euo pipefail
+          git init -q modern-core
+          git -C modern-core remote add origin "$MODERN_ARM64_BASE"
+          git -C modern-core fetch --no-tags --depth 1 origin "$MODERN_BASE_REF" ||
+            git -C modern-core fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*'
+          git -C modern-core checkout --detach "$MODERN_BASE_REF"
+
+      - name: Apply tested upstream 0.21.1 ARM64 port without pulling 48 submodules
+        run: |
+          set -euo pipefail
+          base="https://raw.githubusercontent.com/${MODERN_PORT_REPO}/${MODERN_PORT_REF}"
+          curl --fail --location --retry 3 --silent --show-error
+            "${base}/patches/0001-upstream-021-arm64-port.patch" -o /tmp/shadps4-0211-arm64.patch
+          curl --fail --location --retry 3 --silent --show-error
+            "${base}/config/submodule-shas.txt" -o /tmp/shadps4-0211-modules.txt
+          test "$(wc -c </tmp/shadps4-0211-arm64.patch)" -gt 1000000
+          exclusions=(--exclude=.gitmodules)
+          while read -r path rev; do
+            [[ -n "$path" ]] || continue
+            exclusions+=("--exclude=$path")
+          done < /tmp/shadps4-0211-modules.txt
+          git -C modern-core apply --check --binary "${exclusions[@]}" /tmp/shadps4-0211-arm64.patch
+          git -C modern-core apply --binary "${exclusions[@]}" /tmp/shadps4-0211-arm64.patch
+          git -C modern-core diff --check
+          printf 'SHADPS4_0211_REBASE_APPLIES_CLEANLY\n'
+
+      - name: Audit actual core 0.21.1 source versus Android/Bionic integration
+        run: |
+          set -euo pipefail
+          python3 -m py_compile bionic/generic/port_generic.py bionic/modern/audit_modern_core.py
+          python3 bionic/modern/audit_modern_core.py \
+            --source modern-core \
+            --legacy-overlay bionic/generic/port_generic.py \
+            --json-out /tmp/modern-core-audit.json
+          cat /tmp/modern-core-audit.json | python3 -m json.tool | head -180
+          printf '\n### Native ARM64 core migration audit\n' >> "$GITHUB_STEP_SUMMARY"
+          python3 bionic/modern/audit_modern_core.py \
+            --source modern-core \
+            --legacy-overlay bionic/generic/port_generic.py \
+            --markdown >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload compact source compatibility report (no APK)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bionic-0211-source-migration-report
+          path: /tmp/modern-core-audit.json
+          if-no-files-found: ignore
+
+# NOTE: No full APK or kernel build. No old APK is repackaged. The source audit
+# must establish all changed interfaces before porting and compiling 0.21.1.
