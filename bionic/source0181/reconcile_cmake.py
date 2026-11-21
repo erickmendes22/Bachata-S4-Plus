@@ -25,7 +25,23 @@ def reconcile(root: Path) -> dict:
     upstream_groups = cmake_groups(upstream)
     changes=[]
     missing_required=[]
+    restored_from_upstream=[]
     replacements=[]
+    def ensure_new_upstream_file(ref: str) -> bool:
+        target=root/ref
+        if target.is_file():
+            return True
+        # The 0.16.1 port deliberately chooses 'ours' for some directories
+        # during a Git merge. Preserve host overrides, but restore NEW
+        # upstream 0.18.1 source files that never existed in that host.
+        p=subprocess.run(["git","-C",str(root),"show",UPSTREAM_0181+":"+ref],
+                         capture_output=True)
+        if p.returncode:
+            return False
+        target.parent.mkdir(parents=True,exist_ok=True)
+        target.write_bytes(p.stdout)
+        restored_from_upstream.append(ref)
+        return True
     for group,m in old_groups.items():
         block=m.group(0)
         upstream_group=upstream_groups.get(group)
@@ -42,10 +58,10 @@ def reconcile(root: Path) -> dict:
             corrected=corrected.replace(ref,"",1)
             removed.append(ref)
         for ref in new_refs:
-            if ref in old_refs:continue
-            if not (root/ref).is_file():
-                missing_required.append({"group":group,"file":ref,"reason":"new upstream source missing in merge"})
+            if not ensure_new_upstream_file(ref):
+                missing_required.append({"group":group,"file":ref,"reason":"upstream source absent from Git revision"})
                 continue
+            if ref in old_refs:continue
             if ref not in corrected:added.append(ref)
         if added:
             at=corrected.rfind("\n)")
@@ -89,6 +105,7 @@ def reconcile(root: Path) -> dict:
       "upstreamGroups":len(upstream_groups),
       "changedGroups":len(changes),
       "adjustments":changes,
+      "missingUpstreamSourcesRestored":restored_from_upstream,
       "sourceVersion":"0.18.1",
       "FexHostKept":(root/"src/core/fex/fex_guest_engine.cpp").is_file(),
       "shadNetCompiled":"${SHADNET_PROTO_OUT}/shadnet.pb.cc" in current,
