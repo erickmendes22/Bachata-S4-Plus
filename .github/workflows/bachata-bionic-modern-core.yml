@@ -63,6 +63,14 @@ jobs:
           echo "PORT_WHITESPACE_DIAGNOSTIC_LINES=$(wc -l </tmp/modern-port-whitespace.txt)"
           printf 'SHADPS4_0211_REBASE_APPLIES_CLEANLY\n'
 
+      - name: Integrate original AdrenoTools Vulkan selection on modern source
+        run: |
+          set -euo pipefail
+          python3 -m py_compile bionic/modern/port_android_vulkan.py
+          python3 bionic/modern/port_android_vulkan.py --source modern-core
+          grep -Fq 'BIONIC_021_VULKAN_CUSTOM_READY' modern-core/src/video_core/renderer_vulkan/vk_platform.cpp
+          grep -Fq 'bachata_open_custom_vulkan' modern-core/src/video_core/renderer_vulkan/vk_platform.cpp
+
       - name: Audit actual core 0.21.1 source versus Android/Bionic integration
         run: |
           set -euo pipefail
