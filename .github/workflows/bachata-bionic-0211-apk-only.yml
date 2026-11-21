@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BACHATA_MODERN_SOURCE_SHA: 1b3dd151e2e5127e882b7a5c740ea8a2bb7af7cf
+  BACHATA_MODERN_SOURCE_SHA: 714c41df03ecafb538143ca0aa41f2059395c333
 
 jobs:
   apk:
@@ -51,7 +51,7 @@ jobs:
         with:
           name: bachata-shadps4-0211-real-bionic-core
           repository: erickmendes22/Bachata-S4-Plus
-          run-id: 44897897890
+          run-id: 44904758193
           path: out/bionic-modern
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -65,7 +65,7 @@ jobs:
           readelf -h "$core" | grep -Fq 'AArch64'
           readelf -d "$core" | grep -Fq 'Shared library: [libc.so]'
           ! readelf -d "$core" | grep -Eq 'libc.so.6|ld-linux-aarch64'
-          for marker in BIONIC_MANAGED_USER_PATH_READY BIONIC_021_ANDROID_SURFACE_READY BIONIC_021_VULKAN_CUSTOM_READY; do
+          for marker in BIONIC_MANAGED_USER_PATH_READY BIONIC_021_ANDROID_SURFACE_READY BIONIC_021_VULKAN_CUSTOM_READY BIONIC_021_SAF_VFS_MOUNT_READY BIONIC_021_SAF_EBOOT_RESOLVED; do
             grep -aFq "$marker" "$core" || { echo "::error::Core missing $marker"; exit 3; }
           done
           for component in avformat avcodec avutil avfilter swresample swscale; do
@@ -78,7 +78,7 @@ jobs:
           if ! grep -Fq Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run "$root/core-jni-exports.txt"; then
             echo '::error::Real 0.21.1 core does not export original native run contract'; exit 3
           fi
-          echo BIONIC_021_EXISTING_ARTIFACT_AUDITED
+          echo BIONIC_021_SAF_FEX_FIX_CORE_AUDITED_RUN_44904758193
 
       - name: Build, inject and P36-sign APK without rebuilding the native core
         env:
