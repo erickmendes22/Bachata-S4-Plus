@@ -66,6 +66,10 @@ jobs:
           c++ -std=c++20 -Wall -Wextra -Werror -fsyntax-only -I bionic/generic \
             bionic/generic/android_saf_transport.cpp bionic/generic/android_saf_bridge.cpp \
             bionic/generic/android_vk_icd.cpp
+          c++ -std=c++20 -O0 -Wall -Wextra -Werror \
+            bionic/generic/android_vk_icd.cpp bionic/generic/android_vk_icd_test.cpp \
+            -I bionic/generic -o /tmp/bachata-icd-test
+          /tmp/bachata-icd-test
           echo 'Fast Bionic source preflight passed; full build is deliberately opt-in.'
 
   generic-shadps4-android:
