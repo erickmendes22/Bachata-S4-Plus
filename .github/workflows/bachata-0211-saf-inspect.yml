@@ -96,6 +96,23 @@ jobs:
           sed -n '607,770p' modern-core/src/core/file_sys/fs.cpp
           echo BIONIC_021_HOST_FS_FOR_SAF_AUDITED
 
+      - name: Inspect modern HLE registration and FEX resolver against boot stall
+        run: |
+          set -euo pipefail
+          echo '#### EXACT PATCHED 0.21.1 FEX HLE linker resolution'
+          sed -n '745,915p' modern-core/src/core/linker.cpp
+          echo '#### EXACT PATCHED SYMBOL RESOLVER'
+          sed -n '1,130p' modern-core/src/core/loader/symbols_resolver.cpp
+          echo '#### EXACT PATCHED 0.21.1 HLE INITIALIZATION'
+          sed -n '85,165p' modern-core/src/core/libraries/libs.cpp
+          echo '#### EXACT PATCHED 0.21.1 AVPLAYER HLE REGISTRATION'
+          sed -n '248,300p' modern-core/src/core/libraries/avplayer/avplayer.cpp
+          echo '#### EXACT PATCHED 0.21.1 LIBC RUNTIME AND FEX REGISTER'
+          sed -n '14,57p' modern-core/src/core/libraries/libc_internal/libc_internal.cpp
+          echo '#### EXACT PATCHED SYSMODULE LOADER FOR DISC MAP'
+          sed -n '122,324p' modern-core/src/core/libraries/sysmodule/sysmodule_internal.cpp
+          echo BIONIC_021_HLE_RESOLVER_SOURCE_INSPECTED
+
       - name: Save exact port source SAF report
         uses: actions/upload-artifact@v4
         with:
