@@ -258,7 +258,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential clang lld llvm git cmake ninja-build python3-venv \
-            bison flex pkg-config curl unzip zip glslang-tools binutils ccache
+            bison flex pkg-config curl unzip zip glslang-tools binutils ccache protobuf-compiler
           bash -n bionic/build-core.sh
           bash -n bionic/generic/build-generic.sh
 
