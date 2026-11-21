@@ -44,6 +44,25 @@ def integrate(root: Path) -> None:
     if "Libraries::LibcInternal::ForceRegisterLib" in source:
         raise RuntimeError("Upstream has its own FEX aliases; review for duplicate")
     path.write_text(source.replace(ANCHOR, REPLACEMENT, 1))
+
+    # The pinned 0.21.1 ARM64 patch kept ForceRegisterLib()'s definition
+    # in libc_internal.cpp but no longer exposes its declaration in the
+    # public header. The native Android C++ compiler catches this only
+    # when compiling libs.cpp (1,731/1,734 build objects).
+    header = root / "src/core/libraries/libc_internal/libc_internal.h"
+    header_source = header.read_text()
+    declaration = "void ForceRegisterLib(Core::Loader::SymbolsResolver* sym);"
+    if declaration not in header_source:
+        old_decl = "void RegisterLib(Core::Loader::SymbolsResolver* sym);"
+        if header_source.count(old_decl) != 1:
+            raise RuntimeError("0.21.1 libc header ABI changed: RegisterLib declaration missing")
+        header.write_text(header_source.replace(
+            old_decl, old_decl + "\n" + declaration, 1
+        ))
+    implementation = (root / "src/core/libraries/libc_internal/libc_internal.cpp").read_text()
+    if "void ForceRegisterLib(Core::Loader::SymbolsResolver* sym)" not in implementation:
+        raise RuntimeError("0.21.1 no longer defines ForceRegisterLib: fix must be ported, not stubbed")
+    print("BIONIC_021_FEX_LIBC_FORCE_REGISTER_DECLARATION_VALIDATED")
     print("BIONIC_021_FEX_EARLY_HLE_REGISTRATION_READY")
 
 if __name__ == "__main__":
