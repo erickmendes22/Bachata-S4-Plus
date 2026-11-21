@@ -233,6 +233,9 @@ jobs:
               added.append(sec)
           with old.open("w") as out:
               left.write(out)
+          # configparser writes an extra empty line at EOF; diff --check
+          # rejects it even though the actual gitlinks are valid.
+          old.write_text(old.read_text().rstrip() + "\n")
           print("REGISTERED_0181_SUBMODULES",added)
           assert any("externals/imgui" in sec for sec in left.sections())
           PY
