@@ -717,6 +717,33 @@ def apply(upstream: Path, overlay: Path) -> None:
         '#endif\n',
     )
 
+    signals = upstream / "src/core/signals.cpp"
+    replace(
+        signals,
+        '#include <csignal>\n',
+        '#include <csignal>\n'
+        '#if defined(__ANDROID__) && defined(__aarch64__)\n'
+        '#include <dlfcn.h>\n'
+        '#endif\n',
+    )
+    replace(
+        signals,
+        '                LOG_CRITICAL(Debug, "BIONIC_HOST_FAULT signal={} pc={:#x} lr={:#x} "\n',
+        '                Dl_info host_module{};\n'
+        '                if (dladdr(reinterpret_cast<void*>(ctx->uc_mcontext.pc), &host_module) &&\n'
+        '                    host_module.dli_fbase != nullptr) {\n'
+        '                    LOG_CRITICAL(Debug, "BIONIC_HOST_FAULT_MODULE path={} base={} offset={:#x}",\n'
+        '                                 host_module.dli_fname ? host_module.dli_fname : "unknown",\n'
+        '                                 fmt::ptr(host_module.dli_fbase),\n'
+        '                                 ctx->uc_mcontext.pc -\n'
+        '                                     reinterpret_cast<uintptr_t>(host_module.dli_fbase));\n'
+        '                } else {\n'
+        '                    LOG_CRITICAL(Debug, "BIONIC_HOST_FAULT_MODULE unknown pc={:#x}",\n'
+        '                                 ctx->uc_mcontext.pc);\n'
+        '                }\n'
+        '                LOG_CRITICAL(Debug, "BIONIC_HOST_FAULT signal={} pc={:#x} lr={:#x} "\n',
+    )
+
     cmake = upstream / "CMakeLists.txt"
     replace(cmake, "add_executable(shadps4\n",
             "add_library(shadps4 SHARED\n")

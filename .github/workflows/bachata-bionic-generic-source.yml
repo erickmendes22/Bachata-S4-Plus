@@ -52,6 +52,10 @@ jobs:
           grep -Fq 'android_saf_bridge.cpp' generic-upstream/CMakeLists.txt
           grep -Fq 'android_saf_transport.cpp' generic-upstream/CMakeLists.txt
           grep -Fq 'BIONIC_SAF_READY' bionic/generic/android_saf_bridge.cpp
+          grep -Fq 'BIONIC_VULKAN_DEVICE' generic-upstream/src/video_core/renderer_vulkan/vk_instance.cpp
+          grep -Fq 'BIONIC_VULKAN_ICD_MANIFEST' generic-upstream/src/video_core/renderer_vulkan/vk_platform.cpp
+          grep -Fq 'BIONIC_HOST_FAULT_MODULE' generic-upstream/src/core/signals.cpp
+          grep -Fq 'android_vk_icd.cpp' generic-upstream/CMakeLists.txt
           grep -Fq 'BIONIC_PRESENT_IDLE_SKIP' generic-upstream/src/core/libraries/videoout/driver.cpp
           grep -Fq 'PrepareBlankFrame(true)' generic-upstream/src/core/libraries/videoout/driver.cpp
           grep -Fq 'BIONIC_HOST_FAULT' generic-upstream/src/core/signals.cpp
@@ -60,7 +64,8 @@ jobs:
           ! grep -Fq 'BIONIC_FEX_LIBC_HLE_PRELOAD' generic-upstream/src/core/libraries/sysmodule/sysmodule_internal.cpp
           # Compile the native SAF transport/mount standalone without FEX rebuild.
           c++ -std=c++20 -Wall -Wextra -Werror -fsyntax-only -I bionic/generic \
-            bionic/generic/android_saf_transport.cpp bionic/generic/android_saf_bridge.cpp
+            bionic/generic/android_saf_transport.cpp bionic/generic/android_saf_bridge.cpp \
+            bionic/generic/android_vk_icd.cpp
           echo 'Fast Bionic source preflight passed; full build is deliberately opt-in.'
 
   generic-shadps4-android:
