@@ -53,8 +53,13 @@ def main() -> None:
 
     mod.replace=record_replace
     error=None
+    source_registry=None
     try:
         mod.apply(args.source.resolve(),base/"generic")
+        if not misses:
+            from reconcile_cmake import reconcile
+            source_registry=reconcile(args.source.resolve())
+            print("REAL_SHADPS4_0181_CMAKE_REGISTRY_RECONCILED",source_registry["changedGroups"])
     except Exception as e:
         error=repr(e)
     report={
@@ -63,6 +68,7 @@ def main() -> None:
         "outdatedIntegrationAnchors":misses,
         "modernizedLockFallbacksVerified":already_upstream,
         "otherError":error,
+        "cmakeSourceRegistry":source_registry,
         "auditPassed":not misses and error is None,
     }
     args.report.parent.mkdir(parents=True,exist_ok=True)
