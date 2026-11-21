@@ -366,22 +366,30 @@ def apply(upstream: Path, overlay: Path) -> None:
         "    // std::chrono::current_zone() not available yet.\n",
     )
 
-    # epoll_pwait2 is unavailable to NDK API 33. Avoid truncating a positive
-    # sub-millisecond guest wait to zero: epoll_pwait accepts millisecond waits.
+    # epoll_pwait2 is unavailable to NDK API 33. The 0.18.1 net.cpp
+    # renamed 'should_wait' to 'sockets_waited_on', so match the actual
+    # active source. Both versions must keep a ceil-ms timeout and use
+    # epoll_pwait (not glibc-only epoll_pwait2) on Android.
     network = upstream / "src/core/libraries/network/net.cpp"
+    net_source = network.read_text(encoding="utf-8")
+    epoll_anchors = [
+        "    if (should_wait) {\n#ifdef __linux__\n        const timespec epoll_timeout",
+        "    if (sockets_waited_on) {\n#ifdef __linux__\n        const timespec epoll_timeout",
+    ]
+    epoll_matches = [anchor for anchor in epoll_anchors if net_source.count(anchor) == 1]
+    if len(epoll_matches) != 1:
+        raise RuntimeError("epoll source mismatch: no unique Android NDK epoll_pwait2 adaptation point")
+    epoll_anchor = epoll_matches[0]
     replace(
         network,
-        "    if (should_wait) {\n"
-        "#ifdef __linux__\n"
-        "        const timespec epoll_timeout",
-        "    if (should_wait) {\n"
-        "#if defined(__ANDROID__)\n"
-        "        const int timeout_ms = timeout < 0 ? -1 :\n"
-        "            timeout / 1000 + (timeout % 1000 != 0);\n"
-        "        result = epoll_pwait(epoll->epoll_fd, native_events.data(), maxevents,\n"
-        "                             timeout_ms, nullptr);\n"
-        "#elif defined(__linux__)\n"
-        "        const timespec epoll_timeout",
+        epoll_anchor,
+        epoll_anchor.replace("#ifdef __linux__\n",
+            "#if defined(__ANDROID__)\n"
+            "        const int timeout_ms = timeout < 0 ? -1 :\n"
+            "            timeout / 1000 + (timeout % 1000 != 0);\n"
+            "        result = epoll_pwait(epoll->epoll_fd, native_events.data(), maxevents,\n"
+            "                             timeout_ms, nullptr);\n"
+            "#elif defined(__linux__)\n", 1),
     )
 
     # Android defines __unix__ but does NOT define the glibc adaptive mutex
