@@ -161,6 +161,7 @@ jobs:
           packages: >-
             platform-tools
             ndk;30.0.14904198
+            build-tools;36.0.0
 
       - name: Verify shadPS4 0.21.1 JNI bridge compiles for AArch64 Bionic
         run: |
@@ -377,6 +378,32 @@ jobs:
             out/bionic-modern/deps/prefix/lib/libsw*.so*
           if-no-files-found: error
           retention-days: 14
+
+      - name: Assemble real new-core APK with original P36 signing identity
+        if: success() && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-modern]'))
+        env:
+          BACHATA_MODERN_SOURCE_SHA: ${{ github.sha }}
+          BACHATA_P36_PRIVATE_KEY: ${{ secrets.BACHATA_P36_PRIVATE_KEY }}
+          BACHATA_P36_CERT: ${{ secrets.BACHATA_P36_CERT }}
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends patchelf openssl zip
+          bash bionic/apk/build_modern_0211_apk.sh 2>&1 | tee out/bionic-modern/apk-from-new-core.log
+          test -s out/bionic-modern/apk/Bachata-S4Plus-shadPS4-0211-Bionic-P36.apk
+          echo BIONIC_021_BUILD_MODERN_P36_SIGNED_APK_READY
+
+      - name: Upload newly compiled signed Bionic APK
+        if: success() && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-modern]'))
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bachata-S4Plus-0211-Bionic-P36-NewCore-APK
+          path: |
+            out/bionic-modern/apk/Bachata-S4Plus-shadPS4-0211-Bionic-P36.apk
+            out/bionic-modern/apk/SHA256SUMS
+            out/bionic-modern/apk/apksigner-verification.txt
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
 
       - name: Upload modern Bionic build errors
         if: failure() && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-modern]'))
