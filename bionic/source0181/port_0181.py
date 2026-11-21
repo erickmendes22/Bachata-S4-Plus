@@ -46,6 +46,15 @@ def main() -> None:
                         "using Entry = std::mutex;" in source:
                     already_upstream.append(str(path))
                     return
+            # The modern 0.18.1 IBackend VFS has a different directory
+            # implementation. Its full SAF adapter runs after the generic
+            # platform overlay; never apply the obsolete 0.16.1 text patch.
+            if path.name == "fs.cpp" and path.parent.name == "file_sys":
+                if "callback(entry.path(), !entry.is_directory());" in old and \
+                        "class MergedDirectory final" in source and \
+                        "MntPoints::OpenDir(" in source:
+                    already_upstream.append(str(path)+" (new VFS adapter required)")
+                    return
             misses.append({"source":str(path),"expected":count,"found":actual,
                            "anchor":old[:450],"replacement":new[:450]})
             return
@@ -54,9 +63,12 @@ def main() -> None:
     mod.replace=record_replace
     error=None
     source_registry=None
+    modern_fs_adapter=None
     try:
         mod.apply(args.source.resolve(),base/"generic")
         if not misses:
+            from modern_saf_port import apply as apply_modern_saf
+            modern_fs_adapter=apply_modern_saf(args.source.resolve())
             from reconcile_cmake import reconcile
             source_registry=reconcile(args.source.resolve())
             print("REAL_SHADPS4_0181_CMAKE_REGISTRY_RECONCILED",source_registry["changedGroups"])
@@ -69,6 +81,7 @@ def main() -> None:
         "modernizedLockFallbacksVerified":already_upstream,
         "otherError":error,
         "cmakeSourceRegistry":source_registry,
+        "modernFsSafAdapter":modern_fs_adapter,
         "auditPassed":not misses and error is None,
     }
     args.report.parent.mkdir(parents=True,exist_ok=True)
