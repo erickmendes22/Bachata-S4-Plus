@@ -84,6 +84,15 @@ jobs:
           grep -Fq 'OUTPUT_NAME "bachata_native_runtime"' modern-core/CMakeLists.txt
           grep -Fq 'BIONIC_021_RETURN_FROM_EMULATOR' modern-core/src/emulator.cpp
 
+      - name: Rebase kernel timezone and POSIX signals on Android Bionic
+        run: |
+          set -euo pipefail
+          python3 -m py_compile bionic/modern/port_android_compat.py
+          python3 bionic/modern/port_android_compat.py --source modern-core
+          grep -Fq 'BIONIC_021_HOST_TIME_ZONE' modern-core/src/core/libraries/kernel/time.cpp
+          grep -Fq 'BIONIC_021_NATIVE_SIGNAL_MASK' modern-core/src/core/libraries/kernel/threads/exception.cpp
+          grep -Fq 'BIONIC_021_NATIVE_PTHREAD_HANDLE' modern-core/src/core/libraries/kernel/threads/exception.cpp
+
       - name: Audit actual core 0.21.1 source versus Android/Bionic integration
         run: |
           set -euo pipefail
