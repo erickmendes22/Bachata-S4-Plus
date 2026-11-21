@@ -39,7 +39,26 @@ jobs:
           test -s source-0181/src/platform/bachata/runtime_client.cpp
           echo 'REAL_0181_PS4_GPU_SOURCE_WITH_FEX_ANDROID_PLATFORM' >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Reintegrate actual Bionic JNI, FEX HLE and SAF into merged 0.18.1
+        run: |
+          set -euo pipefail
+          python3 -m py_compile bionic/generic/port_generic.py
+          if python3 bionic/generic/port_generic.py source-0181 >out/source0181/android-port.log 2>&1; then
+            echo 'SHADPS4_0181_ANDROID_BIONIC_PLATFORM_OVERLAY_APPLIED'
+            cat out/source0181/android-port.log | tail -45
+          else
+            echo '::error::0.18.1 source requires more port adaptation; build blocked until resolved'
+            tail -90 out/source0181/android-port.log
+            exit 2
+          fi
+          git -C source-0181 diff --check
+          grep -Fq 'BachataCoreMain' source-0181/src/main.cpp
+          grep -Fq 'BachataSaf::Configure' source-0181/src/main.cpp
+          grep -Fq 'JNIEXPORT jint JNICALL' bionic/generic/android_native_core.cpp
+          grep -Fq 'BIONIC_VULKAN_CUSTOM_BRIDGE_READY' source-0181/src/video_core/renderer_vulkan/vk_platform.cpp
+          echo 'SHADPS4_0181_FULL_BIONIC_SOURCE_PORT_APPLIED' >> "$GITHUB_STEP_SUMMARY"
       - name: Save source provenance and conflict report before any candidate build
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: shadPS4-0181-ARM64-FEX-source-rebase-report
