@@ -58,6 +58,40 @@ USE_NEW = (
     "tests/",
     "README.md",
 )
+# Git's three-way merge only resolves *conflicts*. Older headers and
+# implementations that did not conflict are silently retained, producing a
+# structurally inconsistent source tree (e.g. Shader::IR::VirtualReg,
+# Shader::Backend::SPIRV::EmitContext, ImGui::Layer and NP/WebAPI2).
+# For subsystems that have no Android/FEX platform adapter, use the WHOLE
+# original 0.18.1 subtree, not a per-file mixture of 0.16.1 and 0.18.1.
+# These are source families, not optional HLE feature removals.
+COHERENT_0181_SUBTREES = (
+    "src/shader_recompiler",
+    "src/imgui",
+    "src/input",
+    "src/video_core/amdgpu",
+    "src/video_core/buffer_cache",
+    "src/video_core/texture_cache",
+    "src/video_core/renderer_vulkan",
+    "src/core/libraries/np",
+    "src/core/libraries/audio3d",
+    "src/core/libraries/save_data",
+    "src/core/libraries/network",
+    "src/core/libraries/font",
+    "src/core/devtools",
+    "src/common/logging",
+)
+# The FEX Android Vulkan platform and these host interfaces must survive
+# the 0.18.1 module refresh; migrate their APIs separately, never silently
+# replace them with Linux/Windows-only implementations.
+PRESERVE_0181_HOST_ADAPTERS = (
+    "src/video_core/renderer_vulkan/vk_platform.cpp",
+    "src/video_core/renderer_vulkan/vk_instance.cpp",
+    "src/video_core/renderer_vulkan/vk_instance.h",
+    "src/video_core/renderer_vulkan/vk_presenter.cpp",
+    "src/video_core/renderer_vulkan/vk_presenter.h",
+)
+
 HOST_CRITICAL = (
     "src/core/guest_cpu/fex_guest_cpu.cpp",
     "src/core/guest_cpu/fex_hle_bridge.cpp",
@@ -133,6 +167,41 @@ def main() -> None:
     still = git(root, "diff", "--name-only", "--diff-filter=U").splitlines()
     if still:
         raise RuntimeError("Unresolved merge conflicts: "+str(still[:20]))
+    # Complete source-version reconciliation is necessary even where Git
+    # reports *no conflict*. A source/header pair must come from one engine.
+    preserved = {}
+    for rel in PRESERVE_0181_HOST_ADAPTERS:
+        p = root / rel
+        if p.is_file():
+            preserved[rel] = p.read_bytes()
+        else:
+            raise RuntimeError("Missing FEX Vulkan adapter prior to 0.18.1 sync: "+rel)
+    for prefix in COHERENT_0181_SUBTREES:
+        git(root, "restore", "--source", UPSTREAM, "--staged", "--worktree",
+            "--", prefix)
+    for rel, data in preserved.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+        git(root, "add", "--", rel)
+    # Validate actual bytes against the pinned 0.18.1 tree, rather than
+    # trusting the absence of merge conflicts or a version string.
+    source_parity = []
+    tracked = git(root, "ls-tree", "-r", "--name-only", UPSTREAM, "--",
+                  *COHERENT_0181_SUBTREES).splitlines()
+    for rel in tracked:
+        if rel in preserved:
+            continue
+        expected = subprocess.run(
+            ["git","-C",str(root),"show",UPSTREAM+":"+rel],
+            capture_output=True, check=True).stdout
+        actual = root / rel
+        if not actual.is_file() or actual.read_bytes() != expected:
+            raise RuntimeError("Mixed-version 0.16/0.18 source in "+rel)
+        source_parity.append(rel)
+    if not source_parity:
+        raise RuntimeError("0.18.1 source coherence sweep matched no files")
+    print("SHADPS4_0181_COHERENT_SOURCE_FILES", len(source_parity))
     # New shadPS4 0.18.1 dependencies were introduced as Git submodules.
     # The older ARM64 'ours' merge can omit gitlinks even when .gitmodules is
     # reconciled. Restore exact official gitlinks BEFORE recursive checkout.
@@ -182,6 +251,8 @@ def main() -> None:
         "decisions":resolution,
         "retainedOldFexHostNeedsApiPort":True,
         "newShaderRecompilerExactlyUpstream0181":True,
+        "coherent0181FilesVerified":len(source_parity),
+        "hostVulkanAdaptersPreserved":list(preserved),
         "note":"Source integration prepared; actual NDK link and Android boot still required",
     }
     (output/"rebase-report.json").write_text(json.dumps(report,indent=2)+"\n")
