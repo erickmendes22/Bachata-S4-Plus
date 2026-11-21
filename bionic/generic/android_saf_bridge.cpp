@@ -175,8 +175,13 @@ std::optional<int> DuplicateFd(const fs::path& host) {
     if(!Valid(relative))return std::nullopt;
     auto it=s.handles.find(relative);
     if(it==s.handles.end())return std::nullopt;
-    int fd=fcntl(it->second,F_DUPFD_CLOEXEC,0);
-    return fd<0?std::nullopt:std::optional<int>{fd};
+    // Fresh provider handle: dup() would share file offset across game readers.
+    auto reply=Protocol::Request(s.socket,s.token,3,Remote(s,relative));
+    if(reply.status!=0 || reply.fd<0) {
+        Warn("REOPEN_FAILED",relative,reply.status);
+        return std::nullopt;
+    }
+    return reply.fd;
 }
 void Shutdown() {
     auto& s=S();std::scoped_lock lk(s.lock);
