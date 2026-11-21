@@ -52,6 +52,9 @@ jobs:
           grep -Fq 'android_saf_bridge.cpp' generic-upstream/CMakeLists.txt
           grep -Fq 'android_saf_transport.cpp' generic-upstream/CMakeLists.txt
           grep -Fq 'BIONIC_SAF_READY' bionic/generic/android_saf_bridge.cpp
+          grep -Fq 'BIONIC_PRESENT_IDLE_SKIP' generic-upstream/src/core/libraries/videoout/driver.cpp
+          grep -Fq 'PrepareBlankFrame(true)' generic-upstream/src/core/libraries/videoout/driver.cpp
+          grep -Fq 'BIONIC_HOST_FAULT' generic-upstream/src/core/signals.cpp
           # Ensure we do not resurrect false missing-content workarounds.
           ! grep -Fq 'BIONIC_FEX_PLAYGO_FULLY_INSTALLED_FALLBACK' generic-upstream/src/core/libraries/playgo/playgo.cpp
           ! grep -Fq 'BIONIC_FEX_LIBC_HLE_PRELOAD' generic-upstream/src/core/libraries/sysmodule/sysmodule_internal.cpp

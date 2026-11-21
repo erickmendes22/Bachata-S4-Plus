@@ -637,6 +637,59 @@ def apply(upstream: Path, overlay: Path) -> None:
         '#endif\n',
     )
 
+    # The host PresentThread must NOT record an idle blank frame on GPU draw
+    # scheduler: this races GPU command processing during guest boot. The
+    # existing PrepareBlankFrame(bool present_thread) explicitly selects the
+    # correct present_scheduler when true. On Android, the Surface is already
+    # ready; don't enqueue empty GPU work before the game opens VideoOut.
+    video_driver = upstream / "src/core/libraries/videoout/driver.cpp"
+    replace(
+        video_driver,
+        "    const auto empty_frame = presenter->PrepareBlankFrame(false);\n",
+        "    // Called by PresentThread; use its scheduler, never draw_scheduler.\n"
+        "    const auto empty_frame = presenter->PrepareBlankFrame(true);\n",
+    )
+    replace(
+        video_driver,
+        '                    if (!main_port.is_open) {\n'
+        '                        DrawBlankFrame();\n'
+        '                    } else if (ImGui::Core::MustKeepDrawing()) {\n',
+        '                    if (!main_port.is_open) {\n'
+        '#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n'
+        '                        // The Android Surface is initialized already.\n'
+        '                        // Avoid speculative present GPU work pre-VideoOut.\n'
+        '                        static std::atomic<bool> once{false};\n'
+        '                        if (!once.exchange(true)) {\n'
+        '                            LOG_INFO(Lib_VideoOut, "BIONIC_PRESENT_IDLE_SKIP: "\n'
+        '                                     "VideoOut not open; no idle Vulkan submit");\n'
+        '                        }\n'
+        '#else\n'
+        '                        DrawBlankFrame();\n'
+        '#endif\n'
+        '                    } else if (ImGui::Core::MustKeepDrawing()) {\n',
+    )
+
+    # This is a crash-only diagnostic: after an unhandled ARM64 SIGSEGV,
+    # show host PC/LR and argument registers. The previous log only showed
+    # Read 0x4dc in shadPS4:Present, not the dereferenced native pointer.
+    signals = upstream / "src/core/signals.cpp"
+    replace(
+        signals,
+        '            UNREACHABLE_MSG("Unhandled access violation at code address {}: {} address {}",\n',
+        '#if defined(SHADPS4_ENABLE_FEX_GUEST_CPU) && defined(__ANDROID__) && defined(__aarch64__)\n'
+        '            if (raw_context != nullptr) {\n'
+        '                const auto* ctx = reinterpret_cast<const ucontext_t*>(raw_context);\n'
+        '                const auto& r = ctx->uc_mcontext.regs;\n'
+        '                LOG_CRITICAL(Debug, "BIONIC_HOST_FAULT signal={} pc={:#x} lr={:#x} "\n'
+        '                             "sp={:#x} x0={:#x} x1={:#x} x2={:#x} x3={:#x} "\n'
+        '                             "x4={:#x} x8={:#x} x19={:#x} x20={:#x} x29={:#x}",\n'
+        '                             sig, ctx->uc_mcontext.pc, r[30], ctx->uc_mcontext.sp,\n'
+        '                             r[0], r[1], r[2], r[3], r[4], r[8], r[19], r[20], r[29]);\n'
+        '            }\n'
+        '#endif\n'
+        '            UNREACHABLE_MSG("Unhandled access violation at code address {}: {} address {}",\n',
+    )
+
     cmake = upstream / "CMakeLists.txt"
     replace(cmake, "add_executable(shadps4\n",
             "add_library(shadps4 SHARED\n")
