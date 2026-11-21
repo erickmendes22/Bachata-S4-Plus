@@ -15,6 +15,8 @@ UPSTREAM = "3912336fdfffbd5c99b59d92e997ea6ebd62216c"
 # These implementation units have no Android-specific hooks and must match
 # the 0.18.1 interfaces that consume them, not their 0.16.1 ancestors.
 MATCH_0181 = (
+    "src/core/debug_state.h",
+    "src/core/debug_state.cpp",
     "src/common/ring_buffer_queue.h",
     "src/core/libraries/libs.cpp",
     "src/core/libraries/kernel/file_system.cpp",
