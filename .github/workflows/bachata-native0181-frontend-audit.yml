@@ -1,0 +1,76 @@
+name: Bachata S4 0.18.1 native frontend contract source diff
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/bionic-native0181-release-20261121
+    paths:
+      - '.github/workflows/bachata-native0181-frontend-audit.yml'
+permissions:
+  contents: read
+jobs:
+  compare-frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Download exact official and Plus release and apktool
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bachata-apks out/frontend-diff
+          curl -fLsS --retry 3 'https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar' -o /tmp/bachata-apks/apktool.jar
+          curl -fLsS --retry 3 'https://github.com/JICA98/Bachata-S4/releases/download/v0.2.6/bachatas4-0.2.6-release.apk' -o /tmp/bachata-apks/official.apk
+          echo '39d38d4e781bc83ee2542b3884a264895e726c3c8ee49df493ded487e6cd6f74  /tmp/bachata-apks/official.apk' | sha256sum -c -
+          curl -fLsS --retry 3 'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.7/Bachata-S4-Plus-v0.2.7.apk' -o /tmp/bachata-apks/plus.apk
+          echo '35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8  /tmp/bachata-apks/plus.apk' | sha256sum -c -
+      - name: Disassemble original Java runtime service and Plus runtime
+        run: |
+          set -euo pipefail
+          java -Xmx3G -jar /tmp/bachata-apks/apktool.jar d -f -r /tmp/bachata-apks/official.apk -o /tmp/bachata-official > /tmp/bachata-official-decode.log 2>&1
+          java -Xmx3G -jar /tmp/bachata-apks/apktool.jar d -f -r /tmp/bachata-apks/plus.apk -o /tmp/bachata-plus > /tmp/bachata-plus-decode.log 2>&1
+          cp /tmp/bachata-official-decode.log out/frontend-diff/official-decode.log
+          cp /tmp/bachata-plus-decode.log out/frontend-diff/plus-decode.log
+          python3 - <<'PY'
+          import pathlib, shutil, difflib
+          out=pathlib.Path("out/frontend-diff")
+          targets=["NativeRuntimeBridge","NativeRuntimeService","NativeCatalogueService","RuntimeProcessLauncher","NativeRuntimeProcessLauncher","NativeRuntime","DriverLoader","BachataSaf","SafBroker","GameStorage"]
+          for variant in ("official","plus"):
+              root=pathlib.Path("/tmp/bachata-"+variant)
+              smali=sorted(p for folder in root.glob("smali*") for p in folder.rglob("*.smali") if "com/bachatas4/android" in p.as_posix())
+              chosen=[p for p in smali if ("/runtime/process/" in p.as_posix() or any(t in p.name for t in targets) or "/runtime/storage/" in p.as_posix()) and not ("$$" in p.name or "$" in p.name and not p.name.endswith("$Companion.smali"))]
+              manifest=root/"AndroidManifest.xml"
+              if manifest.exists():shutil.copyfile(manifest,out/(variant+"-AndroidManifest.xml"))
+              for p in chosen:
+                  relative=p.relative_to(next(x for x in p.parents if x.name.startswith("smali")))
+                  dst=out/variant/relative
+                  dst.parent.mkdir(parents=True,exist_ok=True)
+                  shutil.copyfile(p,dst)
+              (out/(variant+"-selected-list.txt")).write_text("\n".join(str(p) for p in chosen)+"\n")
+              print(variant,"all classes",len(smali),"selected",len(chosen))
+          official=out/"official"
+          plus=out/"plus"
+          diff=[]
+          for file in sorted(official.rglob("*.smali")):
+              rel=file.relative_to(official)
+              other=plus/rel
+              if not other.exists():diff.append("ONLY OFFICIAL: "+str(rel));continue
+              a=file.read_text().splitlines(keepends=True)
+              b=other.read_text().splitlines(keepends=True)
+              if a!=b:
+                  diff.append("".join(list(difflib.unified_diff(a,b,fromfile="official/"+str(rel),tofile="plus/"+str(rel),n=2))[:250000]))
+          for file in sorted(plus.rglob("*.smali")):
+              if not (official/file.relative_to(plus)).exists():diff.append("ONLY PLUS: "+str(file.relative_to(plus)))
+          (out/"FRONTEND_ABI_DIFF.txt").write_text("\n".join(diff))
+          print("DIFF bytes", (out/"FRONTEND_ABI_DIFF.txt").stat().st_size)
+          PY
+      - name: Export real native runtime Java/SAF/service comparison
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bachata-0181-v027-frontend-runtime-smali-parity
+          path: out/frontend-diff/
+          if-no-files-found: error
+          retention-days: 14
