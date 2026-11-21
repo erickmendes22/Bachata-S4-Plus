@@ -107,7 +107,18 @@ fi
 
 # Keep compiling independent translation units after an error so one run reveals
 # ALL Android portability failures instead of the first failing source.
-cmake --build "$BUILD" --target shadps4 -j "$JOBS" -- -k 0
+# Capture the complete Ninja output, not just the first compiler error.
+# Pipe failures are explicitly propagated; -k 0 compiles every independent TU.
+set +e
+cmake --build "$BUILD" --target shadps4 -j "$JOBS" -- -k 0 2>&1 | tee "$WORK/ndk-cxx-full.log"
+native_build_status=${PIPESTATUS[0]}
+set -e
+if (( native_build_status != 0 )); then
+  python3 "$ROOT/bionic/source0181/extract_native_errors.py" \
+    "$WORK/ndk-cxx-full.log" "$WORK/ndk-errors-summary.txt"
+  echo "::error::Full C++ compilation reported every error in ndk-errors-summary.txt"
+  exit "$native_build_status"
+fi
 CORE="$BUILD/libbachata_bionic_core.so"
 test -s "$CORE" || { echo "Generic shadPS4 Android core not produced: $CORE" >&2; exit 3; }
 readelf -h "$CORE" | grep -q AArch64
