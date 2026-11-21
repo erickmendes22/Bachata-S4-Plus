@@ -27,6 +27,37 @@ CHECKS = {
     "vulkan_renderer": ("src/video_core/renderer_vulkan/vk_rasterizer.cpp", "Rasterizer"),
 }
 
+
+# Behavioral interface names extracted from the user's 0.2.6 APK,
+# libbachata_native_runtime.so (native Bionic shadPS4 0.18.1).
+# Exact C++ mangled symbols will change in 0.21.1. These checks only
+# establish that corresponding functionality is present in the source.
+RELEASE_026_PARITY = {
+    "bionic_saf_backend": ("src/core/file_sys", "SafFsBackend"),
+    "bionic_saf_broker": ("src/core/file_sys", "SafBrokerClient"),
+    "broker_fd_open_hook": ("src", "SetFdOpenHook"),
+    "fex_hle_bridge": ("src/core/guest_cpu", "HleGuestBridge"),
+    "fex_host_range_publishing": ("src/core/guest_cpu", "PublishHostRange"),
+    "runtime_ipc": ("src", "RuntimeClient"),
+    "frame_presented_event": ("src", "SendFramePresented"),
+    "guest_signal_delivery": ("src/core/fex", "DeliverGuestOrbisSignal"),
+    "native_custom_vulkan_profile": ("src", "BACHATA_VULKAN_DRIVER_DIR"),
+}
+
+def audit_release_contract(source: Path) -> dict[str, bool]:
+    findings = {}
+    for name, (relative_dir, marker) in RELEASE_026_PARITY.items():
+        root = source / relative_dir
+        matched = False
+        if root.is_dir():
+            for f in root.rglob("*"):
+                if f.is_file() and f.suffix in (".cpp", ".c", ".h", ".hpp", ".cc"):
+                    if marker in f.read_text(errors="replace"):
+                        matched = True
+                        break
+        findings[name] = matched
+    return findings
+
 def string_expr(node):
     try:
         value = ast.literal_eval(node)
@@ -93,6 +124,7 @@ def audit(source: Path, overlay: Path) -> dict:
             "dynamic_or_unchecked": len(unavailable),
             "not_yet_migrated": incompatible,
         },
+        "release_026_source_parity": audit_release_contract(source),
         "invariant": "Source compatibility only; no Bionic core has been compiled yet."
     }
 
@@ -114,6 +146,9 @@ def main():
               f"{summary['dynamic_or_unchecked']} require manual review.")
         for key, okay in result["checklist"].items():
             print(f"- {'PASS' if okay else 'FAIL'}: {key}")
+        print("**0.2.6 Bionic 0.18.1 ABI/feature reference:**")
+        for key, okay in result["release_026_source_parity"].items():
+            print(f"- {'SOURCE FOUND' if okay else 'PORT STILL REQUIRED'}: {key}")
     else:
         print(json.dumps(result, indent=2))
     # Missing FEX/SAF or wrong target version blocks even a source-only port.
