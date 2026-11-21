@@ -104,7 +104,7 @@ jobs:
           echo '#### EXACT PATCHED SYMBOL RESOLVER'
           sed -n '1,130p' modern-core/src/core/loader/symbols_resolver.cpp
           echo '#### EXACT PATCHED 0.21.1 HLE INITIALIZATION'
-          sed -n '85,165p' modern-core/src/core/libraries/libs.cpp
+          sed -n '85,275p' modern-core/src/core/libraries/libs.cpp
           echo '#### EXACT PATCHED 0.21.1 AVPLAYER HLE REGISTRATION'
           sed -n '248,300p' modern-core/src/core/libraries/avplayer/avplayer.cpp
           echo '#### EXACT PATCHED 0.21.1 LIBC RUNTIME AND FEX REGISTER'
