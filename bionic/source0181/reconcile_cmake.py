@@ -79,6 +79,11 @@ def reconcile(root: Path) -> dict:
         begin=upstream.index("# shadNet protobuf generation")
         finish=upstream.index("if (APPLE)",begin)
         block=upstream[begin:finish]
+        # This entire new component did not exist in the FEX 0.16.1 build.
+        # All its real 0.18.1 source files must be restored, not stubbed.
+        for ref in set(SOURCE.findall(block)):
+            if not ensure_new_upstream_file(ref):
+                missing_required.append({"group":"SHADNET","file":ref,"reason":"missing real upstream shadNet source"})
         # The Android JNI overlay converts upstream executable into a shared ELF.
         marker="if(NOT ENABLE_TESTS)\n\nadd_library(shadps4 SHARED"
         if current.count(marker)!=1:raise RuntimeError("shadPS4 executable declaration changed")
