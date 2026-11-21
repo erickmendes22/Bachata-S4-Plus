@@ -6,7 +6,7 @@ import re
 import subprocess
 from pathlib import Path
 
-REGISTRY = re.compile(r"(?ms)^set\(([A-Z][A-Z0-9_]*)[ \t]+([^\n]*?)\n(.*?)^\)")
+REGISTRY = re.compile(r"(?ms)^set\(([A-Z][A-Z0-9_]*)[ \t]+([^\n)]*)\n(.*?)^\)")
 SOURCE = re.compile(r"src/[A-Za-z0-9_./+-]+\.(?:c|cc|cpp|h|hpp)\b")
 SPECIAL_GENERATED = {"src/common/scm_rev.cpp"}
 UPSTREAM_0181 = "3912336fdfffbd5c99b59d92e997ea6ebd62216c"
@@ -58,6 +58,8 @@ def reconcile(root: Path) -> dict:
             corrected=corrected.replace(ref,"",1)
             removed.append(ref)
         for ref in new_refs:
+            if ref in SPECIAL_GENERATED:
+                continue
             if not ensure_new_upstream_file(ref):
                 missing_required.append({"group":group,"file":ref,"reason":"upstream source absent from Git revision"})
                 continue
