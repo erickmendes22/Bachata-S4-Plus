@@ -78,7 +78,6 @@ jobs:
           python3 bionic/modern/port_android_wsi.py --source modern-core
           python3 bionic/modern/port_android_entry.py --source modern-core --overlay bionic/generic
           grep -Fq 'BIONIC_021_ANDROID_SURFACE_READY' modern-core/src/video_core/renderer_vulkan/vk_platform.cpp
-          grep -Fq 'BIONIC_021_JNI_FULL_CORE_SOURCE_INTEGRATED' /dev/null || true
           grep -Fq 'Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run' bionic/generic/android_native_core.cpp
           grep -Fq 'OUTPUT_NAME "bachata_native_runtime"' modern-core/CMakeLists.txt
           grep -Fq 'BIONIC_021_RETURN_FROM_EMULATOR' modern-core/src/emulator.cpp
@@ -97,6 +96,29 @@ jobs:
             --source modern-core \
             --legacy-overlay bionic/generic/port_generic.py \
             --markdown >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Cross-compile actual Android Bionic JNI entry object (NDK r30)
+        uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            platform-tools
+            ndk;30.0.14904198
+
+      - name: Verify shadPS4 0.21.1 JNI bridge compiles for AArch64 Bionic
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_HOME/ndk/30.0.14904198"
+          compiler="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang++"
+          mkdir -p /tmp/bachata-modern-obj
+          "$compiler" -std=c++23 -O2 -fPIC -Wall -Wextra -Werror \
+            -I modern-core/src -I bionic/generic \
+            -c bionic/generic/android_native_core.cpp \
+            -o /tmp/bachata-modern-obj/android_native_core.o
+          readelf -h /tmp/bachata-modern-obj/android_native_core.o | grep -q AArch64
+          "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" \
+            /tmp/bachata-modern-obj/android_native_core.o | \
+            grep -Fq Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run
+          echo "BIONIC_021_JNI_AARCH64_OBJECT_BUILD_OK"
 
       - name: Upload compact source compatibility report (no APK)
         if: always()
