@@ -1,0 +1,152 @@
+name: Bachata S4+ real official 0.18.1 Bionic APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/bionic-native0181-release-20261121
+    paths:
+      - "bionic/release0181/**"
+      - ".github/workflows/bachata-bionic-release0181-apk.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bachata-native0181-release
+  cancel-in-progress: true
+
+jobs:
+  signed-original-0181:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      BACHATA_P36_PRIVATE_KEY: ${{ secrets.BACHATA_P36_PRIVATE_KEY }}
+      BACHATA_P36_CERT: ${{ secrets.BACHATA_P36_CERT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install APK signing and ELF tooling (no 0.16.1 compilation)
+        uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            platform-tools
+            build-tools;36.0.0
+
+      - name: Validate exact 0.18.1 transplant source
+        run: |
+          set -euo pipefail
+          python3 -m py_compile bionic/release0181/rebase_release_0181.py
+          command -v readelf
+          test -x "$ANDROID_HOME/build-tools/36.0.0/apksigner"
+
+      - name: Download verified Plus 0.2.7 frontend and official Bionic 0.18.1 release
+        run: |
+          set -euo pipefail
+          mkdir -p out/native0181
+          curl -fL --retry 4 --retry-delay 3 \
+            'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.7/Bachata-S4-Plus-v0.2.7.apk' \
+            -o out/native0181/plus-base.apk
+          echo '35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8  out/native0181/plus-base.apk' | sha256sum -c -
+          curl -fL --retry 4 --retry-delay 3 \
+            'https://github.com/JICA98/Bachata-S4/releases/download/v0.2.6/bachatas4-0.2.6-release.apk' \
+            -o out/native0181/official-release.apk
+          echo '39d38d4e781bc83ee2542b3884a264895e726c3c8ee49df493ded487e6cd6f74  out/native0181/official-release.apk' | sha256sum -c -
+
+      - name: Replace native Bionic with exact shadPS4 0.18.1 binary
+        run: |
+          set -euo pipefail
+          python3 bionic/release0181/rebase_release_0181.py \
+            --base out/native0181/plus-base.apk \
+            --release out/native0181/official-release.apk \
+            --output out/native0181/Bachata-0181-unsigned.apk \
+            --report out/native0181/OFFICIAL-0181-PROVENANCE.json
+          python3 - <<'PY'
+          import hashlib, zipfile
+          with zipfile.ZipFile("out/native0181/Bachata-0181-unsigned.apk") as z:
+              native=z.read("lib/arm64-v8a/libbachata_native_runtime.so")
+              assert hashlib.sha256(native).hexdigest()=="3548cb4b6d952aed7141f057e07552b4f23a57997df339644a57605ed1308f39"
+              assert b"0.18.1 WIP" in native
+              assert "lib/arm64-v8a/libbachata_bionic_core.so" not in z.namelist()
+          print("OFFICIAL_0181_CORE_EXACT; EXPERIMENTAL_0161_CORE_ABSENT")
+          PY
+
+      - name: Align, sign and verify original P36 identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          EXPECTED_P36_SHA256=d04ef2a865f8ed5ab8f98321be93ed2881eaa64f844fbaf480e18a8336620a72
+          if [[ -z "$BACHATA_P36_PRIVATE_KEY" || -z "$BACHATA_P36_CERT" ]]; then
+            echo '::error::Original P36 key/certificate missing'
+            exit 2
+          fi
+          "$BT/apksigner" verify --verbose --print-certs \
+            out/native0181/plus-base.apk > out/native0181/base-certificate.txt
+          actual_base="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' out/native0181/base-certificate.txt | head -n1)"
+          if [[ "$actual_base" != "$EXPECTED_P36_SHA256" ]]; then
+            echo "::error::Original Plus base APK is not signed by P36: $actual_base"
+            exit 3
+          fi
+          umask 077
+          KEY=out/native0181/original-p36-key.pem
+          PK8=out/native0181/original-p36-private.pk8
+          CERT=out/native0181/original-p36-cert.pem
+          trap 'rm -f "$KEY" "$PK8" "$CERT"' EXIT
+          printf '%s\n' "$BACHATA_P36_PRIVATE_KEY" > "$KEY"
+          printf '%s\n' "$BACHATA_P36_CERT" > "$CERT"
+          actual_cert="$(openssl x509 -in "$CERT" -outform DER | sha256sum | cut -d' ' -f1)"
+          if [[ "$actual_cert" != "$EXPECTED_P36_SHA256" ]]; then
+            echo "::error::Signing certificate differs from P36: $actual_cert"
+            exit 4
+          fi
+          openssl pkcs8 -topk8 -nocrypt -in "$KEY" -outform DER -out "$PK8"
+          pub_key="$(openssl pkey -inform DER -in "$PK8" -pubout -outform DER | sha256sum | cut -d' ' -f1)"
+          pub_cert="$(openssl x509 -in "$CERT" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum | cut -d' ' -f1)"
+          test "$pub_key" = "$pub_cert"
+          "$BT/zipalign" -f -P 16 4 \
+            out/native0181/Bachata-0181-unsigned.apk \
+            out/native0181/Bachata-0181-aligned.apk
+          "$BT/apksigner" sign --key "$PK8" --cert "$CERT" \
+            --v1-signing-enabled true --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out out/native0181/Bachata-S4Plus-v0.2.7-Bionic-shadPS4-0.18.1-P36.apk \
+            out/native0181/Bachata-0181-aligned.apk
+          "$BT/apksigner" verify --verbose --print-certs \
+            out/native0181/Bachata-S4Plus-v0.2.7-Bionic-shadPS4-0.18.1-P36.apk \
+            | tee out/native0181/P36-SIGNATURE-VERIFIED.txt
+          grep -Fq "$EXPECTED_P36_SHA256" out/native0181/P36-SIGNATURE-VERIFIED.txt
+          "$BT/zipalign" -c -P 16 4 \
+            out/native0181/Bachata-S4Plus-v0.2.7-Bionic-shadPS4-0.18.1-P36.apk
+          sha256sum out/native0181/Bachata-S4Plus-v0.2.7-Bionic-shadPS4-0.18.1-P36.apk \
+            > out/native0181/SHA256SUMS.txt
+          echo 'OFFICIAL_0181_CORE_P36_APK_SIGNED_AND_VERIFIED'
+
+      - name: Final verify signed APK contains actual native 0.18.1
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, zipfile
+          apk="out/native0181/Bachata-S4Plus-v0.2.7-Bionic-shadPS4-0.18.1-P36.apk"
+          with zipfile.ZipFile(apk) as z:
+              native=z.read("lib/arm64-v8a/libbachata_native_runtime.so")
+              meta=json.loads(z.read("assets/bachata-native-0181-provenance.json"))
+              assert hashlib.sha256(native).hexdigest()=="3548cb4b6d952aed7141f057e07552b4f23a57997df339644a57605ed1308f39"
+              assert meta["nativeCoreVersion"]=="shadPS4 0.18.1 WIP"
+              assert "lib/arm64-v8a/libbachata_bionic_core.so" not in z.namelist()
+              assert z.testzip() is None
+              print("P36_SIGNED_APK_HAS_ACTUAL_OFFICIAL_0181_NOT_0161")
+          PY
+
+      - name: Upload actual 0.18.1 Bionic APK signed with original P36
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bachata-S4Plus-OFFICIAL-shadPS4-0181-Bionic-P36-APK
+          path: |
+            out/native0181/Bachata-S4Plus-v0.2.7-Bionic-shadPS4-0.18.1-P36.apk
+            out/native0181/OFFICIAL-0181-PROVENANCE.json
+            out/native0181/P36-SIGNATURE-VERIFIED.txt
+            out/native0181/SHA256SUMS.txt
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
