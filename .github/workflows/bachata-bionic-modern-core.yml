@@ -92,6 +92,13 @@ jobs:
           grep -Fq 'localtime_r(&t, &tm_val)' modern-core/src/core/libraries/kernel/time.cpp
           grep -Fq 'posix_sigisemptyset' modern-core/src/core/libraries/kernel/threads/exception.cpp
 
+      - name: Port Bionic host UUID provider without changing PS4 HLE
+        run: |
+          set -euo pipefail
+          python3 -m py_compile bionic/compat/port_kernel_uuid_0211.py
+          python3 bionic/compat/port_kernel_uuid_0211.py --source modern-core
+          grep -Fq 'BIONIC_021_NATIVE_UUID' modern-core/src/core/libraries/kernel/kernel.cpp
+
       - name: Audit actual core 0.21.1 source versus Android/Bionic integration
         run: |
           set -euo pipefail
@@ -173,6 +180,8 @@ jobs:
           mapfile -t modules < <(awk '$1 !~ /^(externals\/mesa-kosmickrisp|externals\/bachata-xserver|externals\/vulkan-loader|externals\/ffmpeg-core|externals\/discord-rpc|externals\/ext-wepoll|externals\/epoll-shim|externals\/date)$/ {print $1}' /tmp/shadps4-0211-modules.txt)
           git -C modern-core submodule update --init --jobs 6 -- "${modules[@]}"
           test -s modern-core/externals/imgui/imgui.cpp
+          git -C modern-core/externals/sirit submodule update --init --depth 1 --jobs 2
+          test -s modern-core/externals/sirit/externals/SPIRV-Headers/CMakeLists.txt
           test -s modern-core/externals/sdl3/CMakeLists.txt
           echo BIONIC_021_SUBMODULES_PINNED
 
@@ -231,6 +240,12 @@ jobs:
           set -euo pipefail
           root="$GITHUB_WORKSPACE/out/bionic-modern"
           NDK="$ANDROID_HOME/ndk/30.0.14904198"
+          # Font embedding is a HOST build tool. Android cannot run a
+          # cross-compiled AArch64 generator on the Ubuntu runner.
+          host_font="modern-core/externals/imgui/misc/fonts/binary_to_compressed_c.cpp"
+          test -s "$host_font"
+          c++ -std=c++17 -O2 "$host_font" -o "$root/imgui-font-host"
+          test -x "$root/imgui-font-host"
           cmake -S modern-core -B "$root/build" -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=33 \
@@ -240,6 +255,9 @@ jobs:
             -DENABLE_BACHATA_RUNTIME=ON -DENABLE_FEX_GUEST_CPU=ON \
             -DFEXCORE_GUEST_CPU_SOURCE_DIR="$root/fex" \
             -DFEXCORE_GUEST_CPU_BUILD_DIR="$root/fex-android" \
+            -DIMGUI_FONT_EMBED_EXECUTABLE="$root/imgui-font-host" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DBACHATA_ANDROID_FFMPEG_PREFIX="$root/deps/prefix" \
             -DCMAKE_PREFIX_PATH="$root/deps/prefix" \
             2>&1 | tee "$root/configure.log"
