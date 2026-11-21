@@ -1,0 +1,59 @@
+name: shadPS4 0.18.1 real source port onto working ARM64/FEX foundation
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/bionic-shadps4-0181-source-port-20261121
+    paths:
+      - '.github/workflows/bachata-bionic-0181-source-rebase.yml'
+      - 'bionic/source0181/**'
+permissions:
+  contents: read
+jobs:
+  source-rebase:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch full working shadPS4 FEX ARM64 base and real upstream 0.18.1
+        run: |
+          set -euo pipefail
+          git clone --quiet --filter=blob:none --no-checkout \
+            https://github.com/zenithblue-oss/shadps4-arm64.git source-0181
+          git -C source-0181 checkout --quiet be6bc2e9c60799e071dd2fafa6216e8d80ec619c
+          git -C source-0181 remote add shadps4 https://github.com/shadps4-emu/shadPS4.git
+          git -C source-0181 fetch --quiet --filter=blob:none shadps4 3912336fdfffbd5c99b59d92e997ea6ebd62216c
+          git -C source-0181 show HEAD:CMakeLists.txt | grep -F 'set(EMULATOR_VERSION_MINOR "16")'
+          git -C source-0181 show FETCH_HEAD:CMakeLists.txt | grep -F 'set(EMULATOR_VERSION_MINOR "18")'
+      - name: Detect precise source ancestry and attempt full 0.18.1 rebase
+        run: |
+          set -euo pipefail
+          mkdir -p out/source0181
+          (
+          cd source-0181
+          printf 'working_arm64_base=%s\nupstream_0181=%s\n' "$(git rev-parse HEAD)" "$(git rev-parse FETCH_HEAD)" > ../out/source0181/source-refs.txt
+          git merge-base HEAD FETCH_HEAD > ../out/source0181/merge-base.txt || true
+          if test -s ../out/source0181/merge-base.txt; then
+            echo FOUND_COMMON_ANCESTRY >> ../out/source0181/source-refs.txt
+          else
+            echo NO_SHARED_HISTORY_COMPLETE_SOURCE_PORT_REQUIRED >> ../out/source0181/source-refs.txt
+          fi
+          if git merge --no-commit --no-ff FETCH_HEAD > ../out/source0181/merge-output.txt 2>&1; then
+            echo CLEAN_GIT_SOURCE_MERGE >> ../out/source0181/source-refs.txt
+          else
+            echo SOURCE_PORT_CONFLICTS_MUST_BE_FIXED >> ../out/source0181/source-refs.txt
+          fi
+          git diff --name-only --diff-filter=U > ../out/source0181/conflicts.txt || true
+          git status --short > ../out/source0181/status.txt
+          printf 'merge_conflicts=%s\n' "$(wc -l < ../out/source0181/conflicts.txt)" >> ../out/source0181/source-refs.txt
+          git diff --stat > ../out/source0181/diffstat.txt || true
+          )
+          cat out/source0181/source-refs.txt
+          head -80 out/source0181/conflicts.txt
+      - name: Save source provenance and conflict report before any candidate build
+        uses: actions/upload-artifact@v4
+        with:
+          name: shadPS4-0181-ARM64-FEX-source-rebase-report
+          path: out/source0181/
+          retention-days: 14
+          if-no-files-found: error
