@@ -112,6 +112,13 @@ def check_release(apk: Path) -> dict:
         raise SystemExit("Release binaries differ from the audited 0.2.6 build")
     if b"0.18.1 WIP" not in native or b"0.18.1 WIP" not in linux:
         raise SystemExit("Release is not the observed shadPS4 0.18.1 build")
+    # Private source provenance appears verbatim in both official ELFs.
+    provenance = b"v0.2.5-7-g99ceb85eb-dirty"
+    upstream = b"https://github.com/JICA98/Bachata-S4-Dev.git"
+    if any(provenance not in blob or upstream not in blob for blob in (native, linux)):
+        raise SystemExit("Official source provenance absent from release ELF")
+    if b"2026-11-13 16:19:23" not in native or b"2026-11-13 16:18:02" not in linux:
+        raise SystemExit("Official release compiler stamps unexpectedly changed")
     with tempfile.TemporaryDirectory() as td:
         p = Path(td)
         (p / "native.so").write_bytes(native)
@@ -129,6 +136,10 @@ def check_release(apk: Path) -> dict:
     return {
         "release": "Bachata S4 0.2.6",
         "releaseCoreVersion": "0.18.1 WIP",
+        "sourceRepositoryEmbedded": "JICA98/Bachata-S4-Dev",
+        "sourceDescribeEmbedded": "v0.2.5-7-g99ceb85eb-dirty",
+        "nativeBuildTimestampEmbedded": "2026-11-13 16:19:23",
+        "linuxBuildTimestampEmbedded": "2026-11-13 16:18:02",
         "referenceApkSha256": RELEASE_SHA256,
         "referenceNativeSha256": BIONIC_SHA256,
         "referenceGlibcSha256": GLIBC_SHA256,
