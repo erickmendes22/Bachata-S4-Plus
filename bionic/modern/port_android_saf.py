@@ -136,6 +136,58 @@ bool SafFsBackend::ListEntries(std::string_view guest_path,
     )
     once(fs, old, new)
 
+    # 0.21.1 still runs its legacy SAF Iterate() on paths used by
+    # getdents and trophy scans. The old version preferred a staged folder
+    # exclusively and thereby HID every sibling served only by SAF.
+    # Use the same merged BSF1 READDIR + staged view as OpenDir.
+    iter_source = saf_cpp.read_text()
+    begin = iter_source.find("bool SafFsBackend::Iterate(\n")
+    end = iter_source.find("\n} // namespace Core::FileSys", begin)
+    if begin < 0 or end < 0 or iter_source.count("bool SafFsBackend::Iterate(\n") != 1:
+        raise RuntimeError("Modern SafFsBackend::Iterate signature changed")
+    iteration = """bool SafFsBackend::Iterate(
+    std::string_view guest_path,
+    const std::function<void(const std::filesystem::path&, bool)>& callback) {
+    // BIONIC_021_SAF_MERGED_DIRECTORY: no staged-only early return.
+    std::vector<SafEntry> entries;
+    if (!ListEntries(guest_path, entries)) return false;
+    for (const auto& entry : entries) {
+        if (entry.name.empty() || entry.name == "." || entry.name == ".." ||
+            entry.name.find('/') != std::string::npos ||
+            entry.name.find('\\\\') != std::string::npos) continue;
+        std::string child{guest_path};
+        if (!child.ends_with('/')) child.push_back('/');
+        child += entry.name;
+        const auto resolved = Resolve(child);
+        if (!resolved.empty()) callback(resolved, !entry.is_directory);
+    }
+    return true;
+}
+"""
+    saf_cpp.write_text(iter_source[:begin] + iteration + iter_source[end:])
+
+    # Report genuine SAF failures to the Java frontend instead of crashing
+    # with an assertion after the VFS mount. Do not fake a valid eboot.
+    emulator = root / "src/emulator.cpp"
+    old_assert = ('    ASSERT_MSG(mnt->Exists(guest_eboot_path), '
+                  '"Guest app\\'s main executable {} does not exist",\\n'
+                  '               guest_eboot_path);\\n')
+    new_assert = """#if defined(__ANDROID__) && defined(ENABLE_BACHATA_RUNTIME)
+    if (!mnt->Exists(guest_eboot_path)) {
+        LOG_ERROR(Loader, "BIONIC_021_SAF_EBOOT_UNAVAILABLE: VFS path {} not reachable",
+                  guest_eboot_path);
+        if (onRuntimeError) onRuntimeError("CONTENT_UNAVAILABLE");
+        if (onRuntimeStopped) onRuntimeStopped(1);
+        return;
+    }
+    LOG_INFO(Loader, "BIONIC_021_SAF_EBOOT_RESOLVED {}", guest_eboot_path);
+#else
+    ASSERT_MSG(mnt->Exists(guest_eboot_path), "Guest app's main executable {} does not exist",
+               guest_eboot_path);
+#endif
+"""
+    once(emulator, old_assert, new_assert)
+
     # Android native sources are outside the rehydrated upstream checkout.
     # Add exactly this source directory as an include for the shadPS4 target.
     cmake = root / "CMakeLists.txt"
