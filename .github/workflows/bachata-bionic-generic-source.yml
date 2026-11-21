@@ -1,12 +1,13 @@
-name: Bachata S4+ generic shadPS4 Android/Bionic source integration
+name: Bachata S4+ Bionic 0.16.1 port with official 0.18.1 release parity
 on:
   # The user requested an actual Android APK to test the fixed launch.
   # New commits supersede earlier builds; only the latest complete core runs.
   push:
-    branches: [feature/bionic-arm64-core-20261119]
+    branches: [feature/bionic-release026-base0161-20261121]
     paths:
       - '.github/workflows/bachata-bionic-generic-source.yml'
       - 'bionic/generic/**'
+      - 'bionic/reference/**'
   workflow_dispatch:
 
 # One complete Bionic APK build per branch. New source revisions supersede old builds.
@@ -34,6 +35,19 @@ jobs:
           path: generic-upstream
           submodules: false
           persist-credentials: false
+      - name: Audit release 0.2.6 native/glibc ELF against working shadPS4 0.16.1 source
+        run: |
+          set -euo pipefail
+          mkdir -p out/reference
+          curl -fL --retry 4 --retry-delay 3 \
+            'https://github.com/JICA98/Bachata-S4/releases/download/v0.2.6/bachatas4-0.2.6-release.apk' \
+            -o out/reference/bachatas4-0.2.6-release.apk
+          python3 bionic/reference/audit_release_026.py \
+            --source generic-upstream \
+            --release-apk out/reference/bachatas4-0.2.6-release.apk \
+            --json-out out/reference/release-versus-source.json
+          echo 'BIONIC_RELEASE_026_VS_0161_BINARY_PROVENANCE_VERIFIED' >> "$GITHUB_STEP_SUMMARY"
+
       - name: Validate overlays and native source patch application
         run: |
           set -euo pipefail
@@ -256,6 +270,15 @@ jobs:
           # Cache hit/miss counts determine whether a future native build can
           # be reduced further without dropping required emulator components.
           ccache --show-stats || true
+
+      - name: Compare freshly compiled Android ELF to verified release loader ABI
+        run: |
+          set -euo pipefail
+          python3 bionic/reference/audit_release_026.py \
+            --source generic-upstream \
+            --built-core out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so \
+            --json-out out/bionic/stage/BIONIC_RELEASE_026_COMPATIBILITY.json
+          echo 'BIONIC_NATIVE_0161_LOADER_ABI_VS_0181_RELEASE_AUDITED' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build original Bachata JNI ABI adapter for integrated core
         run: |
