@@ -24,37 +24,32 @@ def integrate(source: Path, overlay: Path) -> None:
             raise RuntimeError(f"Missing Bachata JNI/native window implementation: {name}")
 
     main = source / "src/main.cpp"
-    # glibc execinfo is not part of the Android NDK. Keep Linux host crash
-    # symbolization, while recording ARM64 PC/LR on Bionic without stubbing HLE.
-    source_main = main.read_text()
-    if "#include <execinfo.h>" in source_main and (
-            "#if !defined(__ANDROID__)\\n#include <execinfo.h>" not in source_main):
-        once(main, "#include <execinfo.h>\\n",
-             "#if !defined(__ANDROID__)\\n#include <execinfo.h>\\n#endif\\n")
-        source_main = main.read_text()
+    # NDK Bionic does not expose glibc execinfo; keep Linux backtraces, and
+    # record host PC/LR/SP on Android. Do not alter FEX guest signal handling.
+    if "#include <execinfo.h>" in main.read_text():
+        once(main, "#include <execinfo.h>\n",
+             "#ifndef __ANDROID__\n#include <execinfo.h>\n#endif\n")
     old_frames = (
-        "        void* frames[64];\\n"
-        "        const int count = ::backtrace(frames, 64);\\n"
-        "        ::backtrace_symbols_fd(frames, count, fd);\\n"
+        "        void* frames[64];\n"
+        "        const int count = ::backtrace(frames, 64);\n"
+        "        ::backtrace_symbols_fd(frames, count, fd);\n"
     )
-    if old_frames in source_main:
-        new_frames = (
-            "#if defined(__ANDROID__) && defined(__aarch64__)\\n"
-            "        const auto* context = reinterpret_cast<const ucontext_t*>(uctx);\\n"
-            "        if (context != nullptr) {\\n"
-            "            char where[192];\\n"
-            "            const int n = ::snprintf(where, sizeof(where),\\n"
-            "                \\"BIONIC_021_CRASH pc=%#llx lr=%#llx sp=%#llx\\\\n\\",\\n"
-            "                static_cast<unsigned long long>(context->uc_mcontext.pc),\\n"
-            "                static_cast<unsigned long long>(context->uc_mcontext.regs[30]),\\n"
-            "                static_cast<unsigned long long>(context->uc_mcontext.sp));\\n"
-            "            if (n > 0) ::write(fd, where, static_cast<size_t>(n));\\n"
-            "        }\\n"
-            "#else\\n"
-            + old_frames +
-            "#endif\\n"
-        )
-        once(main, old_frames, new_frames)
+    if old_frames in main.read_text():
+        android_frames = """#ifdef __ANDROID__
+        const auto* context = reinterpret_cast<const ucontext_t*>(uctx);
+        if (context != nullptr) {
+            char where[192];
+            const int n = ::snprintf(where, sizeof(where),
+                "BIONIC_021_CRASH pc=%#llx lr=%#llx sp=%#llx\\n",
+                static_cast<unsigned long long>(context->uc_mcontext.pc),
+                static_cast<unsigned long long>(context->uc_mcontext.regs[30]),
+                static_cast<unsigned long long>(context->uc_mcontext.sp));
+            if (n > 0 && n < static_cast<int>(sizeof(where)))
+                ::write(fd, where, static_cast<size_t>(n));
+        }
+#else
+"""
+        once(main, old_frames, android_frames + old_frames + "#endif\n")
 
     # Keep upstream modern SAF, IPC, guest FEX and main CLI logic untouched.
     if "int BachataCoreMain(int argc, char* argv[])" not in main.read_text():
@@ -102,7 +97,8 @@ void Emulator::Restart(""")
         "# BIONIC_021_ANDROID_NATIVE_CORE\n"
         'target_sources(shadps4 PRIVATE "' + str(overlay / "android_native_core.cpp") + '")\n'
         'target_include_directories(shadps4 PRIVATE "' + str(overlay) + '")\n'
-        "target_compile_definitions(shadps4 PRIVATE ANDROID=1)\n"\n        "target_link_libraries(shadps4 PRIVATE android log)\n"
+        "target_compile_definitions(shadps4 PRIVATE ANDROID=1)\n"
+        "target_link_libraries(shadps4 PRIVATE android log)\n"
         'set_target_properties(shadps4 PROPERTIES OUTPUT_NAME "bachata_native_runtime")\n'
     )
     data = data.replace(anchor, additions + anchor, 1)
