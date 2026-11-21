@@ -85,6 +85,17 @@ jobs:
           sed -n '285,411p' modern-core/src/emulator.cpp
           echo 'BIONIC_021_SAF_BACKEND_METHODS_REVIEWED'
 
+      - name: Inspect existing HostFsBackend constructor and IFile implementation
+        run: |
+          set -euo pipefail
+          echo '#### HOST FILE BACKEND HEADER'
+          sed -n '1,280p' modern-core/src/core/file_sys/backends/host_fs.h
+          echo '#### HOST FILE BACKEND SOURCE'
+          sed -n '1,370p' modern-core/src/core/file_sys/backends/host_fs.cpp
+          echo '#### VFS READFILE and OPEN DIR'
+          sed -n '607,770p' modern-core/src/core/file_sys/fs.cpp
+          echo BIONIC_021_HOST_FS_FOR_SAF_AUDITED
+
       - name: Save exact port source SAF report
         uses: actions/upload-artifact@v4
         with:
