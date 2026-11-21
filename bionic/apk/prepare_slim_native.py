@@ -29,6 +29,12 @@ BOOT_MARKERS = (
     b"BIONIC_VULKAN_LOADER_READY",
     b"Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run",
 )
+MODERN_BOOT_MARKERS = (
+    b"BIONIC_MANAGED_USER_PATH_READY",
+    b"BIONIC_021_ANDROID_SURFACE_READY",
+    b"BIONIC_021_VULKAN_CUSTOM_READY",
+    b"Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run",
+)
 
 
 def run(*args: str) -> str:
@@ -55,6 +61,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("stage", type=Path)
     ap.add_argument("--strip", required=True, type=Path)
+    ap.add_argument("--modern", action="store_true",
+                    help="Require real shadPS4 0.21.1 Bionic boot/WSI/Vulkan markers")
     args = ap.parse_args()
     libdir = args.stage / "lib/arm64-v8a"
     libs = {p.name: p for p in libdir.glob("*.so") if p.is_file()}
@@ -79,7 +87,7 @@ def main() -> None:
         p.unlink()
     # Retain other legitimate dependencies / manually dlopened libraries.
     core = libs["libbachata_bionic_core.so"]
-    for m in BOOT_MARKERS:
+    for m in (MODERN_BOOT_MARKERS if args.modern else BOOT_MARKERS):
         if m not in core.read_bytes():
             raise SystemExit(f"SLIM_ABORT: Bionic core missing marker {m!r}")
     initial_exports = public_symbols(core)
