@@ -70,7 +70,10 @@ def apply(upstream: Path, overlay: Path) -> None:
     replace(
         platform,
         "#include <vector>\n",
-        "#include <cstdlib>\n#include <dlfcn.h>\n#include <vector>\n",
+        "#include <cstdlib>\n#include <dlfcn.h>\n#include <vector>\n"
+        "#if defined(__ANDROID__)\n"
+        "#include \"android_vk_icd.h\"\n"
+        "#endif\n",
     )
     replace(
         platform,
@@ -80,7 +83,13 @@ def apply(upstream: Path, overlay: Path) -> None:
         '#if defined(__ANDROID__)\n'
         '    static PFN_vkGetInstanceProcAddr get_instance_proc = []() -> PFN_vkGetInstanceProcAddr {\n'
         '        const char* requested = std::getenv("SDL_VULKAN_LIBRARY");\n'
-        '        const char* candidates[] = {requested, "libvulkan.so", "/system/lib64/libvulkan.so"};\n'
+        '        static const std::string selected_icd = BachataVulkan::SelectedIcdLibrary();\n'
+        '        const char* candidates[] = {selected_icd.empty() ? nullptr : selected_icd.c_str(),\n'
+        '                                    requested, "libvulkan.so", "/system/lib64/libvulkan.so"};\n'
+        '        if (BachataVulkan::ManifestWasRequested()) {\n'
+        '            LOG_WARNING(Render_Vulkan, "BIONIC_VULKAN_ICD_MANIFEST resolved={} library={}",\n'
+        '                        !selected_icd.empty(), selected_icd);\n'
+        '        }\n'
         '        for (const char* path : candidates) {\n'
         '            if (!path || !path[0]) continue;\n'
         '            void* handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);\n'
@@ -99,8 +108,15 @@ def apply(upstream: Path, overlay: Path) -> None:
         '                api = "vk_icdGetInstanceProcAddr";\n'
         '            }\n'
         '            if (proc) {\n'
-        '                LOG_INFO(Render_Vulkan, "BIONIC_VULKAN_LOADER_READY path={} api={} fallback={}",\n'
+        '                LOG_WARNING(Render_Vulkan, "BIONIC_VULKAN_LOADER_READY path={} api={} fallback={}",\n'
         '                         path, api, requested && std::strcmp(path, requested) != 0);\n'
+        '                if (selected_icd.empty() && requested &&\n'
+        '                    std::strcmp(requested, "libvulkan.so.1") == 0 &&\n'
+        '                    std::strcmp(path, requested) != 0) {\n'
+        '                    LOG_WARNING(Render_Vulkan, "BIONIC_VULKAN_SYSTEM_FALLBACK: "
+'
+        '                                "Linux loader unavailable; Mesa Turnip not proven active");\n'
+        '                }\n'
         '                // Retain handle: Vulkan-Hpp dispatcher stores pointers into this ELF.\n'
         '                return proc;\n'
         '            }\n'
@@ -690,6 +706,17 @@ def apply(upstream: Path, overlay: Path) -> None:
         '            UNREACHABLE_MSG("Unhandled access violation at code address {}: {} address {}",\n',
     )
 
+    vk_instance = upstream / "src/video_core/renderer_vulkan/vk_instance.cpp"
+    replace(
+        vk_instance,
+        '    vendor_name = driver.driverName.data();\n',
+        '    vendor_name = driver.driverName.data();\n'
+        '#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n'
+        '    LOG_WARNING(Render_Vulkan, "BIONIC_VULKAN_DEVICE driver_id={} name={} vendor={:#x}",\n'
+        '                static_cast<unsigned>(driver_id), driver.driverName.data(), properties.vendorID);\n'
+        '#endif\n',
+    )
+
     cmake = upstream / "CMakeLists.txt"
     replace(cmake, "add_executable(shadps4\n",
             "add_library(shadps4 SHARED\n")
@@ -727,13 +754,14 @@ def apply(upstream: Path, overlay: Path) -> None:
         'target_sources(shadps4 PRIVATE "' + str(overlay / "android_libc_compat.cpp") + '")\n'
         'target_sources(shadps4 PRIVATE "' + str(overlay / "android_saf_transport.cpp") + '")\n'
         'target_sources(shadps4 PRIVATE "' + str(overlay / "android_saf_bridge.cpp") + '")\n'
+        'target_sources(shadps4 PRIVATE "' + str(overlay / "android_vk_icd.cpp") + '")\n'
         'target_include_directories(shadps4 PRIVATE "' + str(overlay) + '")\n'
         'target_link_libraries(shadps4 PRIVATE android log)\n'
         'set_target_properties(shadps4 PROPERTIES OUTPUT_NAME "bachata_bionic_core")\n'
         + anchor, 1)
     cmake.write_text(source, encoding="utf-8")
 
-    for file in ("android_surface.h", "android_window.cpp", "android_native_core.cpp", "android_libc_boot.cpp", "android_libc_compat.cpp", "android_saf_transport.h", "android_saf_bridge.h", "android_saf_transport.cpp", "android_saf_bridge.cpp"):
+    for file in ("android_surface.h", "android_window.cpp", "android_native_core.cpp", "android_libc_boot.cpp", "android_libc_compat.cpp", "android_saf_transport.h", "android_saf_bridge.h", "android_saf_transport.cpp", "android_saf_bridge.cpp", "android_vk_icd.h", "android_vk_icd.cpp"):
         if not (overlay / file).is_file():
             raise RuntimeError(f"missing Android source: {file}")
     print("OK: generic shadPS4 core source patched for Android native surface and JNI")
