@@ -78,25 +78,34 @@ def apply(root: Path) -> dict:
     # Reattach all checkpoints to the REAL 0.18 registration implementation.
     libs = root / "src/core/libraries/libs.cpp"
     prefix_include(libs, '#include "common/logging/log.h"', "HLE log")
+    # Upstream 0.18 uses a per-module registration table instead of the
+    # old single "Kernel::RegisterLib; LibcInternal::ForceRegisterLib" block.
+    # Keep that genuine upstream table, but run the FEX libc HLE registration
+    # before the PS4 module loader so the guest gets its allocator exports.
     require_replace(
         libs,
-        "    Libraries::Kernel::RegisterLib(sym);\n"
-        "    Libraries::LibcInternal::ForceRegisterLib(sym);\n",
+        "        for (auto mod : ModulesToLoad) {\n",
         '#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n'
-        '    LOG_INFO(Lib_Kernel, "BIONIC_BOOT_STAGE=KERNEL_HLE_BEGIN");\n'
-        '    Common::Log::Flush();\n'
+        '        LOG_INFO(Lib_Kernel, "BIONIC_BOOT_STAGE=KERNEL_HLE_BEGIN");\n'
+        '        Common::Log::Flush();\n'
         '#endif\n'
-        '    Libraries::Kernel::RegisterLib(sym);\n'
+        "        for (auto mod : ModulesToLoad) {\n",
+        "0.18 HLE table startup")
+    require_replace(
+        libs,
+        "        }\n    }\n}\n\n} // namespace Libraries\n",
+        "        }\n"
         '#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n'
-        '    LOG_INFO(Lib_Kernel, "BIONIC_BOOT_STAGE=KERNEL_HLE_END");\n'
-        '    Common::Log::Flush();\n'
+        '        LOG_INFO(Lib_Kernel, "BIONIC_BOOT_STAGE=KERNEL_HLE_END");\n'
+        '        Common::Log::Flush();\n'
+        '        Libraries::LibcInternal::ForceRegisterLib(sym);\n'
+        '        LOG_INFO(Lib_Kernel, "BIONIC_BOOT_STAGE=LIBC_HLE_END");\n'
+        '        Common::Log::Flush();\n'
         '#endif\n'
-        '    Libraries::LibcInternal::ForceRegisterLib(sym);\n'
-        '#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n'
-        '    LOG_INFO(Lib_Kernel, "BIONIC_BOOT_STAGE=LIBC_HLE_END");\n'
-        '    Common::Log::Flush();\n'
-        '#endif\n',
-        "HLE entry checkpoints")
+        "    }\n}\n\n} // namespace Libraries\n",
+        "FEX libc exports after 0.18 HLE modules")
+    prefix_include(libs, '#include "core/libraries/libc_internal/libc_internal.h"',
+                   "FEX libc internal exports")
     result["portedInterfaces"].append("0.18.1 HLE registration + FEX boot diagnostics")
 
     # Modern input has timestamp-based State and PollState(), but the Android
