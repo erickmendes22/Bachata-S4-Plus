@@ -21,7 +21,7 @@ PATCHED = """if (ANDROID AND CMAKE_CROSSCOMPILING)
         NAMES glslangValidator
         PATHS /usr/bin /usr/local/bin
         NO_DEFAULT_PATH REQUIRED)
-    set(GLSLANG_COMPILER "\${BACHATA_HOST_GLSLANG_VALIDATOR}")
+    set(GLSLANG_COMPILER "${BACHATA_HOST_GLSLANG_VALIDATOR}")
 elseif (TARGET glslang-standalone)
     set(GLSLANG_COMPILER glslang-standalone)
 elseif (TARGET glslang::glslang-standalone)
