@@ -123,7 +123,8 @@ jobs:
     timeout-minutes: 180
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: 2G
+      CCACHE_MAXSIZE: 3G
+      CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_COMPRESS: "true"
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
@@ -196,6 +197,7 @@ jobs:
             out/bionic/libadrenotools
             out/bionic/adrenotools-android
             out/bionic/gpu-build
+            out/bionic/shadps4-generic-android
           key: bachata-full-bionic-r30-${{ github.sha }}
           restore-keys: |
             bachata-full-bionic-r30-
@@ -274,6 +276,7 @@ jobs:
             out/bionic/libadrenotools
             out/bionic/adrenotools-android
             out/bionic/gpu-build
+            out/bionic/shadps4-generic-android
           key: bachata-full-bionic-r30-${{ github.sha }}
 
   assemble-bionic-apk:
