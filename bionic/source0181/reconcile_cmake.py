@@ -83,7 +83,7 @@ def reconcile(root: Path) -> dict:
         # protobuf::protoc would be an AArch64 binary and cannot run on Ubuntu.
         block=block.replace(
             "    COMMAND protobuf::protoc\n",
-            "    COMMAND \\"\\$"+"{BACHATA_HOST_PROTOC_EXECUTABLE}\\"\n",
+            '    COMMAND "${BACHATA_HOST_PROTOC_EXECUTABLE}"\n',
         )
         if "protobuf::protoc" in block:
             raise RuntimeError("Cross-compiled ARM64 protoc still in host generator")
