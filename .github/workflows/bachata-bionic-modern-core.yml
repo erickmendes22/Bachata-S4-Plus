@@ -250,6 +250,19 @@ jobs:
           test -s "$host_font"
           c++ -std=c++17 -O2 "$host_font" -o "$root/imgui-font-host"
           test -x "$root/imgui-font-host"
+          # Host protoc must match the Android protobuf 7.36.0 runtime.
+          # The ARM64 protoc target cannot execute on an Ubuntu runner.
+          protoc_archive="$root/protoc-36.0-linux-x86_64.zip"
+          curl -fL --retry 3 --retry-delay 3 \
+            'https://github.com/protocolbuffers/protobuf/releases/download/v36.0/protoc-36.0-linux-x86_64.zip' \
+            -o "$protoc_archive"
+          printf '%s  %s\n' \
+            bc8211ce760bd43ee21ddc145d6d9dbaeeabae205267a79d9054a240e367d4b4 \
+            "$protoc_archive" | sha256sum -c -
+          mkdir -p "$root/host-protoc"
+          unzip -oq "$protoc_archive" -d "$root/host-protoc"
+          test -x "$root/host-protoc/bin/protoc"
+          "$root/host-protoc/bin/protoc" --version | grep -F 'libprotoc 36.0'
           cmake -S modern-core -B "$root/build" -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=33 \
@@ -260,6 +273,7 @@ jobs:
             -DFEXCORE_GUEST_CPU_SOURCE_DIR="$root/fex" \
             -DFEXCORE_GUEST_CPU_BUILD_DIR="$root/fex-android" \
             -DIMGUI_FONT_EMBED_EXECUTABLE="$root/imgui-font-host" \
+            -DWITH_PROTOC="$root/host-protoc/bin/protoc" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DBACHATA_ANDROID_FFMPEG_PREFIX="$root/deps/prefix" \
