@@ -31,12 +31,12 @@ def integrate(source: Path) -> None:
     data = platform.read_text()
     # The NDK defines __ANDROID__. CMake's ANDROID is not necessarily a C++ macro.
     # Without this, the compiler can select Linux X11/Wayland WSI accidentally.
-    legacy_selector = "#if defined(ANDROID)\\n#define VK_USE_PLATFORM_ANDROID_KHR"
+    legacy_selector = "#if defined(ANDROID)\n#define VK_USE_PLATFORM_ANDROID_KHR"
     if legacy_selector in data:
         replace_once(platform, legacy_selector,
-                     "#if defined(__ANDROID__) || defined(ANDROID)\\n#define VK_USE_PLATFORM_ANDROID_KHR")
+                     "#if defined(__ANDROID__) || defined(ANDROID)\n#define VK_USE_PLATFORM_ANDROID_KHR")
         data = platform.read_text()
-    if "#if defined(__ANDROID__) || defined(ANDROID)\\n#define VK_USE_PLATFORM_ANDROID_KHR" not in data:
+    if "#if defined(__ANDROID__) || defined(ANDROID)\n#define VK_USE_PLATFORM_ANDROID_KHR" not in data:
         raise RuntimeError("Android Vulkan macro selector is not NDK compatible")
     if "#define VK_USE_PLATFORM_ANDROID_KHR" not in data:
         raise RuntimeError("Modern core lacks Android Vulkan platform feature macro")
