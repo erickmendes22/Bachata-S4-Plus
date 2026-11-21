@@ -154,9 +154,13 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             clang lld llvm cmake ninja-build bison flex pkg-config \
-            build-essential nasm git unzip curl binutils ccache
+            build-essential nasm git unzip curl binutils ccache glslang-tools
           mkdir -p out/bionic-modern
           python3 bionic/modern/port_android_deps.py --source modern-core
+          python3 bionic/modern/port_host_shaders.py --source modern-core
+          command -v glslangValidator
+          glslangValidator --version | head -3
+          grep -Fq 'BIONIC_021_HOST_SHADER_COMPILER' modern-core/src/video_core/host_shaders/CMakeLists.txt
           grep -Fq 'BIONIC_021_NDK_FFMPEG' modern-core/externals/CMakeLists.txt
           grep -Fq 'BIONIC_021_OPENAL_NO_LINUX_AUDIO' modern-core/externals/CMakeLists.txt
 
