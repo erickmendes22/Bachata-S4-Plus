@@ -46,6 +46,23 @@ echo "BIONIC_IMGUI_FONT_HOST_SOURCE: $HOST_FONT_SOURCE"
 "$HOST_FONT_EMBED" 2>&1 | head -1 || true
 test -x "$HOST_FONT_EMBED"
 
+# shadNet's protoc is a HOST tool. An older CMakeCache.txt can retain
+# /usr/bin/protoc from a prior run even when that executable no longer exists.
+# Explicitly overwrite the cached FILEPATH rather than relying on find_program.
+PROTOC_CMAKE_ARGS=()
+HOST_PROTOC=""
+if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == 1 ]]; then
+  HOST_PROTOC="$(command -v protoc || true)"
+  test -n "$HOST_PROTOC" && test -x "$HOST_PROTOC" || {
+    echo "::error::shadPS4 0.18.1 host protoc is not on PATH" >&2; exit 2;
+  }
+  test "$("$HOST_PROTOC" --version)" == "libprotoc 36.0" || {
+    echo "::error::shadPS4 0.18.1 requires host protoc 36.0: $HOST_PROTOC" >&2; exit 2;
+  }
+  PROTOC_CMAKE_ARGS=("-DBACHATA_HOST_PROTOC_EXECUTABLE:FILEPATH=$HOST_PROTOC")
+  echo "BIONIC_SHADNET_PROTOC_HOST=$HOST_PROTOC"
+fi
+
 cmake -S "$SRC" -B "$BUILD" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
   -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=33 -DANDROID_STL=c++_shared \
@@ -55,9 +72,30 @@ cmake -S "$SRC" -B "$BUILD" -G Ninja \
   -DFEXCORE_GUEST_CPU_SOURCE_DIR="$FEX_SOURCE" \
   -DFEXCORE_GUEST_CPU_BUILD_DIR="$FEX_BUILD" \
   -DIMGUI_FONT_EMBED_EXECUTABLE="$HOST_FONT_EMBED" \
+  "${PROTOC_CMAKE_ARGS[@]}" \
   -DBACHATA_ANDROID_FFMPEG_PREFIX="$WORK/deps/prefix" \
   -DCMAKE_PREFIX_PATH="$WORK/deps/prefix" \
   -DCMAKE_FIND_ROOT_PATH="$WORK/deps/prefix"
+
+# Validate the generated Ninja rule and actually run protoc BEFORE launching
+# thousands of unrelated Android C++ compilation tasks.
+if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == 1 ]]; then
+  grep -Fqx "BACHATA_HOST_PROTOC_EXECUTABLE:FILEPATH=$HOST_PROTOC" "$BUILD/CMakeCache.txt" || {
+    echo "::error::CMake still has a stale host protoc FILEPATH" >&2; exit 3;
+  }
+  ninja -C "$BUILD" -t commands shadnet_proto_gen/shadnet.pb.cc |
+    grep -Fq "$HOST_PROTOC" || {
+      echo "::error::Generated shadNet rule is not using protoc 36.0" >&2; exit 3;
+    }
+  ninja -C "$BUILD" shadnet_proto_gen/shadnet.pb.cc
+  test -s "$BUILD/shadnet_proto_gen/shadnet.pb.h" || {
+    echo "::error::shadNet protobuf header not generated" >&2; exit 3;
+  }
+  test -s "$BUILD/shadnet_proto_gen/shadnet.pb.cc" || {
+    echo "::error::shadNet protobuf source not generated" >&2; exit 3;
+  }
+  echo "BIONIC_SHADNET_HOST_PROTOC_36_GENERATION_PASS"
+fi
 
 # Keep compiling independent translation units after an error so one run reveals
 # ALL Android portability failures instead of the first failing source.
