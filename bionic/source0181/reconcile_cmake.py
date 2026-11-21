@@ -99,6 +99,9 @@ def reconcile(root: Path) -> dict:
         changes.append({"group":"SHADNET","upstream0181Added":["protobuf generator","client.cpp","server_probe.cpp"]})
     if missing_required:
         raise RuntimeError("Missing required 0.18.1 sources: "+json.dumps(missing_required[:24]))
+    # Removing obsolete 0.16.1 entries may leave whitespace-only lines.
+    # Normalize trailing spaces before strict git diff --check preflight.
+    current="\n".join(line.rstrip() for line in current.split("\n"))
     cmake.write_text(current)
     unresolved=[x for x in set(SOURCE.findall(current))
                 if x not in SPECIAL_GENERATED and not (root/x).is_file()]
