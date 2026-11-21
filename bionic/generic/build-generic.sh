@@ -36,8 +36,12 @@ mkdir -p "$BUILD" "$STAGE"
 # Dear ImGui font-to-C emitter is a build-time HOST tool. NDK targets cannot
 # run on the Ubuntu Actions runner (and cross-CMake correctly forbids that).
 HOST_FONT_EMBED="$BUILD/bachata-imgui-font-embed-host"
-HOST_FONT_SOURCE="$SRC/externals/dear_imgui/misc/fonts/binary_to_compressed_c.cpp"
-test -s "$HOST_FONT_SOURCE" || { echo "Missing Dear ImGui host font generator" >&2; exit 2; }
+HOST_FONT_SOURCE="$SRC/externals/imgui/misc/fonts/binary_to_compressed_c.cpp"
+if [[ ! -s "$HOST_FONT_SOURCE" ]]; then
+  HOST_FONT_SOURCE="$SRC/externals/dear_imgui/misc/fonts/binary_to_compressed_c.cpp"
+fi
+test -s "$HOST_FONT_SOURCE" || { echo "Missing ImGui HOST font generator in 0.18.1 and 0.16.1 trees" >&2; exit 2; }
+echo "BIONIC_IMGUI_FONT_HOST_SOURCE: $HOST_FONT_SOURCE"
 "${HOST_CXX:-c++}" -std=c++17 -O2 "$HOST_FONT_SOURCE" -o "$HOST_FONT_EMBED"
 "$HOST_FONT_EMBED" 2>&1 | head -1 || true
 test -x "$HOST_FONT_EMBED"
