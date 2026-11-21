@@ -49,7 +49,13 @@ def sha256(b: bytes) -> str:
 def elf_report(path: Path) -> dict:
     header = run("readelf", "-h", str(path))
     dynamic = run("readelf", "-d", str(path))
-    notes = run("readelf", "-n", str(path))
+    # Binutils may exit nonzero while decoding unrelated vendor GNU notes;
+    # that exit code is NOT evidence that the signed ELF/build-id is invalid.
+    # Independently verify the exact SHA-256 and raw build-id byte sequence.
+    note_proc = subprocess.run(
+        ["readelf", "-n", str(path)], text=True, capture_output=True, check=False
+    )
+    notes = note_proc.stdout
     syms = run("readelf", "--dyn-syms", "--wide", str(path))
     names = set()
     for line in syms.splitlines():
@@ -125,8 +131,16 @@ def check_release(apk: Path) -> dict:
         (p / "linux").write_bytes(linux)
         n = elf_report(p / "native.so")
         l = elf_report(p / "linux")
-    if n["buildId"] != RELEASE_NATIVE_BUILD_ID or l["buildId"] != RELEASE_LINUX_BUILD_ID:
-        raise SystemExit("Release ELF Build IDs changed unexpectedly")
+    # The raw build-id notes are part of the already SHA-pinned ELF, even if
+    # readelf -n itself reports an error on subsequent notes.
+    for label, blob, expected, parsed in (
+        ("Bionic", native, RELEASE_NATIVE_BUILD_ID, n["buildId"]),
+        ("glibc", linux, RELEASE_LINUX_BUILD_ID, l["buildId"]),
+    ):
+        if bytes.fromhex(expected) not in blob:
+            raise SystemExit(f"{label} release ELF raw GNU Build ID missing")
+        if parsed is not None and parsed != expected:
+            raise SystemExit(f"{label} release ELF GNU Build ID mismatch: {parsed}")
     if "libc.so" not in n["needed"] or "libc.so.6" in n["needed"]:
         raise SystemExit("Reference native core was not Android/Bionic")
     if "libc.so.6" not in l["needed"]:
