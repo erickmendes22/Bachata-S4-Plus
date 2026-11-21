@@ -175,13 +175,11 @@ def reconcile(root: Path) -> dict:
     # vk_dispatch_reload.cpp. 0.18.1 no longer has this translation unit.
     # Drop BOTH the source entry (handled above) and its orphaned property
     # declaration; otherwise CMake still references a non-existent file.
-    old_vk_dispatch_rule = (
-        "set_source_files_properties(\\n"
-        "    src/video_core/buffer_cache/vk_dispatch_reload.cpp\\n"
-        "    PROPERTIES COMPILE_FLAGS \\"-fno-lto\\"\\n"
-        ")\\n"
-    )
-    old_vk_dispatch_rule = old_vk_dispatch_rule.replace("\\\\n", "\\n")
+    old_vk_dispatch_rule = '''set_source_files_properties(
+    src/video_core/buffer_cache/vk_dispatch_reload.cpp
+    PROPERTIES COMPILE_FLAGS "-fno-lto"
+)
+'''
     if not (root/"src/video_core/buffer_cache/vk_dispatch_reload.cpp").is_file():
         if old_vk_dispatch_rule in current:
             current = current.replace(old_vk_dispatch_rule, "", 1)
