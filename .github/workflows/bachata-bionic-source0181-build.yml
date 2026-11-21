@@ -1,0 +1,537 @@
+name: Bachata S4+ REAL shadPS4 0.18.1 source + Bionic FEX Android APK
+on:
+  # The user requested an actual Android APK to test the fixed launch.
+  # New commits supersede earlier builds; only the latest complete core runs.
+  push:
+    branches: [feature/bionic-shadps4-0181-source-port-20261121]
+    paths:
+      - '.github/workflows/bachata-bionic-generic-source.yml'
+      - 'bionic/generic/**'
+      - 'bionic/source0181/**'
+      - '.github/workflows/bachata-bionic-source0181-build.yml'
+  workflow_dispatch:
+
+# One complete Bionic APK build per branch. New source revisions supersede old builds.
+concurrency:
+  group: bachata-bionic-full-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write  # Cancel runs started before this concurrency rule existed.
+
+jobs:
+  bionic-source-preflight:
+    name: Fast Bionic/FEX source and ABI audit (no APK)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout Bachata sources
+        uses: actions/checkout@v4
+      - name: Merge real shadPS4 0.18.1 with working FEX/Android Bionic core
+        run: |
+          set -euo pipefail
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/zenithblue-oss/shadps4-arm64.git generic-upstream
+          git -C generic-upstream checkout --quiet be6bc2e9c60799e071dd2fafa6216e8d80ec619c
+          git -C generic-upstream config user.name 'Bachata Source Port CI'
+          git -C generic-upstream config user.email 'source-port@users.noreply.github.com'
+          git -C generic-upstream remote add shadps4 https://github.com/shadps4-emu/shadPS4.git
+          git -C generic-upstream fetch --quiet --filter=blob:none shadps4 3912336fdfffbd5c99b59d92e997ea6ebd62216c
+          python3 bionic/source0181/rebase_arm64.py --source generic-upstream --output out/source0181
+          python3 bionic/source0181/port_0181.py --source generic-upstream --report out/source0181/bionic-0181-parity.json
+          grep -Fq 'set(EMULATOR_VERSION_MINOR "18")' generic-upstream/CMakeLists.txt
+      - name: Validate overlays and native source patch application
+        run: |
+          set -euo pipefail
+          python3 -m py_compile bionic/generic/*.py
+          python3 bionic/generic/audit_fex_libc.py --upstream generic-upstream
+          python3 bionic/source0181/port_0181.py --source generic-upstream --report out/source0181/preflight-parity.json
+          git -C generic-upstream diff --check
+          grep -Fq 'BIONIC_BOOT_STAGE=HLE_REGISTER_END' generic-upstream/src/emulator.cpp
+          grep -Fq 'BIONIC_BOOT_STAGE=GUEST_LIBC_OBJECTS_END' generic-upstream/src/emulator.cpp
+          grep -Fq 'RegisterFexLibcGuestObjects' generic-upstream/src/core/libraries/libc_internal/libc_internal.h
+          grep -Fq 'android_libc_compat.cpp' generic-upstream/CMakeLists.txt
+          grep -Fq 'BachataSaf::Configure' generic-upstream/src/main.cpp
+          grep -Fq 'BachataSaf::Resolve' generic-upstream/src/core/file_sys/fs.cpp
+          grep -Fq 'BachataSaf::List' generic-upstream/src/core/file_sys/fs.cpp
+          grep -Fq 'BachataSaf::DuplicateFd' generic-upstream/src/common/io_file.cpp
+          grep -Fq 'android_saf_bridge.cpp' generic-upstream/CMakeLists.txt
+          grep -Fq 'android_saf_transport.cpp' generic-upstream/CMakeLists.txt
+          grep -Fq 'BIONIC_SAF_READY' bionic/generic/android_saf_bridge.cpp
+          grep -Fq 'BIONIC_VULKAN_DEVICE' generic-upstream/src/video_core/renderer_vulkan/vk_instance.cpp
+          grep -Fq 'BIONIC_VULKAN_ICD_MANIFEST' generic-upstream/src/video_core/renderer_vulkan/vk_platform.cpp
+          grep -Fq 'BIONIC_VULKAN_CUSTOM_BRIDGE_READY' generic-upstream/src/video_core/renderer_vulkan/vk_platform.cpp
+          grep -Fq 'bachata_open_custom_vulkan' generic-upstream/src/video_core/renderer_vulkan/vk_platform.cpp
+          grep -Fq 'BIONIC_VULKAN_CUSTOM_REQUIRED' generic-upstream/src/video_core/renderer_vulkan/vk_platform.cpp
+          grep -Fq 'BIONIC_HOST_FAULT_MODULE' generic-upstream/src/core/signals.cpp
+          grep -Fq 'android_vk_icd.cpp' generic-upstream/CMakeLists.txt
+          grep -Fq 'BIONIC_PRESENT_IDLE_SKIP' generic-upstream/src/core/libraries/videoout/driver.cpp
+          grep -Fq 'PrepareBlankFrame(true)' generic-upstream/src/core/libraries/videoout/driver.cpp
+          grep -Fq 'BIONIC_HOST_FAULT' generic-upstream/src/core/signals.cpp
+          # Ensure we do not resurrect false missing-content workarounds.
+          ! grep -Fq 'BIONIC_FEX_PLAYGO_FULLY_INSTALLED_FALLBACK' generic-upstream/src/core/libraries/playgo/playgo.cpp
+          ! grep -Fq 'BIONIC_FEX_LIBC_HLE_PRELOAD' generic-upstream/src/core/libraries/sysmodule/sysmodule_internal.cpp
+          # Compile the native SAF transport/mount standalone without FEX rebuild.
+          c++ -std=c++20 -Wall -Wextra -Werror -fsyntax-only -I bionic/generic \
+            bionic/generic/android_saf_transport.cpp bionic/generic/android_saf_bridge.cpp \
+            bionic/generic/android_vk_icd.cpp
+          c++ -std=c++20 -O0 -Wall -Wextra -Werror \
+            bionic/generic/android_vk_icd.cpp bionic/generic/android_vk_icd_test.cpp \
+            -I bionic/generic -o /tmp/bachata-icd-test
+          /tmp/bachata-icd-test
+          echo 'Fast Bionic source preflight passed; full build is deliberately opt-in.'
+
+  generic-shadps4-android:
+    # The full core job below compiles and validates the actual source.
+    # Skip an obsolete isolated compilation not required for the APK.
+    if: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Bachata S4+ JNI and Android frontend overlay
+        uses: actions/checkout@v4
+
+      - name: Full generic shadPS4/FEX source (not old onRps4 runtime)
+        uses: actions/checkout@v4
+        with:
+          repository: zenithblue-oss/shadps4-arm64
+          ref: be6bc2e9c60799e071dd2fafa6216e8d80ec619c
+          path: upstream
+          submodules: false
+          persist-credentials: false
+
+      - name: Apply Android native JNI and Vulkan WSI integration
+        run: |
+          set -euo pipefail
+          python3 -m py_compile bionic/generic/port_generic.py
+          python3 bionic/generic/port_generic.py upstream
+          git -C upstream diff --check
+          grep -q 'add_library(shadps4 SHARED' upstream/CMakeLists.txt
+          grep -q 'BachataCoreMain' upstream/src/main.cpp
+          grep -q 'createAndroidSurfaceKHR' upstream/src/video_core/renderer_vulkan/vk_platform.cpp
+          grep -q 'bionic_core' upstream/CMakeLists.txt
+          if grep -Ri 'dev-Ali2008/onRps4-runtime' bionic/generic/; then
+            echo "Obsolete onRps4 runtime reference in native integration" >&2
+            exit 1
+          fi
+
+      - name: Android NDK r30
+        uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            platform-tools
+            ndk;30.0.14904198
+
+      - name: Compile real ARM64/Bionic JNI core entrypoint
+        run: |
+          set -euo pipefail
+          NDK="$ANDROID_HOME/ndk/30.0.14904198"
+          CXX="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang++"
+          mkdir -p out/generic
+          "$CXX" -std=c++23 -O2 -Wall -Wextra -Werror -fPIC \
+            -I bionic/generic \
+            -c bionic/generic/android_native_core.cpp \
+            -o out/generic/android_native_core.o
+          readelf -h out/generic/android_native_core.o | grep -q AArch64
+          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" out/generic/android_native_core.o \
+            | grep -F Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run > /dev/null
+          echo 'JNI entrypoint built as ARM64 Android Bionic object.'
+
+      - name: Preserve generic source patch and object for integration
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bachata-generic-shadPS4-Bionic-JNI-source-validation
+          path: out/generic/android_native_core.o
+          retention-days: 14
+
+  full-ps4-bionic:
+    # Do not spend ~20 minutes compiling for each speculative source change.
+    # Full core and P36 APK build only on explicit workflow_dispatch or
+    # an intentional commit message carrying [build-apk].
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-apk]') }}
+    needs: [bionic-source-preflight]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 3G
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPRESS: "true"
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      - name: Stop older concurrent Bionic builds (pre-concurrency runs)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          endpoint="/repos/${GITHUB_REPOSITORY}/actions/workflows/bachata-bionic-generic-source.yml/runs?branch=feature%2Fbionic-shadps4-0181-source-port-20261121&per_page=100"
+          previous_ids="$(gh api "$endpoint" --jq '.workflow_runs[] | select(.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "pending") | .id')"
+          for previous_id in $previous_ids; do
+            if (( previous_id < GITHUB_RUN_ID )); then
+              echo "Cancel superseded Bionic build #${previous_id} (current #${GITHUB_RUN_ID})"
+              if ! gh api -X POST "/repos/${GITHUB_REPOSITORY}/actions/runs/${previous_id}/cancel" >/dev/null; then
+                current_status="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${previous_id}" --jq '.status')"
+                if [[ "$current_status" != "completed" ]]; then
+                  echo "::error::Failed to cancel concurrent Bionic run #${previous_id}; refusing to start another costly build"
+                  exit 1
+                fi
+              fi
+            fi
+          done
+
+      - name: Bachata S4+ Android JNI integration
+        uses: actions/checkout@v4
+
+      - name: Native Android FEX/Vulkan reference source
+        uses: actions/checkout@v4
+        with:
+          repository: erickmendes22/uncharted-android
+          ref: 148656bc7ae1b8b482d95e33d49f0729421ff477
+          path: port
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Reconstruct REAL upstream shadPS4 0.18.1 Android/FEX source for full build
+        run: |
+          set -euo pipefail
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/zenithblue-oss/shadps4-arm64.git generic-upstream
+          git -C generic-upstream checkout --quiet be6bc2e9c60799e071dd2fafa6216e8d80ec619c
+          git -C generic-upstream config user.name 'Bachata Source Port CI'
+          git -C generic-upstream config user.email 'source-port@users.noreply.github.com'
+          git -C generic-upstream remote add shadps4 https://github.com/shadps4-emu/shadPS4.git
+          git -C generic-upstream fetch --quiet --filter=blob:none shadps4 3912336fdfffbd5c99b59d92e997ea6ebd62216c
+          python3 bionic/source0181/rebase_arm64.py --source generic-upstream --output out/source0181
+          python3 bionic/source0181/port_0181.py --source generic-upstream --report out/source0181/bionic-0181-parity.json
+          grep -Fq 'set(EMULATOR_VERSION_MINOR "18")' generic-upstream/CMakeLists.txt
+          git -C generic-upstream submodule update --init --recursive --jobs 4
+          test -s generic-upstream/externals/sdl3/CMakeLists.txt
+          test -s generic-upstream/src/core/fex/fex_guest_engine.cpp
+          test -s generic-upstream/src/shader_recompiler/recompiler.cpp
+          echo REAL_SHADPS4_0181_SOURCE_AND_BIONIC_HOST_ASSEMBLED
+
+      - name: Android NDK r30
+        uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            platform-tools
+            ndk;30.0.14904198
+
+      - name: Host dependencies for full cross-compilation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang lld llvm git cmake ninja-build python3-venv \
+            bison flex pkg-config curl unzip zip glslang-tools binutils ccache
+          bash -n bionic/build-core.sh
+          bash -n bionic/generic/build-generic.sh
+
+      - name: Restore cross-build and compiler caches (pinned NDK and sources)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .ccache
+            out/bionic/deps
+            out/bionic/fex
+            out/bionic/fex-android
+            out/bionic/libadrenotools
+            out/bionic/adrenotools-android
+            out/bionic/gpu-build
+            out/bionic/shadps4-generic-android
+          key: bachata-full-bionic-r30-${{ github.sha }}
+          restore-keys: |
+            bachata-full-bionic-r30-
+
+      - name: Compile native FEXCore and Android Vulkan prerequisites
+        run: |
+          NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 bash bionic/build-core.sh
+
+      - name: Audit full class of FEX libc NIDs without hiding missing functions
+        run: |
+          set -euo pipefail
+          python3 bionic/generic/audit_fex_libc.py --upstream generic-upstream
+          python3 bionic/generic/audit_fex_libc.py --upstream generic-upstream >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Audit FEX libc heap and guest printf entrypoints
+        run: |
+          set -euo pipefail
+          for nid in 'gQX+4GDQjpM' 'tIhsqj0qsFE' 'Y7aJ1uydPMo' '2X5agFjKxMc' 'Q2V+iqvjgC0'; do
+            grep -Fq "$nid" bionic/generic/android_libc_boot.cpp || { echo "::error::missing FEX libc NID $nid"; exit 2; }
+          done
+          grep -Fq 'Core::VMAType::Flexible' bionic/generic/android_libc_boot.cpp
+
+      - name: Compile FULL shadPS4 with Android Vulkan loader + Turnip ICD recovery
+        run: |
+          python3 -m py_compile bionic/generic/port_generic.py
+          NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 \
+            BIONIC_SOURCE0181_PREPATCHED=1 GENERIC_SHADPS4_SOURCE="$GITHUB_WORKSPACE/generic-upstream" \
+            bash bionic/generic/build-generic.sh
+          grep -aFq "0.18.1 WIP" out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so
+          grep -aFq 'BIONIC_VULKAN_LOADER_READY' out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so
+          grep -aFq 'BIONIC_VULKAN_CUSTOM_BRIDGE_READY' out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so
+          echo 'BIONIC_VULKAN_LOADER_RESOLVER_INCLUDED_IN_CORE'
+          # Cache hit/miss counts determine whether a future native build can
+          # be reduced further without dropping required emulator components.
+          ccache --show-stats || true
+
+      - name: Build original Bachata JNI ABI adapter for integrated core
+        run: |
+          set -euo pipefail
+          cmake -S bionic/jni -B out/bionic/jni-build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_HOME/ndk/30.0.14904198/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=33 -DCMAKE_BUILD_TYPE=Release
+          cmake --build out/bionic/jni-build -j2
+          cp out/bionic/jni-build/libbachata_native_runtime.so out/bionic/stage/lib/arm64-v8a/
+          readelf -Ws out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so \
+            | grep -F Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run > /dev/null
+          readelf -d out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so \
+            | grep -q 'Shared library: \[libc.so\]'
+
+      - name: Upload completed native game-generic PS4 core
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bachata-S4Plus-REAL-shadPS4-0181-FEX-Bionic-core
+          path: out/bionic/stage/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Keep full-core CMake diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bachata-FULL-generic-build-failure-diagnostics
+          path: |
+            out/bionic/shadps4-generic-android/CMakeFiles/CMakeConfigureLog.yaml
+            out/bionic/shadps4-generic-android/CMakeCache.txt
+            out/bionic/deps/build/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Cache successfully compiled objects even after an unrelated link error
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .ccache
+            out/bionic/deps
+            out/bionic/fex
+            out/bionic/fex-android
+            out/bionic/libadrenotools
+            out/bionic/adrenotools-android
+            out/bionic/gpu-build
+            out/bionic/shadps4-generic-android
+          key: bachata-full-bionic-r30-${{ github.sha }}
+
+  assemble-bionic-apk:
+    needs: [full-ps4-bionic]
+    name: Assemble and sign Bachata S4+ 0.2.7 actual source 0.18.1 Bionic APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      BACHATA_P36_PRIVATE_KEY: ${{ secrets.BACHATA_P36_PRIVATE_KEY }}
+      BACHATA_P36_CERT: ${{ secrets.BACHATA_P36_CERT }}
+    steps:
+      - name: Checkout all packaging and integration source from GitHub
+        uses: actions/checkout@v4
+
+      - name: Require permanent Bachata S4+ P36 signing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$BACHATA_P36_PRIVATE_KEY" || -z "$BACHATA_P36_CERT" ]]; then
+            echo '::error::P36 signing key or certificate is not configured. Add GitHub Actions repository secrets BACHATA_P36_PRIVATE_KEY and BACHATA_P36_CERT, then rerun APK-only. Temporary signing has been disabled.'
+            exit 3
+          fi
+
+      - name: Retrieve successful updated Bionic core from pinned build
+        uses: actions/download-artifact@v4
+        with:
+          name: Bachata-S4Plus-REAL-shadPS4-0181-FEX-Bionic-core
+          path: out/bionic/stage
+
+      - name: Android build tools and ELF patching
+        uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            platform-tools
+            build-tools;36.0.0
+            ndk;30.0.14904198
+
+      - name: Install ELF tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends patchelf binutils
+          python3 -m py_compile bionic/apk/assemble_apk.py bionic/apk/patch_frontend.py bionic/apk/compact_runtime.py bionic/apk/prepare_slim_native.py
+          bash -n bionic/apk/normalize_elf.sh
+
+      - name: Fetch exact Bachata S4+ 0.2.7 Android frontend from Release
+        run: |
+          set -euo pipefail
+          mkdir -p out/apk
+          curl -fL --retry 4 --retry-delay 3 \
+            'https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.7/Bachata-S4-Plus-v0.2.7.apk' \
+            -o out/apk/Bachata-S4-Plus-v0.2.7-base.apk
+          echo '35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8  out/apk/Bachata-S4-Plus-v0.2.7-base.apk' | sha256sum -c -
+
+
+      - name: Patch 0.2.7 frontend with deferred Bionic core loader (DEX only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 4 --retry-delay 3 \
+            'https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar' \
+            -o out/apk/apktool-2.12.1.jar
+          java -Xmx5G -jar out/apk/apktool-2.12.1.jar d -f -r \
+            out/apk/Bachata-S4-Plus-v0.2.7-base.apk -o out/apk/decoded > out/apk/apktool-decompile.log 2>&1
+          python3 bionic/apk/patch_frontend.py out/apk/decoded
+          java -Xmx5G -jar out/apk/apktool-2.12.1.jar b out/apk/decoded \
+            -o out/apk/recompiled-smali.apk > out/apk/apktool-rebuild.log 2>&1
+          unzip -p out/apk/recompiled-smali.apk classes8.dex > out/apk/classes8-bionic.dex
+          test -s out/apk/classes8-bionic.dex
+          echo "NativeRuntimeBridge Bionic core JNI loader DEX prepared (rest of frontend preserved)"
+
+      - name: Compile ONLY lightweight Android JNI handoff (no shadPS4/FEX rebuild)
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK="$ANDROID_HOME/ndk/30.0.14904198"
+          CXX="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang++"
+          "$CXX" -std=c++17 -O2 -Wall -Wextra -Werror -fPIC -shared \
+            bionic/jni/bachata_native_bridge.cpp \
+            -o out/bionic/stage/lib/arm64-v8a/libbachata_native_runtime.so \
+            -landroid -llog -ldl
+          # The Java SDL.setupJNI() methods are exported from the monolithic
+          # libbachata_bionic_core.so, *not* from libSDL3.so. Check only global
+          # defined DYNAMIC symbols, which Android's dlsym can actually resolve.
+          CORE=out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so
+          for symbol in \
+            JNI_OnLoad \
+            Java_org_libsdl_app_SDLActivity_nativeSetupJNI \
+            Java_org_libsdl_app_SDLAudioManager_nativeSetupJNI \
+            Java_org_libsdl_app_SDLControllerManager_nativeSetupJNI \
+            Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run \
+            Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_stop; do
+            if ! readelf --dyn-syms --wide "$CORE" |
+              awk -v target="$symbol" '$4 == "FUNC" && $5 == "GLOBAL" && $7 != "UND" && $8 == target { found=1 } END { exit !found }'; then
+              echo "::error::Bionic core lacks globally exported JNI symbol $symbol"; exit 2
+            fi
+          done
+          echo "JNI adapter rebuilt; core SDL + Bachata ABI exports validated for Android"
+
+      - name: Normalize SONAMEs and audit JNI exports
+        run: |
+          set -euo pipefail
+          bash bionic/apk/normalize_elf.sh out/bionic/stage/lib/arm64-v8a
+
+      - name: Preserve compact Bionic and single-glibc runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK="$ANDROID_HOME/ndk/30.0.14904198"
+          python3 bionic/apk/prepare_slim_native.py out/bionic/stage \
+            --strip "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+          echo "BIONIC_NATIVE_DEBUG_STRIPPED; GLIBC_025_COMPACTED_DURING_ASSEMBLY"
+
+      - name: Integrate newly compiled native runtime into 0.2.7 APK
+        run: |
+          set -euo pipefail
+          python3 bionic/apk/assemble_apk.py \
+            --base out/apk/Bachata-S4-Plus-v0.2.7-base.apk \
+            --stage out/bionic/stage \
+            --output out/apk/Bachata-S4Plus-Bionic-unsigned.apk \
+            --patched-classes8 out/apk/classes8-bionic.dex \
+            --revision "$GITHUB_SHA"
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('out/apk/Bachata-S4Plus-Bionic-unsigned.apk') as z:
+              required = [
+                  'lib/arm64-v8a/libbachata_custom_vulkan.so',
+                  'lib/arm64-v8a/libmain_hook.so',
+                  'lib/arm64-v8a/libhook_impl.so',
+                  'lib/arm64-v8a/libbachata_bionic_core.so',
+              ]
+              missing = [n for n in required if n not in z.namelist()]
+              if missing:
+                  raise SystemExit('Missing original AdrenoTools Vulkan bridge/hook: ' + ', '.join(missing))
+          print('BIONIC_ORIGINAL_CUSTOM_TURNIP_BRIDGE_PRESERVED')
+          PY
+
+      - name: Align and sign testable Android APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/zipalign" -f -P 16 4 \
+            out/apk/Bachata-S4Plus-Bionic-unsigned.apk \
+            out/apk/Bachata-S4Plus-Bionic-aligned.apk
+          KEY=out/apk/bachata-p36-private.pem
+          KEY_PKCS8=out/apk/bachata-p36-private.pk8
+          CERT=out/apk/bachata-p36-cert.pem
+          trap 'rm -f "$KEY" "$KEY_PKCS8" "$CERT"' EXIT
+          # GitHub Secrets provide the ORIGINAL PEM key and X.509 certificate.
+          # Never commit them or generate a new certificate during CI.
+          umask 077
+          printf '%s\n' "$BACHATA_P36_PRIVATE_KEY" > "$KEY"
+          printf '%s\n' "$BACHATA_P36_CERT" > "$CERT"
+          EXPECTED_P36_SHA256=d04ef2a865f8ed5ab8f98321be93ed2881eaa64f844fbaf480e18a8336620a72
+          actual_cert_sha256="$(openssl x509 -in "$CERT" -outform DER | sha256sum | cut -d' ' -f1)"
+          if [[ "$actual_cert_sha256" != "$EXPECTED_P36_SHA256" ]]; then
+            echo "::error::P36 certificate mismatch: $actual_cert_sha256"
+            exit 4
+          fi
+          key_public="$(openssl pkey -in "$KEY" -pubout -outform DER | sha256sum | cut -d' ' -f1)"
+          cert_public="$(openssl x509 -in "$CERT" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum | cut -d' ' -f1)"
+          if [[ "$key_public" != "$cert_public" ]]; then
+            echo "::error::P36 private key does not match certificate"
+            exit 4
+          fi
+          # The existing P36 PEM may be traditional PKCS#1 RSA. apksigner's
+          # --key parser only accepts unencrypted PKCS#8. Convert encoding,
+          # NOT keypair or certificate: the P36 signer identity stays identical.
+          openssl pkcs8 -topk8 -nocrypt -in "$KEY" -outform DER -out "$KEY_PKCS8"
+          der_public="$(openssl pkey -inform DER -in "$KEY_PKCS8" -pubout -outform DER | sha256sum | cut -d' ' -f1)"
+          if [[ "$der_public" != "$cert_public" ]]; then
+            echo "::error::P36 PKCS8 conversion changed public key"
+            exit 4
+          fi
+          # Ensure that test builds can update the ORIGINAL 0.2.7 app
+          # without wiping existing game saves and settings.
+          "$BT/apksigner" verify --verbose --print-certs \
+            out/apk/Bachata-S4-Plus-v0.2.7-base.apk > out/apk/base-signer-verification.txt
+          base_sha256="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' out/apk/base-signer-verification.txt | head -n1)"
+          if [[ "$base_sha256" != "$EXPECTED_P36_SHA256" ]]; then
+            echo "::error::Base 0.2.7 is signed by $base_sha256, not P36. Refusing a non-updatable build."
+            exit 4
+          fi
+          "$BT/apksigner" sign \
+            --key "$KEY_PKCS8" --cert "$CERT" \
+            --v1-signing-enabled true --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out out/apk/Bachata-S4Plus-v0.2.7-shadPS4-0.18.1-SOURCE-Bionic-P36.apk \
+            out/apk/Bachata-S4Plus-Bionic-aligned.apk
+          "$BT/apksigner" verify --verbose --print-certs \
+            out/apk/Bachata-S4Plus-v0.2.7-shadPS4-0.18.1-SOURCE-Bionic-P36.apk \
+            | tee out/apk/apksigner-verification.txt
+          signed_sha256="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' out/apk/apksigner-verification.txt | head -n1)"
+          if [[ "$signed_sha256" != "$EXPECTED_P36_SHA256" ]]; then
+            echo "::error::Output APK signer is not original P36"
+            exit 5
+          fi
+          printf 'P36 original certificate SHA256: %s\n' "$EXPECTED_P36_SHA256" > out/apk/SIGNING-MODE.txt
+          sha256sum out/apk/Bachata-S4Plus-v0.2.7-shadPS4-0.18.1-SOURCE-Bionic-P36.apk > out/apk/SHA256SUMS
+          test -s out/apk/Bachata-S4Plus-v0.2.7-shadPS4-0.18.1-SOURCE-Bionic-P36.apk
+          echo 'BIONIC_TEST_APK_P36_SIGNED_AND_VERIFIED'
+
+      - name: Upload INSTALLABLE TEST APK (not another native-library ZIP)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bachata-S4Plus-REAL-shadPS4-0181-FEX-Bionic-P36-APK
+          path: |
+            out/apk/Bachata-S4Plus-v0.2.7-shadPS4-0.18.1-SOURCE-Bionic-P36.apk
+            out/apk/SHA256SUMS
+            out/apk/SIGNING-MODE.txt
+            out/apk/apksigner-verification.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
