@@ -12,6 +12,8 @@ bool Enabled();
 bool IsVirtualPath(const std::filesystem::path& path);
 std::optional<std::filesystem::path> Resolve(std::string_view guest_path);
 bool List(std::string_view guest_directory, std::vector<Entry>& entries);
+// Lightweight broker STAT: no provider file descriptor or data copy.
+bool StatPath(std::string_view guest_path, bool* is_directory = nullptr);
 std::optional<int> DuplicateFd(const std::filesystem::path& path);
 void Shutdown();
 }
