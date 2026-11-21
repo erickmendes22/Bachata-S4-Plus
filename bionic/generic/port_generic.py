@@ -113,8 +113,7 @@ def apply(upstream: Path, overlay: Path) -> None:
         '                if (selected_icd.empty() && requested &&\n'
         '                    std::strcmp(requested, "libvulkan.so.1") == 0 &&\n'
         '                    std::strcmp(path, requested) != 0) {\n'
-        '                    LOG_WARNING(Render_Vulkan, "BIONIC_VULKAN_SYSTEM_FALLBACK: "
-'
+        '                    LOG_WARNING(Render_Vulkan, "BIONIC_VULKAN_SYSTEM_FALLBACK: "\n'
         '                                "Linux loader unavailable; Mesa Turnip not proven active");\n'
         '                }\n'
         '                // Retain handle: Vulkan-Hpp dispatcher stores pointers into this ELF.\n'
