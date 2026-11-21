@@ -84,6 +84,18 @@ jobs:
           grep -Fq 'OUTPUT_NAME "bachata_bionic_core"' modern-core/CMakeLists.txt
           grep -Fq 'BIONIC_021_RETURN_FROM_EMULATOR' modern-core/src/emulator.cpp
 
+      - name: Connect BSF1 SAF broker to all 0.21.1 IBackend VFS operations
+        run: |
+          set -euo pipefail
+          python3 -m py_compile bionic/modern/port_android_saf.py
+          python3 bionic/modern/port_android_saf.py --source modern-core --overlay bionic/modern
+          grep -Fq 'BIONIC_021_SAF_VFS_MOUNT_READY' modern-core/src/core/file_sys/fs.cpp
+          grep -Fq 'backends.push_back(std::make_shared<SafStackBackend>' modern-core/src/core/file_sys/fs.cpp
+          grep -Fq 'BIONIC_021_SAF_BROKER_METADATA' modern-core/src/core/file_sys/saf_fs_backend.cpp
+          grep -Fq 'BIONIC_021_SAF_MERGED_DIRECTORY' modern-core/src/core/file_sys/saf_fs_backend.cpp
+          grep -Fq 'BIONIC_021_SAF_EBOOT_RESOLVED' modern-core/src/emulator.cpp
+          echo 'BIONIC_021_SAF_IBackend_ALL_PATHS_INTEGRATED'
+
       - name: Audit modern kernel timezone and rebase remaining POSIX signals
         run: |
           set -euo pipefail
@@ -295,11 +307,13 @@ jobs:
             awk '/^CMakeFiles\/shadps4.dir\// {
               if ($1 ~ /android_window.cpp.o:$/ ||
                   $1 ~ /threads\/pthread.cpp.o:$/ ||
-                  $1 ~ /shadnet.pb.cc.o:$/) {
+                  $1 ~ /shadnet.pb.cc.o:$/ ||
+                  $1 ~ /core\/file_sys\/fs.cpp.o:$/ ||
+                  $1 ~ /core\/file_sys\/saf_fs_backend.cpp.o:$/) {
                 sub(/:$/, "", $1); print $1
               }
             }')
-          for expected in android_window.cpp.o pthread.cpp.o shadnet.pb.cc.o; do
+          for expected in android_window.cpp.o pthread.cpp.o shadnet.pb.cc.o fs.cpp.o saf_fs_backend.cpp.o; do
             matched=0
             for target in "${object_targets[@]}"; do
               [[ "$target" == *"$expected" ]] && matched=1
@@ -310,7 +324,7 @@ jobs:
             fi
           done
           ninja -C "$root/build" -j3 "${object_targets[@]}"
-          echo "BIONIC_021_CRITICAL_INTERFACES_COMPILED"
+          echo "BIONIC_021_CRITICAL_INTERFACES_AND_SAF_VFS_COMPILED"
           cmake --build "$root/build" --target shadps4 -j3 -- -k 8 \
             2>&1 | tee "$root/compiler.log"
           core="$root/build/libbachata_bionic_core.so"
