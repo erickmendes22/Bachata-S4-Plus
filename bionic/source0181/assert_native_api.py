@@ -24,6 +24,12 @@ def audit(root: Path) -> None:
         "src/core/memory.cpp": ("file->GetHostFile()", "file->GetSize()"),
         "src/core/libraries/videoout/driver.cpp": ("BIONIC_PRESENT_IDLE_SKIP",
                                                     "PrepareBlankFrame(true)"),
+        "src/core/libraries/videoout/driver.h": ("bool SubmitFlip(VideoOutPort*",),
+        "src/core/libraries/videoout/video_out.cpp": (
+            "driver->SubmitFlip(port, buf_id, flip_arg, true);",),
+        "src/core/libraries/pad/pad.h": ("ORBIS_PAD_MAX_DATA_NUM",),
+        "src/core/libraries/sysmodule/sysmodule_internal.h": (
+            "g_need_scelibc", "g_need_fios2"),
         "src/video_core/renderer_vulkan/vk_instance.h": ("IsShaderSubgroupClockSupported",
                                                          "IsMultisampleStorageImageSupported",
                                                          "IsImageViewMinLodSupported",
@@ -46,6 +52,8 @@ def audit(root: Path) -> None:
         "src/core/libraries/kernel/file_system.cpp": ("deci_tty6_device.h",),
         "src/core/memory.cpp": ("file->f.",),
         "src/core/libraries/videoout/driver.cpp": ("liverpool->EnqueueCommand(",),
+        "src/core/libraries/videoout/video_out.cpp": ("FlipLabelTracker::kInvalidGeneration",),
+        "src/core/libraries/videoout/driver.h": ("lock_generation",),
         "src/video_core/renderer_vulkan/vk_instance.cpp": ('"video_core/renderer_vulkan/legacy_vertex_attributes.h"',),
         "src/video_core/renderer_vulkan/vk_presenter.cpp": ('"video_core/amdgpu/stall_log.h"',),
         "src/main.cpp": ("Common::Log::g_should_append", "controller->Gyro(0);",
