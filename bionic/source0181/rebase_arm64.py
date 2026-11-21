@@ -78,6 +78,9 @@ COHERENT_0181_SUBTREES = (
     "src/core/libraries/save_data",
     "src/core/libraries/network",
     "src/core/libraries/font",
+    "src/core/file_sys",
+    "src/common/path_util.cpp",
+    "src/common/path_util.h",
     "src/core/devtools",
     "src/common/logging",
 )
