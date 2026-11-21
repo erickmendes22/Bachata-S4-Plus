@@ -41,9 +41,10 @@ jobs:
           for variant in ("official","plus"):
               root=pathlib.Path("/tmp/bachata-"+variant)
               smali=sorted(p for folder in root.glob("smali*") for p in folder.rglob("*.smali") if "com/bachatas4/android" in p.as_posix())
-              chosen=[p for p in smali if ("/runtime/process/" in p.as_posix() or any(t in p.name for t in targets) or "/runtime/storage/" in p.as_posix()) and not ("$$" in p.name or "$" in p.name and not p.name.endswith("$Companion.smali"))]
+              chosen=[p for p in smali if ("/runtime/process/" in p.as_posix() or any(t in p.name for t in targets) or "/runtime/storage/" in p.as_posix()) ]
               manifest=root/"AndroidManifest.xml"
               if manifest.exists():shutil.copyfile(manifest,out/(variant+"-AndroidManifest.xml"))
+              chosen += [p for folder in root.glob("smali*") for p in folder.glob("*.smali") if variant == "official" and p.stem in ("f52", "vp1")]
               for p in chosen:
                   relative=p.relative_to(next(x for x in p.parents if x.name.startswith("smali")))
                   dst=out/variant/relative
