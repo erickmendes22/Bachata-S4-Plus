@@ -1,0 +1,28 @@
+name: Verify Bachata shadPS4 0.21.1 APK assembler (fast)
+
+on:
+  push:
+    branches:
+      - feature/bionic-shadps4-0211-20261121
+    paths:
+      - bionic/apk/**
+      - .github/workflows/bachata-modern-apk-preflight.yml
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify modern APK assembler and original signing path syntax
+        run: |
+          set -euo pipefail
+          bash -n bionic/apk/build_modern_0211_apk.sh
+          python3 -m py_compile bionic/apk/assemble_modern_apk.py bionic/apk/prepare_slim_native.py bionic/apk/compact_runtime.py bionic/apk/patch_frontend.py
+          grep -Fq 'BIONIC_021_VULKAN_CUSTOM_READY' bionic/apk/assemble_modern_apk.py
+          grep -Fq 'BACHATA_P36_PRIVATE_KEY' bionic/apk/build_modern_0211_apk.sh
+          grep -Fq 'EXPECTED=d04ef2a865f8ed5ab8f98321be93ed2881eaa64f844fbaf480e18a8336620a72' bionic/apk/build_modern_0211_apk.sh
+          echo 'BIONIC_021_APK_SOURCE_PRECHECK_OK'
