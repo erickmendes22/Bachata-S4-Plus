@@ -44,9 +44,9 @@ jobs:
         run: |
           set -euo pipefail
           base="https://raw.githubusercontent.com/${MODERN_PORT_REPO}/${MODERN_PORT_REF}"
-          curl --fail --location --retry 3 --silent --show-error
+          curl --fail --location --retry 3 --silent --show-error \
             "${base}/patches/0001-upstream-021-arm64-port.patch" -o /tmp/shadps4-0211-arm64.patch
-          curl --fail --location --retry 3 --silent --show-error
+          curl --fail --location --retry 3 --silent --show-error \
             "${base}/config/submodule-shas.txt" -o /tmp/shadps4-0211-modules.txt
           test "$(wc -c </tmp/shadps4-0211-arm64.patch)" -gt 1000000
           exclusions=(--exclude=.gitmodules)
