@@ -130,6 +130,16 @@ jobs:
           python3 bionic/compat/port_kernel_uuid_0211.py --source modern-core
           grep -Fq 'BIONIC_021_NATIVE_UUID' modern-core/src/core/libraries/kernel/kernel.cpp
 
+      - name: Correct SAF descriptor reads and FEX semaphore HLE contract
+        run: |
+          set -euo pipefail
+          python3 -m py_compile bionic/modern/port_android_runtime_correctness.py
+          python3 bionic/modern/port_android_runtime_correctness.py --source modern-core
+          grep -Fq BIONIC_021_SAF_FSTAT_OPEN_FD modern-core/src/common/io_file.cpp
+          grep -Fq BIONIC_021_SAF_READONLY_FLUSH modern-core/src/common/io_file.cpp
+          grep -Fq BIONIC_021_FEX_SIGNAL_SEMA_TYPED_HLE modern-core/src/core/libraries/kernel/threads/semaphore.cpp
+          echo BIONIC_021_SAF_SEMA_RUNTIME_CORRECTIONS_APPLIED
+
       - name: Audit actual core 0.21.1 source versus Android/Bionic integration
         run: |
           set -euo pipefail
