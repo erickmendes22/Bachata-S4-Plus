@@ -71,7 +71,7 @@ jobs:
           for component in avformat avcodec avutil avfilter swresample swscale; do
             test -s "$root/deps/prefix/lib/lib$component.so" || { echo "::error::Missing Android FFmpeg lib$component.so"; exit 3; }
           done
-          echo 'Core's available JNI exports:'
+          echo "Available core JNI exports:"
           readelf --dyn-syms --wide "$core" |
             awk '$4=="FUNC" && $5=="GLOBAL" && $7!="UND" && ($8 ~ /JNI_OnLoad|Java_org_libsdl_app_|Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_/) {print $8}' |
             sort -u | tee "$root/core-jni-exports.txt"
