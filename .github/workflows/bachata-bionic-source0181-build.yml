@@ -210,6 +210,33 @@ jobs:
           python3 bionic/source0181/rebase_arm64.py --source generic-upstream --output out/source0181
           python3 bionic/source0181/port_0181.py --source generic-upstream --report out/source0181/bionic-0181-parity.json
           grep -Fq 'set(EMULATOR_VERSION_MINOR "18")' generic-upstream/CMakeLists.txt
+          # Upstream 0.18.1 introduces imgui/protobuf/zstd/zarchive/abseil.
+          # Preserve the FEX/Bachata host submodules AND register every
+          # gitlink introduced by the newer PS4 core.
+          git -C generic-upstream show FETCH_HEAD:.gitmodules > out/source0181/upstream-0181.gitmodules
+          python3 - <<'PY'
+          import configparser
+          from pathlib import Path
+          old=Path("generic-upstream/.gitmodules")
+          upstream=Path("out/source0181/upstream-0181.gitmodules")
+          left=configparser.ConfigParser(interpolation=None)
+          right=configparser.ConfigParser(interpolation=None)
+          left.read(old)
+          right.read(upstream)
+          added=[]
+          for sec in right.sections():
+              if sec in left:
+                  continue
+              left.add_section(sec)
+              for key,value in right.items(sec):
+                  left.set(sec,key,value)
+              added.append(sec)
+          with old.open("w") as out:
+              left.write(out)
+          print("REGISTERED_0181_SUBMODULES",added)
+          assert any("externals/imgui" in sec for sec in left.sections())
+          PY
+          git -C generic-upstream submodule sync
           git -C generic-upstream submodule update --init --recursive --jobs 4
           test -s generic-upstream/externals/sdl3/CMakeLists.txt
           test -s generic-upstream/src/core/fex/fex_guest_engine.cpp
