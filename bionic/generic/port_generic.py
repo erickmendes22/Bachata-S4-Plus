@@ -513,76 +513,131 @@ def apply(upstream: Path, overlay: Path) -> None:
         "    // Load the module with the linker\n",
     )
 
-    # Fully installed PS4 content can omit its optional PlayGo chunk table.
-    # Without metadata, upstream leaves file_size=0, so scePlayGoOpen returns
-    # NOT_SUPPORT_PLAYGO immediately before The Order's null read. Expose
-    # one complete, local chunk 0 only for an absent file under FEX. Never
-    # mask a present-but-malformed PlayGo table.
-    playgo = upstream / "src/core/libraries/playgo/playgo.cpp"
+    # The original Bachata Android frontend already creates a per-game SAF
+    # broker (BSF1) and supplies the socket/token. On Bionic the flags were
+    # parsed but never connected to file IO, making /app0 see staging only.
+    # Consume real STAT/LIST/OPEN and SCM_RIGHTS descriptors, without copying
+    # full games under data/data. Never synthesize missing libc or PlayGo data.
     replace(
-        playgo,
-        '    if (!playgo->Open(file_path)) {\n'
-        '        LOG_WARNING(Lib_PlayGo, "Could not open PlayGo file");\n'
-        '    }\n',
-        '    if (!playgo->Open(file_path)) {\n'
-        '#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n'
-        '        if (!std::filesystem::exists(file_path)) {\n'
-        '            // No PlayGo table means no partial-installation metadata.\n'
-        '            // Model the already extracted, fully installed chunk 0.\n'
-        '            playgo->GetPlaygoHeader().file_size = 1;\n'
-        '            playgo->GetPlaygoHeader().chunk_count = 1;\n'
-        '            playgo->chunks.push_back(PlaygoChunk{0, 0, 0, "installed"});\n'
-        '            LOG_WARNING(Lib_PlayGo,\n'
-        '                        "BIONIC_FEX_PLAYGO_FULLY_INSTALLED_FALLBACK: metadata missing, "\n'
-        '                        "single chunk 0 exposed as LocalFast");\n'
-        '        } else {\n'
-        '            LOG_WARNING(Lib_PlayGo, "Could not parse existing PlayGo file");\n'
-        '        }\n'
-        '#else\n'
-        '        LOG_WARNING(Lib_PlayGo, "Could not open PlayGo file");\n'
-        '#endif\n'
-        '    }\n',
+        main,
+        '#include "core/file_sys/fs.h"\n',
+        '#include "core/file_sys/fs.h"\n'
+        '#if defined(SHADPS4_ENABLE_FEX_GUEST_CPU) && defined(ENABLE_BACHATA_RUNTIME)\n'
+        '#include "android_saf_bridge.h"\n'
+        '#endif\n',
     )
     replace(
-        playgo,
-        '    if (playgo->GetPlaygoHeader().file_size == 0) {\n'
-        '        return ORBIS_PLAYGO_ERROR_NOT_SUPPORT_PLAYGO;\n'
-        '    }\n\n'
-        '    playgo->handle = *outHandle = PlaygoHandle;\n',
-        '    if (playgo->GetPlaygoHeader().file_size == 0) {\n'
-        '        LOG_WARNING(Lib_PlayGo, "BIONIC_FEX_PLAYGO_OPEN_RESULT=NOT_SUPPORT_PLAYGO");\n'
-        '        return ORBIS_PLAYGO_ERROR_NOT_SUPPORT_PLAYGO;\n'
-        '    }\n\n'
-        '    playgo->handle = *outHandle = PlaygoHandle;\n'
-        '    LOG_INFO(Lib_PlayGo, "BIONIC_FEX_PLAYGO_OPEN_RESULT=OK handle={}", *outHandle);\n',
-    )
-    # The libkernel preload list includes libc.prx (index 4). On Android FEX
-    # the console's proprietary libc PRX is not part of the extracted game.
-    # Only acknowledge the *already registered* HLE module when the file is
-    # actually absent; never pretend unsupported CRT NIDs are implemented.
-    sysmodule = upstream / "src/core/libraries/sysmodule/sysmodule_internal.cpp"
-    replace(
-        sysmodule,
-        '    s32 start_result = 0;\n'
-        '    // Fios2 has opposite failure modes per title.',
-        '    s32 start_result = 0;\n'
-        '#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n'
-        '    if (index == 4) {\n'
-        '        const auto& game_libc = mnt->GetHostPath("/app0/sce_module/libc.prx");\n'
-        '        if (!std::filesystem::exists(game_libc)) {\n'
-        '            static constexpr s32 FexLibcHleHandle = 0x4004;\n'
-        '            mod.handle = FexLibcHleHandle;\n'
-        '            mod.is_loaded = 1;\n'
-        '            if (res_out != nullptr) *res_out = ORBIS_OK;\n'
-        '            LOG_WARNING(Lib_SysModule,\n'
-        '                        "BIONIC_FEX_LIBC_HLE_PRELOAD: libc.prx missing, "\n'
-        '                        "using registered libc HLE (unsupported CRT symbols remain explicit)");\n'
-        '            return ORBIS_OK;\n'
+        main,
+        '    emulator->Run(ebootPath, gameArgs, overrideRoot);\n\n'
+        '    return 0;\n',
+        '#if defined(SHADPS4_ENABLE_FEX_GUEST_CPU) && defined(ENABLE_BACHATA_RUNTIME)\n'
+        '    if (bachataSafSocket.has_value() && bachataSafToken.has_value()) {\n'
+        '        const auto selected_root = overrideRoot.value_or(ebootPath.parent_path());\n'
+        '        const auto storage = bachataStorageRoot.value_or(selected_root.parent_path());\n'
+        '        if (!BachataSaf::Configure(*bachataSafSocket, *bachataSafToken,\n'
+        '                                    selected_root, storage)) {\n'
+        '            LOG_ERROR(Debug, "BIONIC_SAF_INIT_FAILED: external game tree unavailable");\n'
+        '            runtime_client.SendError("CONTENT_UNAVAILABLE");\n'
+        '            runtime_client.SendStopped(1);\n'
+        '            return 1;\n'
         '        }\n'
         '    }\n'
         '#endif\n'
-        '    // Fios2 has opposite failure modes per title.',
+        '    emulator->Run(ebootPath, gameArgs, overrideRoot);\n'
+        '#if defined(SHADPS4_ENABLE_FEX_GUEST_CPU) && defined(ENABLE_BACHATA_RUNTIME)\n'
+        '    BachataSaf::Shutdown();\n'
+        '#endif\n\n'
+        '    return 0;\n',
     )
+
+    filesystem = upstream / "src/core/file_sys/fs.cpp"
+    replace(
+        filesystem,
+        '#include "core/file_sys/fs.h"\n',
+        '#include "core/file_sys/fs.h"\n'
+        '#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n'
+        '#include "android_saf_bridge.h"\n'
+        '#endif\n',
+    )
+    replace(
+        filesystem,
+        '    // Opening the guest path will surely fail but at least gives\n'
+        '    // a better error message than the empty path.\n'
+        '    return host_path;\n',
+        '#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n'
+        '    if (path_type != HostPathType::Mod && path_type != HostPathType::Patch) {\n'
+        '        if (const auto from_saf = BachataSaf::Resolve(corrected_path)) {\n'
+        '            return *from_saf;\n'
+        '        }\n'
+        '    }\n'
+        '#endif\n'
+        '    return host_path;\n',
+    )
+    replace(
+        filesystem,
+        '    // Pass 3: Any files that exist only in the mod directory (confirmed this can be valid)\n',
+        '    // Pass 3: Any files that exist only in the mod directory (confirmed this can be valid)\n',
+    )
+    replace(
+        filesystem,
+        '                callback(entry.path(), !entry.is_directory());\n'
+        '            }\n'
+        '        }\n'
+        '    }\n'
+        '}\n\nint HandleTable::CreateHandle()',
+        '                callback(entry.path(), !entry.is_directory());\n'
+        '            }\n'
+        '        }\n'
+        '    }\n'
+        '#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n'
+        '    // Directory metadata comes from the same DocumentsProvider as\n'
+        '    // the file descriptors; do not open thousands of listed files.\n'
+        '    std::vector<BachataSaf::Entry> saf_entries;\n'
+        '    if (BachataSaf::List(guest_directory, saf_entries)) {\n'
+        '        for (const auto& entry : saf_entries) {\n'
+        '            if (std::filesystem::exists(base_path / entry.name) ||\n'
+        '                std::filesystem::exists(patch_path / entry.name) ||\n'
+        '                std::filesystem::exists(mod_path / entry.name)) continue;\n'
+        '            callback(base_path / entry.name, !entry.directory);\n'
+        '        }\n'
+        '    }\n'
+        '#endif\n'
+        '}\n\nint HandleTable::CreateHandle()',
+    )
+
+    native_io = upstream / "src/common/io_file.cpp"
+    replace(
+        native_io,
+        '#include "common/io_file.h"\n',
+        '#include "common/io_file.h"\n'
+        '#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n'
+        '#include "android_saf_bridge.h"\n'
+        '#endif\n',
+    )
+    replace(
+        native_io,
+        '    file = std::fopen(path.c_str(), AccessModeToStr(mode, type));\n'
+        '    result = errno;\n',
+        '#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU\n'
+        '    if (mode == FileAccessMode::Read) {\n'
+        '        if (auto saf_fd = BachataSaf::DuplicateFd(path)) {\n'
+        '            file = fdopen(*saf_fd, AccessModeToStr(mode, type));\n'
+        '            result = errno;\n'
+        '            if (!file) close(*saf_fd);\n'
+        '        } else {\n'
+        '            file = std::fopen(path.c_str(), AccessModeToStr(mode, type));\n'
+        '            result = errno;\n'
+        '        }\n'
+        '    } else {\n'
+        '        file = std::fopen(path.c_str(), AccessModeToStr(mode, type));\n'
+        '        result = errno;\n'
+        '    }\n'
+        '#else\n'
+        '    file = std::fopen(path.c_str(), AccessModeToStr(mode, type));\n'
+        '    result = errno;\n'
+        '#endif\n',
+    )
+
     cmake = upstream / "CMakeLists.txt"
     replace(cmake, "add_executable(shadps4\n",
             "add_library(shadps4 SHARED\n")
@@ -618,13 +673,15 @@ def apply(upstream: Path, overlay: Path) -> None:
         'target_sources(shadps4 PRIVATE "' + str(overlay / "android_native_core.cpp") + '")\n'
         'target_sources(shadps4 PRIVATE "' + str(overlay / "android_libc_boot.cpp") + '")\n'
         'target_sources(shadps4 PRIVATE "' + str(overlay / "android_libc_compat.cpp") + '")\n'
+        'target_sources(shadps4 PRIVATE "' + str(overlay / "android_saf_transport.cpp") + '")\n'
+        'target_sources(shadps4 PRIVATE "' + str(overlay / "android_saf_bridge.cpp") + '")\n'
         'target_include_directories(shadps4 PRIVATE "' + str(overlay) + '")\n'
         'target_link_libraries(shadps4 PRIVATE android log)\n'
         'set_target_properties(shadps4 PROPERTIES OUTPUT_NAME "bachata_bionic_core")\n'
         + anchor, 1)
     cmake.write_text(source, encoding="utf-8")
 
-    for file in ("android_surface.h", "android_window.cpp", "android_native_core.cpp", "android_libc_boot.cpp", "android_libc_compat.cpp"):
+    for file in ("android_surface.h", "android_window.cpp", "android_native_core.cpp", "android_libc_boot.cpp", "android_libc_compat.cpp", "android_saf_transport.h", "android_saf_bridge.h", "android_saf_transport.cpp", "android_saf_bridge.cpp"):
         if not (overlay / file).is_file():
             raise RuntimeError(f"missing Android source: {file}")
     print("OK: generic shadPS4 core source patched for Android native surface and JNI")
