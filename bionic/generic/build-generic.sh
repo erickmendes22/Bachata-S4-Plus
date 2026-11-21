@@ -19,7 +19,17 @@ test -s "$FEX_BUILD/FEXCore/Source/libFEXCore.a" || {
   echo "Bionic FEXCore not built by build-core.sh" >&2; exit 2;
 }
 
-python3 "$ROOT/bionic/generic/port_generic.py" "$SRC"
+if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == 1 ]]; then
+  # The upstream 0.18.1 source has already been merged with the FEX ARM64
+  # host and patched using the version-aware Android/Bionic overlay.
+  grep -Fq 'set(EMULATOR_VERSION_MINOR "18")' "$SRC/CMakeLists.txt"
+  grep -Fq 'set(EMULATOR_VERSION_PATCH "1")' "$SRC/CMakeLists.txt"
+  grep -Fq 'BIONIC_VULKAN_CUSTOM_BRIDGE_READY' "$SRC/src/video_core/renderer_vulkan/vk_platform.cpp"
+  test -s "$SRC/src/core/fex/fex_guest_engine.cpp"
+  echo BIONIC_REAL_SOURCE0181_ANDROID_OVERLAY_PREAPPLIED
+else
+  python3 "$ROOT/bionic/generic/port_generic.py" "$SRC"
+fi
 git -C "$SRC" diff --check
 mkdir -p "$BUILD" "$STAGE"
 
