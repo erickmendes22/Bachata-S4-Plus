@@ -20,6 +20,7 @@ MATCH_0181 = (
     "src/common/ring_buffer_queue.h",
     "src/core/libraries/libs.cpp",
     "src/core/libraries/kernel/file_system.cpp",
+    "src/core/libraries/kernel/file_system.h",
     "src/core/libraries/kernel/threads/semaphore.cpp",
     "src/core/libraries/pad/pad.cpp",
     "src/core/libraries/sysmodule/sysmodule_internal.cpp",
@@ -70,11 +71,22 @@ def apply(root: Path) -> dict:
 
     # Modern Ime and pad APIs were incorrectly linked against old 0.16
     # implementations. Preserve their new headers and complete methods.
+    # These HLE family interfaces changed together. Updating an individual
+    # .cpp is insufficient: 0.16 VideoOut::SubmitFlip accepts a fifth lock
+    # generation argument while 0.18 removed it from BOTH header and caller.
+    # Restore complete modern source families, then graft back Android hooks.
+    modern_hle_families = (
+        "src/core/libraries/ime",
+        "src/core/libraries/pad",
+        "src/core/libraries/sysmodule",
+        "src/core/libraries/videoout",
+    )
     subprocess.run(
         ["git", "-C", str(root), "restore", "--source", UPSTREAM,
-         "--worktree", "--", "src/core/libraries/ime"],
+         "--worktree", "--", *modern_hle_families],
         check=True)
-    result["restoredMatchingImplementations"].append("src/core/libraries/ime/*")
+    result["restoredMatchingImplementations"].extend(
+        family + "/*" for family in modern_hle_families)
 
     # The 0.18 version removes FEX's crucial boot markers when restoring libs.
     # Reattach all checkpoints to the REAL 0.18 registration implementation.
