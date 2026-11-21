@@ -71,6 +71,20 @@ jobs:
           PY
           echo 'BIONIC_021_SAF_SOURCE_REVIEW_PRINTED'
 
+      - name: Inspect backend interfaces and concrete VFS methods
+        run: |
+          set -euo pipefail
+          echo '#### VFS concrete backends and declarations'
+          find modern-core/src/core/file_sys -maxdepth 3 -type f | sort | head -95
+          grep -Rnl --include='*.h' 'class IBackend' modern-core/src/core/file_sys              | while read -r f; do echo "#### INTERFACE $f"; sed -n '1,250p' "$f"; done
+          echo '#### VFS mount, open, stat and read implementations'
+          sed -n '470,810p' modern-core/src/core/file_sys/fs.cpp
+          echo '#### SAF fd hook and mirror'
+          sed -n '135,245p' modern-core/src/core/file_sys/saf_fs_backend.cpp
+          echo '#### emulator boot path selection'
+          sed -n '285,411p' modern-core/src/emulator.cpp
+          echo 'BIONIC_021_SAF_BACKEND_METHODS_REVIEWED'
+
       - name: Save exact port source SAF report
         uses: actions/upload-artifact@v4
         with:
