@@ -42,8 +42,8 @@ jobs:
       - name: Reintegrate actual Bionic JNI, FEX HLE and SAF into merged 0.18.1
         run: |
           set -euo pipefail
-          python3 -m py_compile bionic/generic/port_generic.py
-          if python3 bionic/generic/port_generic.py source-0181 >out/source0181/android-port.log 2>&1; then
+          python3 -m py_compile bionic/generic/port_generic.py bionic/source0181/port_0181.py
+          if python3 bionic/source0181/port_0181.py --source source-0181 --report out/source0181/bionic-port-missing.json >out/source0181/android-port.log 2>&1; then
             echo 'SHADPS4_0181_ANDROID_BIONIC_PLATFORM_OVERLAY_APPLIED'
             cat out/source0181/android-port.log | tail -45
           else
