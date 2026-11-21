@@ -265,19 +265,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential clang lld llvm git cmake ninja-build python3-venv \
             bison flex pkg-config curl unzip zip glslang-tools binutils ccache
-          # shadPS4 0.18.1 pins protobuf 7.36.x, while Ubuntu's apt protoc
-          # is 3.21.x. Mixing those generated headers causes hundreds of
-          # false C++ errors (PROTOBUF_NAMESPACE_OPEN / Arena).
-          # Use the exact protoc 36.0 host executable, not the ARM64
-          # cross-compiled protoc or the distro's obsolete version.
-          curl -fsSL --retry 3 \
-            https://github.com/protocolbuffers/protobuf/releases/download/v36.0/protoc-36.0-linux-x86_64.zip \
-            -o "$RUNNER_TEMP/protoc-36.0-linux-x86_64.zip"
-          mkdir -p "$RUNNER_TEMP/bachata-protoc-36"
-          unzip -oq "$RUNNER_TEMP/protoc-36.0-linux-x86_64.zip" -d "$RUNNER_TEMP/bachata-protoc-36"
-          test -x "$RUNNER_TEMP/bachata-protoc-36/bin/protoc"
-          test "$("$RUNNER_TEMP/bachata-protoc-36/bin/protoc" --version)" = "libprotoc 36.0"
-          echo "$RUNNER_TEMP/bachata-protoc-36/bin" >> "$GITHUB_PATH"
+          # Public protoc 36.0 generates incompatible code for the pinned
+          # shadexternals/protobuf fork; build the matching host compiler.
           bash -n bionic/build-core.sh
           bash -n bionic/generic/build-generic.sh
 
@@ -293,9 +282,20 @@ jobs:
             out/bionic/adrenotools-android
             out/bionic/gpu-build
             out/bionic/shadps4-generic-android
+            out/bionic/host-absl-build
+            out/bionic/host-protoc-build
+            out/bionic/host-protoc-prefix
           key: bachata-full-bionic-r30-${{ github.sha }}
           restore-keys: |
             bachata-full-bionic-r30-
+
+      - name: Build host protoc from matching pinned protobuf source and test ABI
+        run: |
+          set -euo pipefail
+          BACHATA_HOST_JOBS=6 bash bionic/source0181/build_host_protoc.sh
+          echo "$GITHUB_WORKSPACE/out/bionic/host-protoc-build" >> "$GITHUB_PATH"
+          test -s out/bionic/host-protoc-smoketest/shadnet.pb.cc
+          ! grep -Fq 'TcParser::MpUnknownFields' out/bionic/host-protoc-smoketest/shadnet.pb.cc
 
       - name: Compile native FEXCore and Android Vulkan prerequisites
         run: |
