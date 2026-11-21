@@ -133,6 +133,22 @@ def main() -> None:
     still = git(root, "diff", "--name-only", "--diff-filter=U").splitlines()
     if still:
         raise RuntimeError("Unresolved merge conflicts: "+str(still[:20]))
+    # New shadPS4 0.18.1 dependencies were introduced as Git submodules.
+    # The older ARM64 'ours' merge can omit gitlinks even when .gitmodules is
+    # reconciled. Restore exact official gitlinks BEFORE recursive checkout.
+    required_0181_gitlinks = {
+        "externals/abseil-cpp": "76bb24329e8bf5f39704eb10d21b9a80befa7c81",
+        "externals/protobuf": "5917ee224a7e47383a78acc129628511fe210dff",
+        "externals/zarchive": "965b66c8d67b6b7e30fd63b3b75aa91a99ff303b",
+        "externals/zstd": "5c7b7bad26808e6b40ac3b3d0075466e27738a9d",
+    }
+    for path, expected_sha in required_0181_gitlinks.items():
+        original=git(root, "ls-tree", UPSTREAM, "--", path).strip()
+        if original != f"160000 commit {expected_sha}\\t{path}".replace("\\t", "\t"):
+            raise RuntimeError(f"Upstream 0.18.1 gitlink changed: {path}: {original}")
+        git(root, "update-index", "--add", "--cacheinfo",
+            f"160000,{expected_sha},{path}")
+    print("REAL_SOURCE0181_GITLINKS_PINNED", sorted(required_0181_gitlinks))
     # CMake has extra ARM64/FEX support missing in upstream; we keep it but
     # explicitly move the version metadata to the actual 0.18.1 engine.
     cmake_file = root/"CMakeLists.txt"
