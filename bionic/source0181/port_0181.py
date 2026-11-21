@@ -26,12 +26,26 @@ def main() -> None:
     mod=importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     misses=[]
+    already_upstream=[]
     default_replace=mod.replace
 
     def record_replace(path:Path,old:str,new:str,count:int=1)->None:
         source=path.read_text(encoding="utf-8")
         actual=source.count(old)
         if actual!=count:
+            # Modern 0.18.1 moved both page/cache locks to std::mutex when
+            # PTHREAD_ADAPTIVE_MUTEX_INITIALIZER_NP is unavailable. Android
+            # Bionic thus already has a valid concrete lock type here.
+            if path.name == "region_manager.h" and "common/spin_lock.h" in old:
+                if '#include "common/adaptive_mutex.h"' in source and \
+                        "using LockType = std::mutex;" in source:
+                    already_upstream.append(str(path))
+                    return
+            if path.name == "page_manager.cpp" and '#include "common/range_lock.h"' in old:
+                if '#include "common/adaptive_mutex.h"' in source and \
+                        "using Entry = std::mutex;" in source:
+                    already_upstream.append(str(path))
+                    return
             misses.append({"source":str(path),"expected":count,"found":actual,
                            "anchor":old[:450],"replacement":new[:450]})
             return
@@ -47,6 +61,7 @@ def main() -> None:
         "target":"real shadPS4 0.18.1 ARM64 Bionic",
         "sourcePatch":"bionic/generic/port_generic.py",
         "outdatedIntegrationAnchors":misses,
+        "modernizedLockFallbacksVerified":already_upstream,
         "otherError":error,
         "auditPassed":not misses and error is None,
     }
