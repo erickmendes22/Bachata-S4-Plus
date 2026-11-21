@@ -169,9 +169,9 @@ bool SafFsBackend::ListEntries(std::string_view guest_path,
     # Report genuine SAF failures to the Java frontend instead of crashing
     # with an assertion after the VFS mount. Do not fake a valid eboot.
     emulator = root / "src/emulator.cpp"
-    old_assert = ('    ASSERT_MSG(mnt->Exists(guest_eboot_path), '
-                  '"Guest app\\'s main executable {} does not exist",\\n'
-                  '               guest_eboot_path);\\n')
+    old_assert = """    ASSERT_MSG(mnt->Exists(guest_eboot_path), "Guest app's main executable {} does not exist",
+               guest_eboot_path);
+"""
     new_assert = """#if defined(__ANDROID__) && defined(ENABLE_BACHATA_RUNTIME)
     if (!mnt->Exists(guest_eboot_path)) {
         LOG_ERROR(Loader, "BIONIC_021_SAF_EBOOT_UNAVAILABLE: VFS path {} not reachable",
