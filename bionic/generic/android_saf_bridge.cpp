@@ -176,6 +176,17 @@ std::optional<fs::path> Resolve(std::string_view guest) {
         relative->c_str(),static_cast<unsigned long long>(meta->size));
     return path;
 }
+bool StatPath(std::string_view guest, bool* is_directory) {
+    auto relative = GuestPath(guest, true);
+    if (!relative) return false;
+    auto& s = S();
+    std::scoped_lock lk(s.lock);
+    if (!s.active) return false;
+    const auto meta = GetStat(s, *relative);
+    if (!meta) return false;
+    if (is_directory) *is_directory = meta->directory;
+    return true;
+}
 bool List(std::string_view guest,std::vector<Entry>& out) {
     auto relative=GuestPath(guest,true);
     if(!relative)return false;
