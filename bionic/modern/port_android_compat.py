@@ -13,6 +13,12 @@ def replace_once(path: Path, old: str, new: str) -> None:
     data = path.read_text()
     count = data.count(old)
     if count != 1:
+        if path.name == "time.cpp":
+            function_at = data.find("sceKernelConvertUtcToLocaltime")
+            if function_at >= 0:
+                print("BIONIC_021_TIME_ACTUAL_SOURCE_BEGIN")
+                print(data[function_at:function_at + 2400])
+                print("BIONIC_021_TIME_ACTUAL_SOURCE_END")
         raise RuntimeError(f"{path}: expected one exact 0.21.1 anchor, found {count}")
     path.write_text(data.replace(old, new, 1))
 
