@@ -54,6 +54,9 @@ jobs:
           grep -Fq 'BIONIC_SAF_READY' bionic/generic/android_saf_bridge.cpp
           grep -Fq 'BIONIC_VULKAN_DEVICE' generic-upstream/src/video_core/renderer_vulkan/vk_instance.cpp
           grep -Fq 'BIONIC_VULKAN_ICD_MANIFEST' generic-upstream/src/video_core/renderer_vulkan/vk_platform.cpp
+          grep -Fq 'BIONIC_VULKAN_CUSTOM_BRIDGE_READY' generic-upstream/src/video_core/renderer_vulkan/vk_platform.cpp
+          grep -Fq 'bachata_open_custom_vulkan' generic-upstream/src/video_core/renderer_vulkan/vk_platform.cpp
+          grep -Fq 'BIONIC_VULKAN_CUSTOM_REQUIRED' generic-upstream/src/video_core/renderer_vulkan/vk_platform.cpp
           grep -Fq 'BIONIC_HOST_FAULT_MODULE' generic-upstream/src/core/signals.cpp
           grep -Fq 'android_vk_icd.cpp' generic-upstream/CMakeLists.txt
           grep -Fq 'BIONIC_PRESENT_IDLE_SKIP' generic-upstream/src/core/libraries/videoout/driver.cpp
