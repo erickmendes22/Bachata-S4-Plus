@@ -106,6 +106,18 @@ def main() -> None:
     resolution = []
     for path in conflicts:
         chosen = policy(path)
+        unmerged = git(root, "ls-files", "-u", "--", path).splitlines()
+        # Gitlink conflicts cannot be resolved with git add on an uninitialized
+        # submodule working tree: copy the selected commit SHA into the index.
+        links = [line.split() for line in unmerged if line.startswith("160000 ")]
+        if links:
+            chosen_stage = "2" if chosen == "ours" else "3"
+            matches = [item for item in links if item[2] == chosen_stage]
+            if not matches:
+                raise RuntimeError("Selected submodule conflict stage unavailable: "+path)
+            git(root, "update-index", "--add", "--cacheinfo", "160000," + matches[0][1] + "," + path)
+            resolution.append({"path":path,"strategy":chosen,"gitlink":matches[0][1]})
+            continue
         r = subprocess.run(["git", "-C", str(root), "checkout", "--"+chosen, "--",path],
                            capture_output=True, text=True)
         if r.returncode:
