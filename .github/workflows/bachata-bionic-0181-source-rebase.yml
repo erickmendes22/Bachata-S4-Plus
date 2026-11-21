@@ -21,6 +21,8 @@ jobs:
           git clone --quiet --filter=blob:none --no-checkout \
             https://github.com/zenithblue-oss/shadps4-arm64.git source-0181
           git -C source-0181 checkout --quiet be6bc2e9c60799e071dd2fafa6216e8d80ec619c
+          git -C source-0181 config user.name 'Bachata Source Port CI'
+          git -C source-0181 config user.email 'source-port@users.noreply.github.com'
           git -C source-0181 remote add shadps4 https://github.com/shadps4-emu/shadPS4.git
           git -C source-0181 fetch --quiet --filter=blob:none shadps4 3912336fdfffbd5c99b59d92e997ea6ebd62216c
           git -C source-0181 show HEAD:CMakeLists.txt | grep -F 'set(EMULATOR_VERSION_MINOR "16")'
