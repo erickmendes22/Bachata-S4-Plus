@@ -251,6 +251,7 @@ jobs:
           NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 \
             bash bionic/generic/build-generic.sh
           grep -aFq 'BIONIC_VULKAN_LOADER_READY' out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so
+          grep -aFq 'BIONIC_VULKAN_CUSTOM_BRIDGE_READY' out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so
           echo 'BIONIC_VULKAN_LOADER_RESOLVER_INCLUDED_IN_CORE'
           # Cache hit/miss counts determine whether a future native build can
           # be reduced further without dropping required emulator components.
@@ -424,6 +425,20 @@ jobs:
             --output out/apk/Bachata-S4Plus-Bionic-unsigned.apk \
             --patched-classes8 out/apk/classes8-bionic.dex \
             --revision "$GITHUB_SHA"
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('out/apk/Bachata-S4Plus-Bionic-unsigned.apk') as z:
+              required = [
+                  'lib/arm64-v8a/libbachata_custom_vulkan.so',
+                  'lib/arm64-v8a/libmain_hook.so',
+                  'lib/arm64-v8a/libhook_impl.so',
+                  'lib/arm64-v8a/libbachata_bionic_core.so',
+              ]
+              missing = [n for n in required if n not in z.namelist()]
+              if missing:
+                  raise SystemExit('Missing original AdrenoTools Vulkan bridge/hook: ' + ', '.join(missing))
+          print('BIONIC_ORIGINAL_CUSTOM_TURNIP_BRIDGE_PRESERVED')
+          PY
 
       - name: Align and sign testable Android APK
         shell: bash
