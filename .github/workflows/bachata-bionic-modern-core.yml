@@ -105,6 +105,16 @@ jobs:
           grep -Fq BIONIC_021_FEX_LIBC_ALIASES modern-core/src/core/libraries/libs.cpp
           echo BIONIC_021_FEX_BOOT_HLE_PATCH_APPLIED
 
+      - name: Reinstate original ARM64 FEX guest thread and callback dispatch lost in 0.21.1 patch
+        run: |
+          set -euo pipefail
+          python3 -m py_compile bionic/modern/port_android_fex_threads.py
+          python3 bionic/modern/port_android_fex_threads.py --source modern-core
+          grep -Fq 'BIONIC_021_FEX_PTHREAD_GUEST_ENTRY' modern-core/src/core/libraries/kernel/threads/pthread.cpp
+          grep -Fq 'BIONIC_021_FEX_PTHREAD_ONCE' modern-core/src/core/libraries/kernel/threads/pthread.cpp
+          grep -Fq 'BIONIC_021_FEX_PTHREAD_LLE_PRELOAD' modern-core/src/core/linker.cpp
+          echo BIONIC_021_FEX_GUEST_THREADS_AND_CALLBACKS_RESTORED
+
       - name: Audit modern kernel timezone and rebase remaining POSIX signals
         run: |
           set -euo pipefail
@@ -316,6 +326,7 @@ jobs:
             awk '/^CMakeFiles\/shadps4.dir\// {
               if ($1 ~ /android_window.cpp.o:$/ ||
                   $1 ~ /threads\/pthread.cpp.o:$/ ||
+                   $1 ~ /core\/linker.cpp.o:$/ ||
                   $1 ~ /shadnet.pb.cc.o:$/ ||
                   $1 ~ /core\/file_sys\/fs.cpp.o:$/ ||
                   $1 ~ /core\/file_sys\/saf_fs_backend.cpp.o:$/ ||
@@ -323,7 +334,7 @@ jobs:
                 sub(/:$/, "", $1); print $1
               }
             }')
-          for expected in android_window.cpp.o pthread.cpp.o shadnet.pb.cc.o fs.cpp.o saf_fs_backend.cpp.o libs.cpp.o; do
+          for expected in android_window.cpp.o pthread.cpp.o linker.cpp.o shadnet.pb.cc.o fs.cpp.o saf_fs_backend.cpp.o libs.cpp.o; do
             matched=0
             for target in "${object_targets[@]}"; do
               [[ "$target" == *"$expected" ]] && matched=1
