@@ -1,0 +1,116 @@
+name: Bachata S4+ shadPS4 0.21.1 APK (reuse verified native core)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/bionic-shadps4-0211-20261121
+    paths:
+      - '.github/workflows/bachata-bionic-0211-apk-only.yml'
+      - 'bionic/apk/**'
+      - 'bionic/jni/**'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: bachata-bionic-0211-apk-only-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BACHATA_MODERN_SOURCE_SHA: 1b3dd151e2e5127e882b7a5c740ea8a2bb7af7cf
+
+jobs:
+  apk:
+    name: Assemble real 0.21.1 core into original P36 Bachata frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Checkout Bachata APK source and existing JNI adapter
+        uses: actions/checkout@v4
+
+      - name: Android NDK r30 and original build-tools 36
+        uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            platform-tools
+            ndk;30.0.14904198
+            build-tools;36.0.0
+
+      - name: Install APK/ELF verification tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends patchelf binutils unzip zip             python3 python3-venv openssl openjdk-17-jre-headless
+          bash -n bionic/apk/build_modern_0211_apk.sh
+          python3 -m py_compile bionic/apk/assemble_modern_apk.py             bionic/apk/prepare_slim_native.py bionic/apk/compact_runtime.py             bionic/apk/patch_frontend.py
+
+      - name: Download verified full 0.21.1 ARM64/Bionic native artifact (no FEX rebuild)
+        uses: actions/download-artifact@v4
+        with:
+          name: bachata-shadps4-0211-real-bionic-core
+          repository: erickmendes22/Bachata-S4-Plus
+          run-id: 44897897890
+          path: out/bionic-modern
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Audit source revision, complete ELF and JNI before APK
+        run: |
+          set -euo pipefail
+          root=out/bionic-modern
+          core="$root/build/libbachata_bionic_core.so"
+          test -s "$core" || { echo '::error::Compiled 0.21.1 artifact missing'; exit 2; }
+          file "$core"
+          readelf -h "$core" | grep -Fq 'AArch64'
+          readelf -d "$core" | grep -Fq 'Shared library: [libc.so]'
+          ! readelf -d "$core" | grep -Eq 'libc.so.6|ld-linux-aarch64'
+          for marker in BIONIC_MANAGED_USER_PATH_READY BIONIC_021_ANDROID_SURFACE_READY BIONIC_021_VULKAN_CUSTOM_READY; do
+            grep -aFq "$marker" "$core" || { echo "::error::Core missing $marker"; exit 3; }
+          done
+          for component in avformat avcodec avutil avfilter swresample swscale; do
+            test -s "$root/deps/prefix/lib/lib$component.so" || { echo "::error::Missing Android FFmpeg lib$component.so"; exit 3; }
+          done
+          echo 'Core's available JNI exports:'
+          readelf --dyn-syms --wide "$core" |
+            awk '$4=="FUNC" && $5=="GLOBAL" && $7!="UND" && ($8 ~ /JNI_OnLoad|Java_org_libsdl_app_|Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_/) {print $8}' |
+            sort -u | tee "$root/core-jni-exports.txt"
+          if ! grep -Fq Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run "$root/core-jni-exports.txt"; then
+            echo '::error::Real 0.21.1 core does not export original native run contract'; exit 3
+          fi
+          echo BIONIC_021_EXISTING_ARTIFACT_AUDITED
+
+      - name: Build, inject and P36-sign APK without rebuilding the native core
+        env:
+          BACHATA_P36_PRIVATE_KEY: ${{ secrets.BACHATA_P36_PRIVATE_KEY }}
+          BACHATA_P36_CERT: ${{ secrets.BACHATA_P36_CERT }}
+        run: |
+          set -euo pipefail
+          bash bionic/apk/build_modern_0211_apk.sh             2>&1 | tee out/bionic-modern/apk-only.log
+          test -s out/bionic-modern/apk/Bachata-S4Plus-shadPS4-0211-Bionic-P36.apk
+
+      - name: Upload full signed APK, checksum, and P36 verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bachata-S4Plus-shadPS4-0211-Bionic-P36-APK
+          path: |
+            out/bionic-modern/apk/Bachata-S4Plus-shadPS4-0211-Bionic-P36.apk
+            out/bionic-modern/apk/SHA256SUMS
+            out/bionic-modern/apk/apksigner-verification.txt
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Preserve APK-only diagnostic traces on failure (no signing keys)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bachata-S4Plus-0211-APK-assembly-diagnostics
+          path: |
+            out/bionic-modern/core-jni-exports.txt
+            out/bionic-modern/apk-only.log
+            out/bionic-modern/apk/apktool-decompile.log
+            out/bionic-modern/apk/apktool-build.log
+            out/bionic-modern/apk/apksigner-verification.txt
+          retention-days: 7
+          if-no-files-found: ignore
