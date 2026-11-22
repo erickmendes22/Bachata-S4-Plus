@@ -56,9 +56,11 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == 1 ]]; then
   test -n "$HOST_PROTOC" && test -x "$HOST_PROTOC" || {
     echo "::error::shadPS4 0.18.1 host protoc is not on PATH" >&2; exit 2;
   }
-  test "$("$HOST_PROTOC" --version)" == "libprotoc 36.0" || {
-    echo "::error::shadPS4 0.18.1 requires host protoc 36.0: $HOST_PROTOC" >&2; exit 2;
-  }
+  HOST_PROTOC_VERSION="$("$HOST_PROTOC" --version)"
+  case "$HOST_PROTOC_VERSION" in
+    "libprotoc 36.0"|"libprotoc 36.0.0") ;;
+    *) echo "::error::shadPS4 0.18.1 requires matching host protoc 36.0 or 36.0.0: $HOST_PROTOC ($HOST_PROTOC_VERSION)" >&2; exit 2 ;;
+  esac
   PROTOC_CMAKE_ARGS=("-DBACHATA_HOST_PROTOC_EXECUTABLE:FILEPATH=$HOST_PROTOC")
   echo "BIONIC_SHADNET_PROTOC_HOST=$HOST_PROTOC"
 fi
