@@ -128,8 +128,63 @@ def apply(root: Path) -> dict:
         raise RuntimeError("FEX sem erase API unexpected")
     sem_text = sem_text.replace("orbis_sems.erase(", "orbis_sems.Erase(")
     sem.write_text(sem_text)
+    # FEX's old SlotVector initialized capacity in its constructor; modern
+    # 0.18 starts empty. .Insert() therefore hits AddChunk() with max_chunks=0.
+    # Upstream registers MAX_ORBIS_SEMAPHORES = std::numeric_limits<u16>::max().
+    require_replace(
+        sem,
+        "void RegisterSemaphore(Core::Loader::SymbolsResolver* sym) {\n",
+        "void RegisterSemaphore(Core::Loader::SymbolsResolver* sym) {\n"
+        "    // Initialize modern SlotVector before guest semaphores are created.\n"
+        "    orbis_sems.ResizeDestructive(0xFFFFu);\n",
+        "FEX kernel semaphore pool must initialize 0.18 SlotVector")
     result["fexAdaptersKept"].append("FEX pthread semaphores with 0.18 SlotVector API")
-    result["portedInterfaces"].append("FEX semaphore SlotVector allocation API")
+    result["portedInterfaces"].append("FEX semaphore SlotVector allocation and 65535-entry initialization")
+
+    # Modern sysmodule replaced the working FEX Fios2 module selector and
+    # attempts LLE even when /app0/sce_module/libSceFios2.prx is absent.
+    # Retain game/staged LLE when available; use real FEX Fios2 HLE if not.
+    sysmodule = root / "src/core/libraries/sysmodule/sysmodule_internal.cpp"
+    prefix_include(sysmodule, '#include "core/libraries/fios2/fios2.h"',
+                   "FEX Fios2 fallback implementation")
+    require_replace(
+        sysmodule,
+        "    s32 start_result = 0;\n"
+        "    // Most of the logic the actual module has here is to get the correct location of this module.\n",
+        """    s32 start_result = 0;
+    // Index 3 is libSceFios2 in the actual PS4 sysmodule table.
+    if (index == 3) {
+        const auto dir = EmulatorSettings.GetSysModulesDir() / game_info->GameSerial();
+        const auto staged = dir / "libSceFios2.sprx";
+        const bool use_hle = std::filesystem::exists(dir / "libSceFios2.use-hle");
+        if (!use_hle) {
+            const std::filesystem::path path = std::filesystem::exists(staged)
+                ? staged : std::filesystem::path("/app0/sce_module/libSceFios2.prx");
+            const s32 handle = linker->LoadAndStartModule(path, argc, argv, &start_result);
+            if (handle >= 0) {
+                mod.handle = handle;
+                ++mod.is_loaded;
+                if (res_out != nullptr) {
+                    *res_out = start_result;
+                }
+                return ORBIS_OK;
+            }
+        }
+        LOG_INFO(Lib_SysModule, "BIONIC_FIOS2_HLE_FALLBACK title={}", game_info->GameSerial());
+        Fios2::RegisterLib(&linker->GetHLESymbols());
+        linker->RelocateAllImports();
+        static s32 fios_hle_handle = 90;
+        mod.handle = fios_hle_handle++;
+        ++mod.is_loaded;
+        if (res_out != nullptr) {
+            *res_out = ORBIS_OK;
+        }
+        return ORBIS_OK;
+    }
+    // Most of the logic the actual module has here is to get the correct location of this module.
+""",
+        "restore Fios2 HLE on absent LLE module")
+    result["portedInterfaces"].append("Fios2 LLE preference with working FEX HLE fallback")
 
     # The 0.18 version removes FEX's crucial boot markers when restoring libs.
     # Reattach all checkpoints to the REAL 0.18 registration implementation.

@@ -31,7 +31,9 @@ def audit(root: Path) -> None:
             "s64 PS4_SYSV_ABI posix_read(", "s32 PS4_SYSV_ABI posix_unlink(",
             "s32 PS4_SYSV_ABI posix_rename(", "s64 PS4_SYSV_ABI sceKernelLseek(",
             "s32 PS4_SYSV_ABI sceKernelFstat("),
-        "src/core/libraries/kernel/threads/semaphore.cpp": (".Insert(", ".IsAllocated(", ".Erase("),
+        "src/core/libraries/kernel/threads/semaphore.cpp": (
+            ".Insert(", ".IsAllocated(", ".Erase(",
+            "orbis_sems.ResizeDestructive(0xFFFFu);"),
         "src/core/libraries/libs.cpp": ("ForceRegisterLib(sym);",
                                         "BIONIC_BOOT_STAGE=LIBC_HLE_END",
                                         "libSceNpCommerce.sprx"),
@@ -50,6 +52,9 @@ def audit(root: Path) -> None:
             "GetSplashPath()", "DecodePngFile(splash_path)"),
         "src/core/libraries/sysmodule/sysmodule_internal.h": (
             "g_need_scelibc", "g_need_fios2"),
+        "src/core/libraries/sysmodule/sysmodule_internal.cpp": (
+            "BIONIC_FIOS2_HLE_FALLBACK", "Fios2::RegisterLib(",
+            "libSceFios2.use-hle", "linker->RelocateAllImports();"),
         "src/video_core/renderer_vulkan/vk_instance.h": ("IsShaderSubgroupClockSupported",
                                                          "IsMultisampleStorageImageSupported",
                                                          "IsImageViewMinLodSupported",
@@ -109,6 +114,13 @@ def audit(root: Path) -> None:
             continue
         txt = path.read_text()
         issues.extend(f"{rel}: obsolete {mark!r}" for mark in markers if mark in txt)
+    # An API marker alone would miss initialization in the wrong function.
+    sem = (root / "src/core/libraries/kernel/threads/semaphore.cpp").read_text()
+    registration = sem.split("void RegisterSemaphore(Core::Loader::SymbolsResolver* sym) {", 1)
+    if len(registration) != 2 or not registration[1].lstrip().startswith(
+            "// Initialize modern SlotVector before guest semaphores are created.\n"
+            "    orbis_sems.ResizeDestructive(0xFFFFu);"):
+        issues.append("FEX semaphore pool is not initialized at HLE registration")
     # Catch CMake duplicate definitions *before* initializing NDK/FEX/cache.
     cmake = (root / "CMakeLists.txt").read_text()
     if re.search(r"(?m)^\\s*src/sdl_window\\.cpp\\s*$", cmake):

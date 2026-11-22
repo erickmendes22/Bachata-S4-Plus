@@ -117,6 +117,7 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == "1" ]]; then
     src/video_core/renderer_vulkan/vk_platform.cpp
     src/core/libraries/gnmdriver/gnmdriver.cpp
     src/core/libraries/fios2/fios2.cpp
+    src/core/libraries/sysmodule/sysmodule_internal.cpp
     src/core/aerolib/stubs.cpp
     src/core/libraries/kernel/file_system.cpp
     src/core/libraries/kernel/threads/semaphore.cpp
