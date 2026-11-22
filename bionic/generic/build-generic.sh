@@ -168,14 +168,26 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == "1" ]]; then
   # A source-level declaration check is insufficient: ensure the actual
   # ARM64 objects export the exact two symbols missing in the previous link.
   NM="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
-  "$NM" -C --defined-only "$BUILD/CMakeFiles/shadps4.dir/src/common/logging/log.cpp.o" \
-    | grep -Fq 'Common::Log::Terminate()' || {
-      echo "::error::FEX Terminate() not exported by modern logging object" >&2; exit 3;
-    }
-  "$NM" -C --defined-only "$BUILD/CMakeFiles/shadps4.dir/src/core/libraries/kernel/memory.cpp.o" \
-    | grep -Fq 'Libraries::Kernel::sceKernelMapNamedSystemFlexibleMemory(' || {
-      echo "::error::0.18 System VMA HLE not exported by FEX kernel object" >&2; exit 3;
-    }
+  # Do NOT pipe llvm-nm into grep -q under pipefail: grep exits on its
+  # first match, llvm-nm gets SIGPIPE (141), and a valid symbol fails CI.
+  # Materialize the complete symbol table, then inspect the finished file.
+  "$NM" -C --defined-only \
+    "$BUILD/CMakeFiles/shadps4.dir/src/common/logging/log.cpp.o" \
+    > "$WORK/ndk-logger-defined-symbols.txt"
+  "$NM" -C --defined-only \
+    "$BUILD/CMakeFiles/shadps4.dir/src/core/libraries/kernel/memory.cpp.o" \
+    > "$WORK/ndk-kernel-defined-symbols.txt"
+  if ! grep -Fq 'Common::Log::Terminate()' "$WORK/ndk-logger-defined-symbols.txt"; then
+    grep -i -F 'Terminate' "$WORK/ndk-logger-defined-symbols.txt" || true
+    echo "::error::FEX Terminate() truly absent from compiled modern logger" >&2
+    exit 3
+  fi
+  if ! grep -Fq 'Libraries::Kernel::sceKernelMapNamedSystemFlexibleMemory(' \
+      "$WORK/ndk-kernel-defined-symbols.txt"; then
+    grep -i -F 'FlexibleMemory' "$WORK/ndk-kernel-defined-symbols.txt" || true
+    echo "::error::0.18 System VMA HLE truly absent from compiled FEX kernel" >&2
+    exit 3
+  fi
   echo "BIONIC_LINKER_API_PRECHECK_PASS"
 fi
 
