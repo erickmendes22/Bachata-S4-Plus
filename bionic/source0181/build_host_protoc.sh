@@ -39,7 +39,12 @@ cmake -S "$PROTOSRC" -B "$BUILD" -G Ninja \
   -Dprotobuf_WITH_ZLIB=OFF
 cmake --build "$BUILD" --target protoc -j "$JOBS"
 test -x "$BUILD/protoc"
-test "$("$BUILD/protoc" --version)" = "libprotoc 36.0"
+PROTOC_VERSION="$("$BUILD/protoc" --version)"
+echo "BIONIC_HOST_PROTOC_VERSION=$PROTOC_VERSION"
+case "$PROTOC_VERSION" in
+  "libprotoc 36.0"|"libprotoc 36.0.0") ;;
+  *) echo "::error::Pinned host protoc has unexpected version: $PROTOC_VERSION" >&2; exit 2 ;;
+esac
 
 # Reject ABI-incompatible generated code BEFORE launching 2200 NDK tasks.
 mkdir -p "$OUT/host-protoc-smoketest"
