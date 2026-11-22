@@ -363,7 +363,22 @@ void GameController::PollState() {
     require_replace(presenter, newer, older, "real libpng screenshot writer")
     require_replace(presenter, "#include <stb_image_write.h>", "#include <png.h>",
                     "Android PNG include")
-    result["portedInterfaces"].append("0.18 Vulkan presenter with real Android libpng")
+    # FEX's Android ElfInfo owns a splash path, not upstream's desktop-only
+    # splash_data vector. Keep modern Vulkan but load the real FEX game asset.
+    require_replace(
+        presenter,
+        "const auto& splash_data = Common::ElfInfo::Instance().GetSplashData();",
+        "const auto& splash_path = Common::ElfInfo::Instance().GetSplashPath();",
+        "0.18 Vulkan splash image FEX ElfInfo path")
+    require_replace(
+        presenter, "if (!splash_data.empty()) {",
+        "if (!splash_path.empty()) {", "Android splash path guard")
+    require_replace(
+        presenter,
+        "ImGui::RefCountedTexture::DecodePngTexture(splash_data)",
+        "ImGui::RefCountedTexture::DecodePngFile(splash_path)",
+        "Android FEX splash file decoder")
+    result["portedInterfaces"].append("0.18 Vulkan presenter with real Android libpng and FEX splash path")
 
     # Modern videoout already integrates with its matching Liverpool queue;
     # retain only the intended Android no-idle-present behavior if the marker

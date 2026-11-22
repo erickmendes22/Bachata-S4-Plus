@@ -6,9 +6,19 @@ This does not replace C++ compilation. It prevents the exact class of
 """
 from __future__ import annotations
 import argparse
+import ast
 from pathlib import Path
 
 def audit(root: Path) -> None:
+    # Duplicate dict keys silently override old checks. That hid the prior
+    # vk_presenter assertions, so reject duplicate keys in the audit itself.
+    tree = ast.parse(Path(__file__).read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            keys = [k.value for k in node.keys
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str)]
+            if len(keys) != len(set(keys)):
+                raise SystemExit("DUPLICATE_ABI_AUDIT_DICTIONARY_KEY")
     required = {
         "src/input/controller.cpp": ("GameController::ApplyRemoteState(", "PushStateLocked(timestamp);"),
         "src/input/controller.h": ("void ApplyRemoteState(", "void PollState();"),
@@ -35,7 +45,8 @@ def audit(root: Path) -> None:
         "src/core/libraries/gnmdriver/gnmdriver.cpp": (
             "VideoOut::sceVideoOutSubmitEopFlip(vo_handle, buf_idx, flip_mode,",),
         "src/video_core/renderer_vulkan/vk_presenter.cpp": (
-            "#include <png.h>", "png_write_image("),
+            "#include <png.h>", "png_write_image(",
+            "GetSplashPath()", "DecodePngFile(splash_path)"),
         "src/core/libraries/sysmodule/sysmodule_internal.h": (
             "g_need_scelibc", "g_need_fios2"),
         "src/video_core/renderer_vulkan/vk_instance.h": ("IsShaderSubgroupClockSupported",
@@ -45,7 +56,8 @@ def audit(root: Path) -> None:
         "src/video_core/renderer_vulkan/vk_instance.cpp": ("BIONIC_VULKAN_DEVICE",),
         "src/video_core/renderer_vulkan/vk_platform.cpp": (
             "BIONIC_VULKAN_CUSTOM_BRIDGE_READY", "BIONIC_VULKAN_CUSTOM_REQUIRED"),
-        "src/common/elf_info.h": ("GetNpCommIds()",),
+        "src/common/elf_info.h": ("GetNpCommIds()", "GetSplashPath()"),
+        "src/imgui/imgui_texture.h": ("DecodePngFile(",),
         "src/common/cstring.h": ("#include <algorithm>",),
         "src/core/file_format/psf.cpp": ("#include <algorithm>",),
         "src/main.cpp": ("BachataSaf::Configure", "controller->ApplyRemoteState(",
@@ -64,11 +76,11 @@ def audit(root: Path) -> None:
         "src/core/libraries/videoout/driver.cpp": ("liverpool->EnqueueCommand(",),
         "src/core/libraries/gnmdriver/gnmdriver.cpp": ("next_flip_token", "flip_token"),
         "src/video_core/renderer_vulkan/vk_presenter.cpp": (
-            "#include <stb_image_write.h>", "stbi_write_png_to_func("),
+            "#include <stb_image_write.h>", "stbi_write_png_to_func(",
+            "GetSplashData(", '"video_core/amdgpu/stall_log.h"'),
         "src/core/libraries/videoout/video_out.cpp": ("FlipLabelTracker::kInvalidGeneration",),
         "src/core/libraries/videoout/driver.h": ("lock_generation",),
         "src/video_core/renderer_vulkan/vk_instance.cpp": ('"video_core/renderer_vulkan/legacy_vertex_attributes.h"',),
-        "src/video_core/renderer_vulkan/vk_presenter.cpp": ('"video_core/amdgpu/stall_log.h"',),
         "src/main.cpp": ("Common::Log::g_should_append", "controller->Gyro(0);",
                          "controller->Acceleration(0);", "controller->accel_poll_rate"),
         "src/sdl_window.cpp": ("controller->UpdateAxisSmoothing()", "controller->Gyro(0);"),

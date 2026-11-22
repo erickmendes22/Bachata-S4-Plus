@@ -107,12 +107,55 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == 1 ]]; then
   echo "BIONIC_SHADNET_HOST_PROTOC_36_GENERATION_PASS"
 fi
 
-# Keep compiling independent translation units after an error so one run reveals
-# ALL Android portability failures instead of the first failing source.
-# Capture the complete Ninja output, not just the first compiler error.
-# Pipe failures are explicitly propagated; -k 0 compiles every independent TU.
+# Strict fail-fast first: precompile the mixed FEX 0.16 / shadPS4 0.18 API
+# units before any bulk compilation (vk_presenter previously failed at 387/427).
+# These are real Ninja objects and are reused by the full shadPS4 target.
+if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == "1" ]]; then
+  priority_sources=(
+    src/video_core/renderer_vulkan/vk_presenter.cpp
+    src/video_core/renderer_vulkan/vk_instance.cpp
+    src/video_core/renderer_vulkan/vk_platform.cpp
+    src/core/libraries/gnmdriver/gnmdriver.cpp
+    src/core/libraries/fios2/fios2.cpp
+    src/core/aerolib/stubs.cpp
+    src/core/libraries/kernel/file_system.cpp
+    src/core/libraries/kernel/threads/semaphore.cpp
+    src/core/libraries/videoout/video_out.cpp
+    src/core/libraries/videoout/driver.cpp
+    src/core/memory.cpp
+    src/core/libraries/libs.cpp
+    src/input/controller.cpp
+    src/emulator.cpp
+    src/main.cpp
+  )
+  ninja -C "$BUILD" -t targets all > "$WORK/ndk-ninja-targets.txt"
+  priority_objects=()
+  for source in "${priority_sources[@]}"; do
+    object="CMakeFiles/shadps4.dir/${source}.o"
+    if ! grep -Fq "${object}:" "$WORK/ndk-ninja-targets.txt"; then
+      echo "::error::Early ABI compiler gate missing $object" >&2
+      exit 3
+    fi
+    priority_objects+=("$object")
+  done
+  echo "BIONIC_CPP_FAIL_FAST_START: ${#priority_objects[@]} critical units before bulk build"
+  set +e
+  ninja -C "$BUILD" -j "$JOBS" -k 1 "${priority_objects[@]}" 2>&1 | tee "$WORK/ndk-cxx-early.log"
+  early_status=${PIPESTATUS[0]}
+  set -e
+  if (( early_status != 0 )); then
+    python3 "$ROOT/bionic/source0181/extract_native_errors.py" \
+      "$WORK/ndk-cxx-early.log" "$WORK/ndk-errors-summary.txt"
+    echo "::error::Early C++ ABI gate failed; bulk build cancelled."
+    exit "$early_status"
+  fi
+  echo "BIONIC_CPP_FAIL_FAST_PASS: ${#priority_objects[@]} reusable compiled objects"
+fi
+
+# Stop the bulk C++ build on the first compiler error (never use -k 0).
+# Keep already compiled C++ objects in ccache for the next attempt.
 set +e
-cmake --build "$BUILD" --target shadps4 -j "$JOBS" -- -k 0 2>&1 | tee "$WORK/ndk-cxx-full.log"
+cmake --build "$BUILD" --target shadps4 -j "$JOBS" 2>&1 | tee "$WORK/ndk-cxx-full.log"
 native_build_status=${PIPESTATUS[0]}
 set -e
 if (( native_build_status != 0 )); then
