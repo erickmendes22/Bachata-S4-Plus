@@ -112,21 +112,22 @@ def selftest() -> None:
         include = project / "bionic/generic/android_host.h"
         src.parent.mkdir(parents=True)
         include.parent.mkdir(parents=True)
+        (project / "generic-upstream/CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.21)\n")
         src.write_text("int main() {return 0;}\n")
         include.write_text("#pragma once\n")
         origin = 1_700_000_000_000_000_000
         os.utime(src, ns=(origin, origin))
         os.utime(include, ns=(origin, origin))
         manifest = MANIFEST
-        assert snapshot(project, manifest) == 2
+        assert snapshot(project, manifest) == 3
         future = origin + 20_000_000_000
         os.utime(src, ns=(future, future))
         include.write_text("#pragma once\n// altered ABI\n")
         os.utime(include, ns=(future, future))
-        assert restore(project, manifest) == 1
+        assert restore(project, manifest) == 2
         assert src.stat().st_mtime_ns == origin
         assert include.stat().st_mtime_ns == future
-        assert restore(project, manifest) == 1
+        assert restore(project, manifest) == 2
         print("BIONIC_INCREMENTAL_SELFTEST_PASS")
 
 
