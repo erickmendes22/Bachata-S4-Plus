@@ -64,6 +64,18 @@ def reconcile(root: Path) -> dict:
                 missing_required.append({"group":group,"file":ref,"reason":"upstream source absent from Git revision"})
                 continue
             if ref in old_refs:continue
+            # The Android Bionic overlay already replaced BOTH 0.16
+            # SDL WindowSDL source entries with the service-owned
+            # android_window.cpp. Restoring 0.18's SDL source into EMULATOR
+            # produces two definitions of WindowSDL at final ELF link.
+            # This is a platform adaptation, not a missing upstream source.
+            if ref == "src/sdl_window.cpp":
+                if group != "EMULATOR" or "${BACHATA_ANDROID_WINDOW_SOURCE}" not in corrected:
+                    raise RuntimeError("Unexpected SDL frontend registry; refuse duplicate native host")
+                changes.append({"group":group,
+                                "desktopFrontendExcluded":"src/sdl_window.cpp",
+                                "androidFrontendKept":"${BACHATA_ANDROID_WINDOW_SOURCE}"})
+                continue
             if ref not in corrected:added.append(ref)
         if added:
             at=corrected.rfind("\n)")
@@ -196,6 +208,14 @@ def reconcile(root: Path) -> dict:
             current = current.replace(old_vk_dispatch_rule, "", 1)
             changes.append({"group":"OBSOLETE_ARM64_DISPATCH_RULE",
                             "removed":"vk_dispatch_reload.cpp no-LTO registration"})
+    # Reject an accidental second SDL source before NDK configuration.
+    # The Android service-owned WindowSDL and upstream desktop WindowSDL
+    # export identical C++ symbols and are mutually exclusive in the ELF.
+    if re.search(r"(?m)^\\s*src/sdl_window\\.cpp\\s*$", current):
+        raise RuntimeError("BIONIC_SDL_DUPLICATE_LINK: desktop SDL still in Android target")
+    if current.count("${BACHATA_ANDROID_WINDOW_SOURCE}") < 2 or (
+            'set(BACHATA_ANDROID_WINDOW_SOURCE "' not in current):
+        raise RuntimeError("BIONIC_SDL_ANDROID_FRONTEND_NOT_REGISTERED")
     # Removing obsolete 0.16.1 entries may leave whitespace-only lines.
     # Normalize trailing spaces before strict git diff --check preflight.
     current="\n".join(line.rstrip() for line in current.split("\n"))

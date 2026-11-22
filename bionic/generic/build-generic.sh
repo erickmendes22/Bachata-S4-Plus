@@ -129,6 +129,17 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == "1" ]]; then
     src/main.cpp
   )
   ninja -C "$BUILD" -t targets all > "$WORK/ndk-ninja-targets.txt"
+  # Inspect the ACTUAL generated compiler graph, not only CMake source text.
+  # If the desktop SDL WindowSDL exists, linking would fail after ~400 TUs.
+  if grep -Fq 'CMakeFiles/shadps4.dir/src/sdl_window.cpp.o:' "$WORK/ndk-ninja-targets.txt"; then
+    echo "::error::BIONIC_SDL_DUPLICATE_LINK: desktop sdl_window.cpp object in Android core" >&2
+    exit 3
+  fi
+  if ! grep -Fq 'android_window.cpp.o:' "$WORK/ndk-ninja-targets.txt"; then
+    echo "::error::BIONIC_SDL_ANDROID_FRONTEND_MISSING: service-owned android_window.cpp" >&2
+    exit 3
+  fi
+  echo "BIONIC_WINDOW_SOURCE_EXCLUSIVE_PASS"
   priority_objects=()
   for source in "${priority_sources[@]}"; do
     object="CMakeFiles/shadps4.dir/${source}.o"

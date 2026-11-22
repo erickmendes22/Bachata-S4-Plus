@@ -7,6 +7,7 @@ This does not replace C++ compilation. It prevents the exact class of
 from __future__ import annotations
 import argparse
 import ast
+import re
 from pathlib import Path
 
 def audit(root: Path) -> None:
@@ -99,6 +100,14 @@ def audit(root: Path) -> None:
             continue
         txt = path.read_text()
         issues.extend(f"{rel}: obsolete {mark!r}" for mark in markers if mark in txt)
+    # Catch CMake duplicate definitions *before* initializing NDK/FEX/cache.
+    cmake = (root / "CMakeLists.txt").read_text()
+    if re.search(r"(?m)^\\s*src/sdl_window\\.cpp\\s*$", cmake):
+        issues.append("CMakeLists.txt: desktop SDL source conflicts with android_window.cpp")
+    if cmake.count("${BACHATA_ANDROID_WINDOW_SOURCE}") < 2:
+        issues.append("CMakeLists.txt: Android SDL source not included in native target")
+    if 'set(BACHATA_ANDROID_WINDOW_SOURCE "' not in cmake:
+        issues.append("CMakeLists.txt: Android frontend implementation not registered")
     if issues:
         raise SystemExit("SOURCE_ABI_REGRESSIONS_FOUND:\n" + "\n".join(issues))
     print("SHADPS4_0181_ANDROID_FEX_INTERFACE_CONTRACTS_PASS",
