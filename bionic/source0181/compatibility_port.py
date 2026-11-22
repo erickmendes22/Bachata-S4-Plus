@@ -406,4 +406,69 @@ void GameController::PollState() {
     if not result["modernVideooutUsesLiverpoolQueue"]:
         raise RuntimeError("Modern 0.18 VideoOut unexpectedly uses old Liverpool queue")
 
+
+    # The 0.18 logger declares Terminate() but dropped its definition even
+    # though the preserved FEX Linker installs it as std::terminate_handler.
+    # Reintroduce the original real FEX exception logger/quick-exit handler.
+    log_cpp = root / "src/common/logging/log.cpp"
+    original_log = subprocess.check_output(
+        ["git", "-C", str(root), "show",
+         FEX_HOST + ":src/common/logging/log.cpp"], text=True)
+    start = original_log.index("void Terminate() {")
+    stop = original_log.index("\nvoid UpdateSinks() {", start)
+    terminate_impl = original_log[start:stop]
+    if "std::quick_exit" not in terminate_impl or "std::current_exception" not in terminate_impl:
+        raise RuntimeError("Original FEX Terminate handler unexpectedly absent")
+    require_replace(log_cpp, "#include <cstdlib>\n",
+                    "#include <cstdlib>\n#include <exception>\n#include <utility>\n",
+                    "modern exception logger includes")
+    # Original enum values are observable process return codes; do not change.
+    enum_start = original_log.index("enum class ShadPs4ReturnCode : u32 {")
+    enum_end = original_log.index("\n};", enum_start) + 3
+    return_codes = original_log[enum_start:enum_end]
+    require_replace(log_cpp, "namespace Common::Log {\n",
+                    return_codes + "\n\nnamespace Common::Log {\n",
+                    "FEX terminate error codes")
+    require_replace(log_cpp, "void UpdateSinks() {\n",
+                    terminate_impl + "\nvoid UpdateSinks() {\n",
+                    "original FEX exception terminate implementation")
+    result["portedInterfaces"].append("actual 0.16 FEX terminate handler in 0.18 logger")
+
+    # The 0.18 camera links a new libkernel export whose declaration was
+    # merged but whose *implementation* remained old FEX 0.16. Port the
+    # authentic 0.18 HLE body, including System VMA mapping and its guest NID.
+    # This must not be aliased to flexible memory (different accounting).
+    mem_h = root / "src/core/memory.h"
+    require_replace(mem_h, "    File = 8,\n", "    File = 8,\n    System = 9,\n",
+                    "modern System VMA type on native FEX allocator")
+    kernel_header = root / "src/core/libraries/kernel/memory.h"
+    require_replace(
+        kernel_header,
+        "s32 PS4_SYSV_ABI sceKernelMapFlexibleMemory(void** addr_in_out, u64 len, s32 prot, s32 flags);\n",
+        "s32 PS4_SYSV_ABI sceKernelMapFlexibleMemory(void** addr_in_out, u64 len, s32 prot, s32 flags);\n"
+        "s32 PS4_SYSV_ABI sceKernelMapNamedSystemFlexibleMemory(void** addr_in_out, u64 len, s32 prot,\n"
+        "                                                       s32 flags, const char* name);\n",
+        "modern System flexible memory public declaration")
+    kernel_cpp = root / "src/core/libraries/kernel/memory.cpp"
+    modern_kernel = subprocess.check_output(
+        ["git", "-C", str(root), "show",
+         UPSTREAM + ":src/core/libraries/kernel/memory.cpp"], text=True)
+    start = modern_kernel.index("s32 PS4_SYSV_ABI sceKernelMapNamedSystemFlexibleMemory(")
+    stop = modern_kernel.index("\ns32 PS4_SYSV_ABI sceKernelQueryMemoryProtection(", start)
+    authentic_kernel_function = modern_kernel[start:stop]
+    if ("Core::VMAType::System" not in authentic_kernel_function or
+            "memory->MapMemory(" not in authentic_kernel_function):
+        raise RuntimeError("Missing genuine 0.18 system memory implementation")
+    require_replace(
+        kernel_cpp, "s32 PS4_SYSV_ABI sceKernelQueryMemoryProtection(",
+        authentic_kernel_function + "s32 PS4_SYSV_ABI sceKernelQueryMemoryProtection(",
+        "real 0.18 System VMA HLE implementation")
+    require_replace(
+        kernel_cpp,
+        '    LIB_FUNCTION("mL8NDH86iQI", "libkernel", 1, "libkernel", sceKernelMapNamedFlexibleMemory);\n',
+        '    LIB_FUNCTION("mL8NDH86iQI", "libkernel", 1, "libkernel", sceKernelMapNamedFlexibleMemory);\n'
+        '    LIB_FUNCTION("kc+LEEIYakc", "libkernel", 1, "libkernel", sceKernelMapNamedSystemFlexibleMemory);\n',
+        "register real System flexible memory PS4 export")
+    result["portedInterfaces"].append("actual 0.18 named System VMA HLE and guest NID on FEX")
+
     return result

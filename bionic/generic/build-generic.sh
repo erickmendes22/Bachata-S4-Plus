@@ -127,6 +127,10 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == "1" ]]; then
     src/input/controller.cpp
     src/emulator.cpp
     src/main.cpp
+    src/common/logging/log.cpp
+    src/core/libraries/kernel/memory.cpp
+    src/core/libraries/camera/camera.cpp
+    src/core/linker.cpp
   )
   ninja -C "$BUILD" -t targets all > "$WORK/ndk-ninja-targets.txt"
   # Inspect the ACTUAL generated compiler graph, not only CMake source text.
@@ -161,6 +165,18 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == "1" ]]; then
     exit "$early_status"
   fi
   echo "BIONIC_CPP_FAIL_FAST_PASS: ${#priority_objects[@]} reusable compiled objects"
+  # A source-level declaration check is insufficient: ensure the actual
+  # ARM64 objects export the exact two symbols missing in the previous link.
+  NM="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+  "$NM" -C --defined-only "$BUILD/CMakeFiles/shadps4.dir/src/common/logging/log.cpp.o" \
+    | grep -Fq 'Common::Log::Terminate()' || {
+      echo "::error::FEX Terminate() not exported by modern logging object" >&2; exit 3;
+    }
+  "$NM" -C --defined-only "$BUILD/CMakeFiles/shadps4.dir/src/core/libraries/kernel/memory.cpp.o" \
+    | grep -Fq 'Libraries::Kernel::sceKernelMapNamedSystemFlexibleMemory(' || {
+      echo "::error::0.18 System VMA HLE not exported by FEX kernel object" >&2; exit 3;
+    }
+  echo "BIONIC_LINKER_API_PRECHECK_PASS"
 fi
 
 # Stop the bulk C++ build on the first compiler error (never use -k 0).

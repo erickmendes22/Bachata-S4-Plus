@@ -59,6 +59,15 @@ def audit(root: Path) -> None:
             "BIONIC_VULKAN_CUSTOM_BRIDGE_READY", "BIONIC_VULKAN_CUSTOM_REQUIRED"),
         "src/common/elf_info.h": ("GetNpCommIds()", "GetSplashPath()"),
         "src/imgui/imgui_texture.h": ("DecodePngFile(",),
+        "src/common/logging/log.cpp": ("void Terminate() {", "std::current_exception()",
+                                      "std::quick_exit(", "TERMINATE_WITH_UNKNOWN_EXCEPTION"),
+        "src/core/memory.h": ("System = 9,",),
+        "src/core/libraries/kernel/memory.h": (
+            "s32 PS4_SYSV_ABI sceKernelMapNamedSystemFlexibleMemory(",),
+        "src/core/libraries/kernel/memory.cpp": (
+            "s32 PS4_SYSV_ABI sceKernelMapNamedSystemFlexibleMemory(",
+            "Core::VMAType::System",
+            'LIB_FUNCTION("kc+LEEIYakc", "libkernel", 1, "libkernel", sceKernelMapNamedSystemFlexibleMemory);'),
         "src/common/cstring.h": ("#include <algorithm>",),
         "src/core/file_format/psf.cpp": ("#include <algorithm>",),
         "src/main.cpp": ("BachataSaf::Configure", "controller->ApplyRemoteState(",
@@ -108,6 +117,16 @@ def audit(root: Path) -> None:
         issues.append("CMakeLists.txt: Android SDL source not included in native target")
     if 'set(BACHATA_ANDROID_WINDOW_SOURCE "' not in cmake:
         issues.append("CMakeLists.txt: Android frontend implementation not registered")
+    # Catch duplicate/missing method definitions that would otherwise fail
+    # only at final ELF link after 400 compilation units.
+    for rel, signature in (
+        ("src/common/logging/log.cpp", "void Terminate() {"),
+        ("src/core/libraries/kernel/memory.cpp",
+         "s32 PS4_SYSV_ABI sceKernelMapNamedSystemFlexibleMemory("),
+    ):
+        count = (root / rel).read_text().count(signature)
+        if count != 1:
+            issues.append(f"{rel}: expected one actual definition {signature}, got {count}")
     if issues:
         raise SystemExit("SOURCE_ABI_REGRESSIONS_FOUND:\n" + "\n".join(issues))
     print("SHADPS4_0181_ANDROID_FEX_INTERFACE_CONTRACTS_PASS",
