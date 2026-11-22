@@ -73,6 +73,10 @@ def audit(root: Path) -> None:
             "s32 PS4_SYSV_ABI sceKernelMapNamedSystemFlexibleMemory(",
             "Core::VMAType::System",
             'LIB_FUNCTION("kc+LEEIYakc", "libkernel", 1, "libkernel", sceKernelMapNamedSystemFlexibleMemory);'),
+        "src/core/guest_cpu/hle_call_adapter.cpp": (
+            "BIONIC_GUEST_X86_NONLOCAL_JUMP", "gNQ1V2vfXDE",
+            "lKEN2IebgJ0", "guest_setjmp[]", "guest_longjmp[]",
+            "do_setjmp", "do_longjmp", "written = 16;"),
         "src/common/cstring.h": ("#include <algorithm>",),
         "src/core/file_format/psf.cpp": ("#include <algorithm>",),
         "src/main.cpp": ("BachataSaf::Configure", "controller->ApplyRemoteState(",

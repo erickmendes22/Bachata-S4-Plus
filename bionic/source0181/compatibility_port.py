@@ -526,4 +526,9 @@ void GameController::PollState() {
         "register real System flexible memory PS4 export")
     result["portedInterfaces"].append("actual 0.18 named System VMA HLE and guest NID on FEX")
 
+    # Restore PS4 guest x86 non-local jumps: setjmp is NOT an ARM host HLE.
+    from guest_jump_abi import apply as apply_guest_nonlocal_jump
+    result["fexGuestNonLocalJumps"] = apply_guest_nonlocal_jump(root)
+    result["portedInterfaces"].append("PS4 FreeBSD x86 setjmp/longjmp guest-native FEX veneers")
+
     return result

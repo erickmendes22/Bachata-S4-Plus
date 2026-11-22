@@ -467,6 +467,22 @@ void RegisterFexLibcCompatAliases(Core::Loader::SymbolsResolver* sym) {
     ALIAS("aaDMGGkXFxo", Fex_frexpf);
     ALIAS("kn0yiYeExgA", Fex_ldexpf);
     ALIAS("3+UPM-9E6xY", Fex_modff);
+    // Native x86-64 FEX veneers: required for returns-twice setjmp semantics.
+    // The adapter is a registration token only; the FEX veneer allocator
+    // substitutes verified guest x86 code before this adapter can be invoked.
+    const auto add_guest_nonlocal_jump = [&](const char* nid) {
+        Core::Loader::SymbolResolver sr{};
+        sr.name = nid;
+        sr.library = "libc";
+        sr.library_version = 1;
+        sr.module = "libc";
+        sr.type = Core::Loader::SymbolType::Function;
+        sym->AddFunction(sr, Core::GuestCpu::MakeUnsupportedHleCallAdapter());
+    };
+    add_guest_nonlocal_jump("gNQ1V2vfXDE"); // setjmp
+    add_guest_nonlocal_jump("sjpkrhugvVI"); // _setjmp
+    add_guest_nonlocal_jump("lKEN2IebgJ0"); // longjmp
+    add_guest_nonlocal_jump("+F+9hhi6k9Q"); // _longjmp
     AddPrintfAlias(sym, "hcuQgD53UxM", PrintKind::Printf);
     AddPrintfAlias(sym, "tcVi5SivF7Q", PrintKind::Sprintf);
     AddPrintfAlias(sym, "eLdDw6l0-bU", PrintKind::Snprintf);

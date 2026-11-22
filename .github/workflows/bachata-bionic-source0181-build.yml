@@ -55,6 +55,7 @@ jobs:
           bash -n bionic/source0181/native_cache.sh
           python3 -m py_compile bionic/source0181/incremental_inputs.py
           python3 bionic/source0181/incremental_inputs.py selftest
+          python3 bionic/source0181/guest_jump_abi.py selftest
           bash -n bionic/generic/build-generic.sh
           grep -Fq 'BIONIC_CPP_FAIL_FAST_START' bionic/generic/build-generic.sh
           ! grep -Fq -- '-- -k 0' bionic/generic/build-generic.sh
