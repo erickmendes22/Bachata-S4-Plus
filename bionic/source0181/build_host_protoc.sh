@@ -21,6 +21,14 @@ test "$actual" = "5917ee224a7e47383a78acc129628511fe210dff" || {
   exit 2
 }
 
+# The source revisions are pinned. Reuse the already built matching host
+# protoc AND installed Abseil headers when restored from the compilation cache.
+# Every invocation still runs the real generated-protobuf syntax test below.
+if [[ -x "$BUILD/protoc" ]] &&
+   [[ "$("$BUILD/protoc" --version)" == "libprotoc 36.0-dev" ]] &&
+   [[ -s "$PREFIX/include/absl/base/config.h" ]]; then
+  echo "BIONIC_HOST_PROTOC_CACHED_MATCHING_FORK"
+else
 # Build matching host Abseil without fetching other versions from the network.
 cmake -S "$ABSL" -B "$OUT/host-absl-build" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREFIX" \
@@ -38,6 +46,7 @@ cmake -S "$PROTOSRC" -B "$BUILD" -G Ninja \
   -Dprotobuf_BUILD_CONFORMANCE=OFF -Dprotobuf_BUILD_SHARED_LIBS=OFF \
   -Dprotobuf_WITH_ZLIB=OFF
 cmake --build "$BUILD" --target protoc -j "$JOBS"
+fi
 test -x "$BUILD/protoc"
 PROTOC_VERSION="$("$BUILD/protoc" --version)"
 echo "BIONIC_HOST_PROTOC_VERSION=$PROTOC_VERSION"

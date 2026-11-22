@@ -53,6 +53,8 @@ jobs:
           bash -n bionic/generic/build-generic.sh
           bash -n bionic/source0181/build_host_protoc.sh
           bash -n bionic/source0181/native_cache.sh
+          python3 -m py_compile bionic/source0181/incremental_inputs.py
+          python3 bionic/source0181/incremental_inputs.py selftest
           bash -n bionic/generic/build-generic.sh
           grep -Fq 'BIONIC_CPP_FAIL_FAST_START' bionic/generic/build-generic.sh
           ! grep -Fq -- '-- -k 0' bionic/generic/build-generic.sh
@@ -328,6 +330,17 @@ jobs:
           restore-keys: |
             bachata-0181-native-stage-r30-
 
+      # Restore the previous checkout timestamps ONLY for byte-identical
+      # inputs. Without this step a fresh git clone makes all sources newer
+      # than the restored .o files, forcing a false ~400-file rebuild.
+      - name: Restore identical C++ source timestamps for real Ninja incremental builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 bionic/source0181/incremental_inputs.py restore
+          # Stats since this execution, not the cumulative cache archive.
+          ccache --zero-stats
+
       - name: Check reusable FEX/Vulkan binaries and pinned dependencies
         id: native-prereq-cache
         shell: bash
@@ -434,6 +447,13 @@ jobs:
             out/bionic/deps/build/*.log
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Snapshot source hashes and timestamps for the next incremental build
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 bionic/source0181/incremental_inputs.py snapshot
 
       - name: Cache successfully compiled objects even after an unrelated link error
         if: always()
