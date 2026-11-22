@@ -34,6 +34,9 @@ fetch_rev() {
     git -C "$dir" -c advice.detachedHead=false checkout -q --force "$rev"
   fi
 }
+# Stage-only mode is allowed only after native_cache.sh verifies the pinned
+# dependencies, source revision, driver objects and Android ELF metadata.
+if [[ "${BACHATA_REUSE_NATIVE_BUILD:-0}" != "1" ]]; then
 echo "== [1/5] Android/Bionic dependencies"
 # The port defaults to $(nproc), which can exhaust GitHub runner memory when
 # FFmpeg and multiple C++ dependencies are compiled in parallel.
@@ -80,6 +83,9 @@ SRC="$PORT" OUT="$WORK/gpu-build" FEX_SOURCE_DIR="$FEX_DIR" \
   FEX_BUILD_DIR="$FEX_BUILD" ADRENOTOOLS_SOURCE_DIR="$ADT_DIR" \
   ADRENOTOOLS_BUILD_DIR="$ADT_BUILD" \
   bash "$PORT/android/scripts/port-arm64/build_gpu_android.sh" bbgpu main bbprepare bb-probe
+else
+  echo "BIONIC_FEX_VULKAN_PRECOMPILED_RESTAGE"
+fi
 echo "== [5/5] Stage the actual linked native components"
 S="$WORK/stage"
 for name in libbbgpu.so libmain.so libbbprepare.so; do

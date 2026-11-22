@@ -16,6 +16,10 @@ def audit(root: Path) -> None:
         "src/core/debug_state.h": ("void IncDrawCall()", "void IncDispatch()",
                                    "GetDrawCallsAvg()", "GetDispatchesAvg()"),
         "src/core/libraries/kernel/file_system.cpp": ("deci_tty_device.h",),
+        "src/core/libraries/kernel/file_system.h": (
+            "s64 PS4_SYSV_ABI posix_read(", "s32 PS4_SYSV_ABI posix_unlink(",
+            "s32 PS4_SYSV_ABI posix_rename(", "s64 PS4_SYSV_ABI sceKernelLseek(",
+            "s32 PS4_SYSV_ABI sceKernelFstat("),
         "src/core/libraries/kernel/threads/semaphore.cpp": (".Insert(", ".IsAllocated(", ".Erase("),
         "src/core/libraries/libs.cpp": ("ForceRegisterLib(sym);",
                                         "BIONIC_BOOT_STAGE=LIBC_HLE_END",
@@ -28,6 +32,10 @@ def audit(root: Path) -> None:
         "src/core/libraries/videoout/video_out.cpp": (
             "driver->SubmitFlip(port, buf_id, flip_arg, true);",),
         "src/core/libraries/pad/pad.h": ("ORBIS_PAD_MAX_DATA_NUM",),
+        "src/core/libraries/gnmdriver/gnmdriver.cpp": (
+            "VideoOut::sceVideoOutSubmitEopFlip(vo_handle, buf_idx, flip_mode,",),
+        "src/video_core/renderer_vulkan/vk_presenter.cpp": (
+            "#include <png.h>", "png_write_image("),
         "src/core/libraries/sysmodule/sysmodule_internal.h": (
             "g_need_scelibc", "g_need_fios2"),
         "src/video_core/renderer_vulkan/vk_instance.h": ("IsShaderSubgroupClockSupported",
@@ -54,6 +62,9 @@ def audit(root: Path) -> None:
         "src/core/libraries/kernel/threads/semaphore.cpp": (
             "PthreadCancelInterrupt(", "critical_count.fetch_add("),
         "src/core/libraries/videoout/driver.cpp": ("liverpool->EnqueueCommand(",),
+        "src/core/libraries/gnmdriver/gnmdriver.cpp": ("next_flip_token", "flip_token"),
+        "src/video_core/renderer_vulkan/vk_presenter.cpp": (
+            "#include <stb_image_write.h>", "stbi_write_png_to_func("),
         "src/core/libraries/videoout/video_out.cpp": ("FlipLabelTracker::kInvalidGeneration",),
         "src/core/libraries/videoout/driver.h": ("lock_generation",),
         "src/video_core/renderer_vulkan/vk_instance.cpp": ('"video_core/renderer_vulkan/legacy_vertex_attributes.h"',),

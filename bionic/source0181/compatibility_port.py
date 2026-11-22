@@ -69,6 +69,26 @@ def apply(root: Path) -> dict:
         restore(root, rel)
         result["restoredMatchingImplementations"].append(rel)
 
+    # Modern file_system.cpp still implements these FEX AeroLib/Fios2 entrypoints,
+    # but their declarations were dropped from the newer file_system.h.
+    kernel_h = root / "src/core/libraries/kernel/file_system.h"
+    require_replace(kernel_h,
+        "s64 PS4_SYSV_ABI posix_lseek(s32 fd, s64 offset, s32 whence);\n",
+        "s64 PS4_SYSV_ABI posix_lseek(s32 fd, s64 offset, s32 whence);\n"
+        "s64 PS4_SYSV_ABI posix_read(s32 fd, void* buf, u64 nbytes);\n"
+        "s32 PS4_SYSV_ABI posix_unlink(const char* path);\n"
+        "s32 PS4_SYSV_ABI posix_rename(const char* from, const char* to);\n"
+        "s64 PS4_SYSV_ABI sceKernelLseek(s32 fd, s64 offset, s32 whence);\n"
+        "s32 PS4_SYSV_ABI sceKernelFstat(s32 fd, OrbisKernelStat* sb);\n",
+        "real modern kernel I/O declarations")
+    result["portedInterfaces"].append("0.18 kernel I/O declarations matching real HLE implementations")
+
+    # GnmDriver's old six-argument VideoOut flip and token layout are obsolete.
+    # Bring the whole upstream 0.18.1 PM4 caller instead of dropping an argument.
+    restore(root, "src/core/libraries/gnmdriver/gnmdriver.cpp")
+    result["restoredMatchingImplementations"].append(
+        "src/core/libraries/gnmdriver/gnmdriver.cpp")
+
     # Modern Ime and pad APIs were incorrectly linked against old 0.16
     # implementations. Preserve their new headers and complete methods.
     # These HLE family interfaces changed together. Updating an individual
@@ -320,6 +340,30 @@ void GameController::PollState() {
         '#endif\n',
         "Android Vulkan physical device checkpoint")
     result["portedInterfaces"].append("complete modern Vulkan instance/presenter with Android loader")
+
+    # Android already links PNG::PNG. Modern desktop stb_image_write.h is not
+    # in the NDK include path; keep the existing proven libpng screenshot
+    # implementation from the same working ARM64 FEX tree.
+    presenter = root / "src/video_core/renderer_vulkan/vk_presenter.cpp"
+    modern_png = presenter.read_text()
+    old_png = subprocess.check_output(
+        ["git", "-C", str(root), "show",
+         FEX_HOST + ":src/video_core/renderer_vulkan/vk_presenter.cpp"]
+    ).decode("utf-8")
+    def write_png_block(source: str) -> str:
+        if source.count("static bool WritePng(") != 1:
+            raise RuntimeError("Missing or duplicate WritePng")
+        start = source.index("static bool WritePng(")
+        end = source.index("\n}\n", start) + 3
+        return source[start:end]
+    newer = write_png_block(modern_png)
+    older = write_png_block(old_png)
+    if "stbi_write_png_to_func(" not in newer or "png_write_image(" not in older:
+        raise RuntimeError("Unexpected screenshot ABI for PNG compatibility port")
+    require_replace(presenter, newer, older, "real libpng screenshot writer")
+    require_replace(presenter, "#include <stb_image_write.h>", "#include <png.h>",
+                    "Android PNG include")
+    result["portedInterfaces"].append("0.18 Vulkan presenter with real Android libpng")
 
     # Modern videoout already integrates with its matching Liverpool queue;
     # retain only the intended Android no-idle-present behavior if the marker

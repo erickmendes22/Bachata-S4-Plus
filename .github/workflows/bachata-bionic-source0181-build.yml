@@ -10,6 +10,11 @@ on:
       - 'bionic/source0181/**'
       - '.github/workflows/bachata-bionic-source0181-build.yml'
   workflow_dispatch:
+    inputs:
+      core_run_id:
+        description: 'Existing successful 0.18.1 core run for APK-only packaging, bypassing native rebuild'
+        required: false
+        type: string
 
 # One complete Bionic APK build per branch. New source revisions supersede old builds.
 concurrency:
@@ -22,6 +27,7 @@ permissions:
 
 jobs:
   bionic-source-preflight:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.core_run_id == '' }}
     name: Fast Bionic/FEX source and ABI audit (no APK)
     runs-on: ubuntu-24.04
     timeout-minutes: 12
@@ -46,6 +52,7 @@ jobs:
           python3 -m py_compile bionic/generic/*.py bionic/source0181/*.py
           bash -n bionic/generic/build-generic.sh
           bash -n bionic/source0181/build_host_protoc.sh
+          bash -n bionic/source0181/native_cache.sh
           python3 bionic/source0181/assert_native_api.py --source generic-upstream
           # Fail the cheap preflight if the host protobuf generator can again
           # become a cached /usr/bin/protoc after restoring CMakeCache.txt.
@@ -162,7 +169,7 @@ jobs:
     # Do not spend ~20 minutes compiling for each speculative source change.
     # Full core and P36 APK build only on explicit workflow_dispatch or
     # an intentional commit message carrying [build-apk].
-    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-apk]') }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.core_run_id == '') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build-apk]')) }}
     needs: [bionic-source-preflight]
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -173,6 +180,7 @@ jobs:
       CCACHE_COMPRESS: "true"
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      CCACHE_NOHASHDIR: "true"
     steps:
       - name: Stop older concurrent Bionic builds (pre-concurrency runs)
         env:
@@ -307,6 +315,26 @@ jobs:
           restore-keys: |
             bachata-full-bionic-r30-
 
+      # A separate stage archive preserves the old 1.39-GB native/ccache
+      # cache version; adding stage to its path list would invalidate it.
+      - name: Restore native stage separately from incremental C++ cache
+        uses: actions/cache/restore@v4
+        with:
+          path: out/bionic/stage
+          key: bachata-0181-native-stage-r30-${{ github.sha }}
+          restore-keys: |
+            bachata-0181-native-stage-r30-
+
+      - name: Check reusable FEX/Vulkan binaries and pinned dependencies
+        id: native-prereq-cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          mode="$(NDK="$ANDROID_HOME/ndk/30.0.14904198" bash bionic/source0181/native_cache.sh check)"
+          case "$mode" in ready|restage|rebuild) ;; *) exit 2;; esac
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "BIONIC_NATIVE_CACHE_MODE=$mode"
+
       - name: Build host protoc from matching pinned protobuf source and test ABI
         run: |
           set -euo pipefail
@@ -315,9 +343,30 @@ jobs:
           test -s out/bionic/host-protoc-smoketest/shadnet.pb.cc
           ! grep -Fq 'TcParser::MpUnknownFields' out/bionic/host-protoc-smoketest/shadnet.pb.cc
 
-      - name: Compile native FEXCore and Android Vulkan prerequisites
+      - name: Reuse, restage or rebuild native FEXCore/Vulkan prerequisites
+        shell: bash
         run: |
-          NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 bash bionic/build-core.sh
+          set -euo pipefail
+          mode="${{ steps.native-prereq-cache.outputs.mode }}"
+          if [[ "$mode" == "ready" ]]; then
+            echo BIONIC_FEX_VULKAN_CACHE_HIT
+          elif [[ "$mode" == "restage" ]]; then
+            NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 \
+              BACHATA_REUSE_NATIVE_BUILD=1 bash bionic/build-core.sh
+            NDK="$ANDROID_HOME/ndk/30.0.14904198" bash bionic/source0181/native_cache.sh stamp
+          elif [[ "$mode" == "rebuild" ]]; then
+            NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 bash bionic/build-core.sh
+            NDK="$ANDROID_HOME/ndk/30.0.14904198" bash bionic/source0181/native_cache.sh stamp
+          else
+            echo "::error::Unrecognized prerequisite cache mode"
+            exit 2
+          fi
+
+      - name: Cache native prerequisites immediately before full C++ compilation
+        uses: actions/cache/save@v4
+        with:
+          path: out/bionic/stage
+          key: bachata-0181-native-stage-r30-${{ github.sha }}
 
       - name: Audit full class of FEX libc NIDs without hiding missing functions
         run: |
@@ -403,6 +452,7 @@ jobs:
 
   assemble-bionic-apk:
     needs: [full-ps4-bionic]
+    if: ${{ always() && (needs.full-ps4-bionic.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.core_run_id != '')) }}
     name: Assemble and sign Bachata S4+ 0.2.7 actual source 0.18.1 Bionic APK
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -427,6 +477,8 @@ jobs:
         with:
           name: Bachata-S4Plus-REAL-shadPS4-0181-FEX-Bionic-core
           path: out/bionic/stage
+          run-id: ${{ inputs.core_run_id || github.run_id }}
+          github-token: ${{ github.token }}
 
       - name: Android build tools and ELF patching
         uses: android-actions/setup-android@v3
@@ -520,7 +572,7 @@ jobs:
             --stage out/bionic/stage \
             --output out/apk/Bachata-S4Plus-Bionic-unsigned.apk \
             --patched-classes8 out/apk/classes8-bionic.dex \
-            --revision "$GITHUB_SHA"
+            --revision "$(cat out/bionic/stage/BIONIC_SOURCE_REVISION.txt)"
           python3 - <<'PY'
           import zipfile
           with zipfile.ZipFile('out/apk/Bachata-S4Plus-Bionic-unsigned.apk') as z:
