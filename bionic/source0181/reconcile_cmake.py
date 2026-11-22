@@ -100,7 +100,7 @@ def reconcile(root: Path) -> dict:
             '        RESULT_VARIABLE BACHATA_PROTOC_RESULT\n'
             '        OUTPUT_VARIABLE BACHATA_PROTOC_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE)\n'
             '    if(NOT BACHATA_PROTOC_RESULT EQUAL 0 OR\n'
-            '       NOT BACHATA_PROTOC_VERSION MATCHES "^libprotoc 36[.]0([.]0)?$")\n'
+            '       NOT BACHATA_PROTOC_VERSION STREQUAL "libprotoc 36.0-dev")\n'
             '        message(FATAL_ERROR "shadNet requires host protoc 36.0, got: ${BACHATA_HOST_PROTOC_EXECUTABLE} (${BACHATA_PROTOC_VERSION})")\n'
             '    endif()\n'
             '    message(STATUS "BACHATA_HOST_PROTOC_VERIFIED=${BACHATA_HOST_PROTOC_EXECUTABLE} (${BACHATA_PROTOC_VERSION})")\n'
