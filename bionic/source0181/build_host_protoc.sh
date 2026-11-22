@@ -42,7 +42,7 @@ test -x "$BUILD/protoc"
 PROTOC_VERSION="$("$BUILD/protoc" --version)"
 echo "BIONIC_HOST_PROTOC_VERSION=$PROTOC_VERSION"
 case "$PROTOC_VERSION" in
-  "libprotoc 36.0"|"libprotoc 36.0.0") ;;
+  "libprotoc 36.0-dev") ;;
   *) echo "::error::Pinned host protoc has unexpected version: $PROTOC_VERSION" >&2; exit 2 ;;
 esac
 
