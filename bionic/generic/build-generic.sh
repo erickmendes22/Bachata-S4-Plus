@@ -110,6 +110,15 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == 1 ]]; then
   echo "BIONIC_SHADNET_HOST_PROTOC_36_GENERATION_PASS"
 fi
 
+# Diagnose true incremental invalidation before scheduling 400 C++ units.
+# The previous run restored 42,958 unchanged inputs yet recompiled every TU.
+# Keep actual Ninja reasons and cached object count so this is fixable.
+cached_objects="$(find "$BUILD/CMakeFiles/shadps4.dir" -name '*.o' -type f 2>/dev/null | wc -l)"
+echo "BIONIC_INCREMENTAL_CACHED_CPP_OBJECTS=$cached_objects"
+ninja -C "$BUILD" -n -d explain shadps4 > "$WORK/ndk-ninja-incremental-explain.log" 2>&1 || true
+grep -m 25 'ninja explain:' "$WORK/ndk-ninja-incremental-explain.log" || true
+echo "BIONIC_INCREMENTAL_NINJA_DRY_RUN_LINES=$(wc -l < "$WORK/ndk-ninja-incremental-explain.log")"
+
 # Strict fail-fast first: precompile the mixed FEX 0.16 / shadPS4 0.18 API
 # units before any bulk compilation (vk_presenter previously failed at 387/427).
 # These are real Ninja objects and are reused by the full shadPS4 target.

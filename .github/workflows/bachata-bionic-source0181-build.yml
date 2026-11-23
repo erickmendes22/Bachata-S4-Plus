@@ -182,6 +182,7 @@ jobs:
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 3G
+      CCACHE_COMPILERCHECK: content  # NDK binary timestamp changes on fresh runners; hash actual compiler
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_COMPRESS: "true"
       CMAKE_C_COMPILER_LAUNCHER: ccache
