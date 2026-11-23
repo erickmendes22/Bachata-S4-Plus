@@ -19,7 +19,7 @@ Referência verificável: `libbachata_native_runtime.so` — SHA-256 `f4ab401c9f
 | BufferCache | `SynchronizeBufferFromImage` | **EQUIVALENTE VERIFICADO NO CÓDIGO:** `SynchronizeMemoryFromImage` no 0.18.1; chamado por `SynchronizeMemory` na condição texel + !write, mesmas cópias mip `TileImage` | teste GPU/driver |
 | BufferCache | `SnapshotGpuWrittenPages`, `UploadMergedCpuWrites`, `DownloadSrtSourcePage`, `AcquireImageStagingSlot` | NÃO PORTADO: exige coerência e proteção GPU→CPU, staging e tracker juntos; não inventar no-op | The Order e possíveis readbacks Shadow |
 | TextureCache | `TryQueueTinyReadback`, `DrainTinyReadbacks`, `ResolveDimensionOverlap` | NÃO PORTADO: não equivale a mero `ProcessDownloadImages` sem análise de fusão/cache | shaders/descriptors |
-| Rasterizer | `IsolateReadConstGuestBuffer`, `ReadBackGpuWrittenSrtSources`, `BindImageTable` | NÃO PORTADO: fontes SRT GPU-written ainda carecem de readback coerente; código ARM64 público de isolamento existe, mas inclui dependências próprias do 0.16 | CUSA00785 |
+| Rasterizer | `IsolateReadConstGuestBuffer`, `ReadBackGpuWrittenSrtSources`, `BindImageTable` | **ISOLAMENTO ReadConst CPU INTEGRADO, SEM TESTE NO APARELHO**: marcado pelo IR, cria `Buffer` host-visible e mantém vida útil pelo Scheduler; se a GPU escreveu, preserva a versão da BufferCache. **Readback GPU-written e BindImageTable NÃO PORTADOS** | CUSA00785 |
 | Rasterizer | `DrawIndirect` | INVESTIGAR: o 0.18.1 já executa indirect draw, mas assinatura e fluxo são diferentes | traços de comandos |
 | GPU PM4/CE | snapshot DCB/CCB e CE task FIFO | INTEGRADO antes deste patch (paridade de release anterior), SEM TESTE NO APARELHO; versão de referência mudou | regressão GPU |
 | Vulkan Instance | `GetLiveGpuMemoryBudget`, `GetGpuMemoryTelemetry` | INTEGRADO neste patch, SEM TESTE NO APARELHO: Vk EXT + VMA live, não orçamento fixo | GC/sem OOM |
@@ -43,3 +43,12 @@ Referência verificável: `libbachata_native_runtime.so` — SHA-256 `f4ab401c9f
 ## Status desta revisão
 
 O objetivo **é portar toda a paridade**, mas esta revisão não afirma que os 3.630 símbolos foram portados. Os métodos restantes requerem comparação de CFG, integração em fontes e verificações reais; símbolos privados/inline podem não ser reproduzíveis pelo `nm -D`.
+
+
+## Tentativa de compilação integrada da paridade — 23/11/2026
+
+O pré-voo automático da revisão `e969124afa07220799aedbc642debcf30c90a22d` passou em `#45256066897`, incluindo testes de x86 libSceFiber, SAF/alias FIOS2, cache nativo, fonte 0.18.1 e verificação obrigatória do gerador de marcadores. A nova compilação Android verifica que `src/core/memory.cpp`, `vk_instance.cpp`, `texture_cache.cpp`, `resource_patching_pass.cpp` e `vk_rasterizer.cpp` compilam contra os headers reais.
+
+Correções nesta revisão (não confundam com soluções de gameplay): SRT Phi/ReadLane comprovadamente uniformes e recaptura por dispatch sem congelamento de leitura inválida; domínio GPU mapeado 40-bit; orçamento GPU Vulkan+VMA dinâmico; origem de buffers ReadConst no IR, snapshots estáveis somente de memória CPU e retenção da cópia até tick concluído. Ref compilado será `BACHATA_CORE_PARITY=20261123-SRT3-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1-RELEASEFIOS2-SAFDIRECT2-GPUCLAMP1-BUDGET1-RCSNAP1`. A atualização do nome do runtime deve ser derivada do hash real do ELF automaticamente.
+
+Os itens restantes da matriz continuam **não portados** até integração coerente e teste; não afirmar equivalência integral ao Release 0.2.6/0.2.7 sem evidência por jogo.
