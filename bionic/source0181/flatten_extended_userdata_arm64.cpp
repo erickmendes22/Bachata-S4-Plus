@@ -353,7 +353,7 @@ struct PassInfo {
 
     // map offset to inst
     using PtrUserList =
-        boost::container::flat_map<IR::Value, Shader::IR::Inst*, PointerListCompare>;
+        boost::container::flat_multimap<IR::Value, Shader::IR::Inst*, PointerListCompare>;
 
     Optimization::SrtGvnTable gvn_table;
     // keys are GetUserData, ReadConst or ReadConstBuffer instructions that are used as pointers

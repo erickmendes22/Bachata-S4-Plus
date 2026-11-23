@@ -308,6 +308,9 @@ def audit(root: Path) -> None:
         if marker not in blob:
             issues.append("The Order SRT pre-resource synchronization missing: " + marker)
     srt_impl = (root / "src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp").read_text()
+    if "flat_multimap<IR::Value" not in srt_impl:
+        issues.append("The Order duplicate-offset ReadConst chains still lost by flat_map")
+
     for need in ("ORDER1886_SRT_DEPENDENCY_WORKLIST", "ORDER1886_SRT_GVN_SLOT_PARITY",
                  "ORDER1886_SRT_UNRESOLVED", "const size_t limit = pass_info.pointer_uses.size() + 1"):
         if need not in srt_impl:
