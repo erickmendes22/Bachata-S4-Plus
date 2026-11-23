@@ -481,6 +481,19 @@ static bool IsUniformSrtSource(const IR::Value& v, std::unordered_set<IR::Inst*>
     case IR::Opcode::GetUserData:
         uniform = true;
         break;
+    // BACHATA_SRT_UNIFORM_READCONST_PROOF: a ReadLane over a scalar
+    // descriptor load is uniform when *all* pointer and offset operands
+    // are proven uniform. Previous ARM64 code classified every ReadConst
+    // as divergent, even the guest scalar SRT sources loaded by the CPU.
+    // Do not use the first lane as an arbitrary replacement otherwise.
+    case IR::Opcode::ReadConst:
+    case IR::Opcode::ReadConstBuffer:
+    case IR::Opcode::CompositeConstructU32x2: {
+        uniform = inst->NumArgs() > 0;
+        for (size_t i = 0; uniform && i < inst->NumArgs(); ++i)
+            uniform = IsUniformSrtSource(inst->Arg(i), active, depth + 1);
+        break;
+    }
     case IR::Opcode::Phi: {
         uniform = inst->NumArgs() > 0;
         if (uniform) {

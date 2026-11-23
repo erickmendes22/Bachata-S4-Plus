@@ -182,7 +182,7 @@ def audit(root: Path) -> None:
             "texture_cache.ResolveCMaskOwner(device_addr)"),
         "src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp": (
             "std::vector<u32> portable_code(", "if (!walker_func) {",
-            "ShaderMetaVersion = 9u;", "return info.Deserialize(ar);"),
+            "ShaderMetaVersion = 10u;", "return info.Deserialize(ar);"),
         "src/core/guest_cpu/hle_call_adapter.cpp": (
             "BIONIC_GUEST_X86_NONLOCAL_JUMP", "gNQ1V2vfXDE",
             "lKEN2IebgJ0", "guest_setjmp[]", "guest_longjmp[]",
@@ -286,6 +286,12 @@ def audit(root: Path) -> None:
                    'INTERNAL_ALIAS("Q3VBxCXhUHs", GuestInternalMemcpy)'):
         if marker not in libc_boot:
             issues.append("Critical Shadow libcInternal import missing " + marker)
+    srt_source = (root / "src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp").read_text()
+    for marker in ("BACHATA_SRT_UNIFORM_READCONST_PROOF",
+                   "case IR::Opcode::CompositeConstructU32x2:",
+                   "case IR::Opcode::ReadConstBuffer:"):
+        if marker not in srt_source:
+            issues.append("SRT wave uniform constant source proof missing " + marker)
     # The frequently called PS4 libc _Sin NID requires Dinkumware quadrant ABI.
     libc_overlay = Path(__file__).resolve().parent.parent / "generic/android_libc_compat.cpp"
     libc_text = libc_overlay.read_text()

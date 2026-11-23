@@ -240,7 +240,7 @@ def apply(root: Path) -> dict:
     m = re.search(pattern, txt)
     if not m or len(re.findall(pattern, txt)) != 1:
         raise RuntimeError("SRT runtime index: missing one ShaderBinaryVersion")
-    version = max(int(m.group(2)) + 1, 18)
+    version = max(int(m.group(2)) + 1, 19)
     updated[serializer] = txt[:m.start()] + m.group(1) + str(version) + m.group(3) + txt[m.end():]
 
     regs_path = root / "src/video_core/amdgpu/regs_shader.h"
