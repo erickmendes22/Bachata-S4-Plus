@@ -36,6 +36,8 @@ def apply(root: Path) -> dict:
         "    void MountArchiveBackend(std::shared_ptr<IBackend> backend, const std::string& guest_folder);\n",
         "filesystem alias API",
     )
+    if '#include "android_saf_bridge.h"' not in original_files[path_cpp]:
+        raise RuntimeError("Release MountAlias must propagate aliases into native SAF broker")
     anchor = "void MntPoints::MountArchiveBackend(std::shared_ptr<IBackend> backend,\n"
     cpp = replace_once(
         cpp, anchor,
@@ -72,6 +74,10 @@ bool MntPoints::MountAlias(std::string_view source_guest,
         });
     LOG_INFO(Kernel_Fs, "BACHATA_RELEASE026_MOUNT_ALIAS source='{}' alias='{}' layers={}",
              original, alias, stack.size());
+    // Forward each FIOS namespace alias into the existing Android SAF
+    // broker; otherwise files that only exist on DocumentsProvider remain
+    // inaccessible even though the native IBackend stack was cloned.
+    BachataSaf::RegisterGuestAlias(original, alias);
     return true;
 }
 
