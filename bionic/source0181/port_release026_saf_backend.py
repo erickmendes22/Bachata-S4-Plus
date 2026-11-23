@@ -52,16 +52,10 @@ def apply(root: Path) -> dict:
 }
 """
     new="""    if (!writable) {
-        // BACHATA_RELEASE026_SAF_BACKEND: Release used a real SafFsBackend
-        // with independent broker fds. Opening a /proc/self/fd symlink as
-        // HostFile is only a fallback, never the primary game file backend.
-        if (auto file = OpenSafGuestFile(*corrected)) {
-            return file;
-        }
-        if (auto remote = BachataSaf::Resolve(*corrected)) {
-            auto file = std::make_unique<HostFile>(*remote, mode, true);
-            if (file->IsOpen()) return file;
-        }
+        // BACHATA_RELEASE026_SAF_BACKEND: The real Release opens
+        // independent file descriptors through SafFsBackend/SafBrokerClient.
+        // Do not silently substitute a /proc/self/fd symlink HostFile path.
+        return OpenSafGuestFile(*corrected);
     }
 #endif
     return nullptr;
@@ -69,8 +63,10 @@ def apply(root: Path) -> dict:
 """
     text=only(text,old,new,"direct provider fd instead of primary symlink")
     c=cmake.read_text()
+    # The Release FIOS2 path does not register the speculative PSARC
+    # archive backend. Attach the broker IFile unit to the actual native core.
     anchor='target_sources(shadps4 PRIVATE "'+str(
-        root/"src/core/file_sys/backends/psarc_fs.cpp")+'")\n'
+        Path(__file__).resolve().parents[1]/"generic"/"android_fex_fiber.cpp")+'")\n'
     c=only(c,anchor,
         anchor+'target_sources(shadps4 PRIVATE "'+str(cpp_dst)+'")\n',
         "link real SAF IFile into native Android shadPS4")
@@ -83,6 +79,6 @@ def apply(root: Path) -> dict:
         "difference":"SafFsBackend::Open existed, Bionic had a symlink-based fallback",
         "change":"Broker direct fd backed IFile with pread/seek/stat/map/RAII close",
         "guestPaths":"Android document-provider case-insensitive lookup on exact failure",
-        "fallback":"Original Bionic symlink read remains if direct fd unavailable",
+        "fallback":"None: Release direct broker IFile replaces old symlink read path",
         "gameSpecific":False,
     }
