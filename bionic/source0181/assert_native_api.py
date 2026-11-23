@@ -50,6 +50,7 @@ def audit(root: Path) -> None:
             "BACHATA_RELEASE026_MOUNT_ALIAS",
             "MntPoints::MountAlias(std::string_view",
             "const auto stack = source->backends",
+            "BachataSaf::RegisterGuestAlias(original, alias)",
             "BACHATA_RELEASE026_SAF_BACKEND",
             "OpenSafGuestFile(*corrected)"),
         "src/core/file_sys/backends/saf_fs_backend.cpp": (
@@ -247,8 +248,10 @@ def audit(root: Path) -> None:
         issues.append("Release direct SAF guest IFile missing from native core link")
     bridge = Path(__file__).resolve().parent.parent / "generic/android_saf_bridge.cpp"
     if not bridge.is_file() or (
-            "BACHATA_RELEASE026_SAF_DIRECT_FD" not in bridge.read_text()):
-        issues.append("Android SAF direct provider fd broker is missing")
+            "BACHATA_RELEASE026_SAF_DIRECT_FD" not in bridge.read_text() or
+            "BACHATA_RELEASE026_SAF_ALIAS" not in bridge.read_text() or
+            "SourceGuestPath(path)" not in bridge.read_text()):
+        issues.append("Android SAF direct provider fd or FIOS mount alias translation missing")
     if "android_fex_fiber.cpp" not in cmake:
         issues.append("FEX native fiber HLE absent from native core link")
     if re.search(r"(?m)^\\s*src/sdl_window\\.cpp\\s*$", cmake):
