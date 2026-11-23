@@ -371,7 +371,7 @@ jobs:
         run: |
           set -euo pipefail
           mode="$(NDK="$ANDROID_HOME/ndk/30.0.14904198" bash bionic/source0181/native_cache.sh check)"
-          case "$mode" in ready|restage|repair_fex|rebuild) ;; *) exit 2;; esac
+          case "$mode" in ready|restage|repair_fex|repair_ffmpeg|rebuild) ;; *) exit 2;; esac
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "BIONIC_NATIVE_CACHE_MODE=$mode"
 
@@ -387,9 +387,14 @@ jobs:
               BACHATA_REUSE_NATIVE_BUILD=1 bash bionic/build-core.sh
             NDK="$ANDROID_HOME/ndk/30.0.14904198" bash bionic/source0181/native_cache.sh stamp
           elif [[ "$mode" == "repair_fex" ]]; then
-            echo "BACHATA_REPAIR_ONLY_MISSING_FEXCORE_NOT_ALL_DEPENDENCIES"
+            echo "BACHATA_REPAIR_FEXCORE_AND_VERIFY_FFMPEG_DEV_PREFIX"
             NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 \
               BACHATA_REPAIR_FEX_ONLY=1 bash bionic/build-core.sh
+            NDK="$ANDROID_HOME/ndk/30.0.14904198" bash bionic/source0181/native_cache.sh stamp
+          elif [[ "$mode" == "repair_ffmpeg" ]]; then
+            echo "BACHATA_REPAIR_FFMPEG_DEV_PREFIX_ONLY_NO_FEX_REBUILD"
+            NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 \
+              BACHATA_REPAIR_FFMPEG_ONLY=1 bash bionic/build-core.sh
             NDK="$ANDROID_HOME/ndk/30.0.14904198" bash bionic/source0181/native_cache.sh stamp
           elif [[ "$mode" == "rebuild" ]]; then
             NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 bash bionic/build-core.sh
