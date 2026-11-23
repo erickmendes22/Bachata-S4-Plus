@@ -15,6 +15,8 @@ from pathlib import Path
 def apply(root: Path) -> dict:
     file=root/"src/video_core/renderer_vulkan/vk_rasterizer.cpp"
     text=file.read_text()
+    text=text.replace('#include "common/debug.h"\n',
+                      '#include <algorithm>\n#include "common/debug.h"\n',1)
     old="""        if (!memory->IsValidGpuMapping(tsharp.Address(), 0) ||
             !magic_enum::enum_contains(data_fmt) || !magic_enum::enum_contains(num_fmt)) {
             LOG_WARNING(Render_Vulkan,
@@ -32,9 +34,15 @@ def apply(root: Path) -> dict:
         const bool swizzle_selector_valid =
             legal_select(tsharp.dst_sel_x) && legal_select(tsharp.dst_sel_y) &&
             legal_select(tsharp.dst_sel_z) && legal_select(tsharp.dst_sel_w);
+        // BACHATA_SURFACE_FORMAT_TABLE_CHECK: 48/4 is a recognized AMD
+        // numeric enum pair, but not a Vulkan SurfaceFormat mapping.
+        const bool supported_format = std::ranges::any_of(
+            LiverpoolToVK::SurfaceFormats(), [data_fmt, num_fmt](const auto& fmt) {
+                return fmt.data_format == data_fmt && fmt.number_format == num_fmt;
+            });
         if (!memory->IsValidGpuMapping(tsharp.Address(), 0) ||
             !magic_enum::enum_contains(data_fmt) || !magic_enum::enum_contains(num_fmt) ||
-            !swizzle_selector_valid) {
+            !swizzle_selector_valid || !supported_format) {
             LOG_WARNING(Render_Vulkan,
                         "BACHATA_RELEASE026_BAD_T# address={:#x}, pitch={}, width={}, "
                         "data_format={}, num_format={} dst_sel={},{},{},{}",
