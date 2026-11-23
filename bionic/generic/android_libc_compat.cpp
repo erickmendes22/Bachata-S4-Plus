@@ -152,6 +152,17 @@ double PS4_SYSV_ABI GuestDifftime(std::int64_t b, std::int64_t a) {
 #define MATH_F32(name, call) float PS4_SYSV_ABI Fex_##name(float x) { return std::call(x); }
 #define MATH_BIN64(name, call) double PS4_SYSV_ABI Fex_##name(double x, double y) { return std::call(x, y); }
 #define MATH_BIN32(name, call) float PS4_SYSV_ABI Fex_##name(float x, float y) { return std::call(x, y); }
+// The PS4 libc NID cCXjU72Z0Ow is _Sin(double, unsigned qoff).
+// qoff is the sine/cosine quadrant selector used by Dinkumware xsin.c:
+// 0=sin(x), 1=cos(x), 2=-sin(x), 3=-cos(x). Do not alias to sin(double).
+double PS4_SYSV_ABI Fex_DinkumSin(double x, unsigned qoff) {
+    switch (qoff & 3u) {
+    case 0: return std::sin(x);
+    case 1: return std::cos(x);
+    case 2: return -std::sin(x);
+    default: return -std::cos(x);
+    }
+}
 MATH_U64(sin, sin)
 MATH_F32(sinf, sin)
 MATH_U64(cos, cos)
@@ -443,6 +454,7 @@ void RegisterFexLibcCompatAliases(Core::Loader::SymbolsResolver* sym) {
     ALIAS("VPbJwTCgME0", GuestSrand);
     ALIAS("wLlFkwG9UcQ", GuestTime);
     ALIAS("-VVn74ZyhEs", GuestDifftime);
+    ALIAS("cCXjU72Z0Ow", Fex_DinkumSin); // _Sin with quadrant offset
     ALIAS("H8ya2H00jbI", Fex_sin);
     ALIAS("Q4rRL34CEeE", Fex_sinf);
     ALIAS("2WE3BTYVwKM", Fex_cos);
