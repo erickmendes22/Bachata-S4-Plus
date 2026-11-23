@@ -85,7 +85,7 @@ def main() -> None:
     # not update runtimeVersion, so every new APK reused the old 9ceb...
     # extracted root and old GUEST_RUNTIME_BUILD name.
     runtime_version = f"bachata-s4-plus-{BASE_RELEASE}-bionic-{core_sha[:16]}"
-    parity_marker = "BACHATA_CORE_PARITY=20261123-SRT2-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1-PSARC1-ALIAS1-SAFD1"
+    parity_marker = "BACHATA_CORE_PARITY=20261123-SRT2-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1-RELEASEFIOS2-SAFDIRECT2"
     revision_marker = f"BACHATA_CORE_REVISION={core_source_revision}"
     for marker in (b"BIONIC_MANAGED_USER_PATH_READY", b"SDL_VULKAN_LIBRARY",
                    b"Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run",
