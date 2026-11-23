@@ -711,6 +711,15 @@ void GameController::PollState() {
         "Official 0.2.6/0.2.7 FIOS2 MountAlias guest backend parity: "
         "SAF/updates/mods preserved; archive reader is fallback only")
 
+    # The verified Release ELF also has SafFsBackend::Open and SafBrokerClient,
+    # whereas our new VFS only reopened short-lived /proc/self/fd symlinks.
+    # Restore directly owned Android BSF1 broker FDs, lazily and generically.
+    from port_release026_saf_backend import apply as apply_release026_saf_backend
+    result["release026SafIFileBackend"] = apply_release026_saf_backend(root)
+    result["portedInterfaces"].append(
+        "Release SAF broker direct fd backed IFile, independent positional reads, "
+        "case-insensitive fallback on actual game files; no unnecessary full copy")
+
     # CUSA00552 crashes before first frame at x86 RIP 0x800e1e2d0 and
     # host SIGSEGV reading 0x20. The current host PC is JIT-generated code,
     # so dladdr cannot name the game module. Symbolize the GUEST RIP against
