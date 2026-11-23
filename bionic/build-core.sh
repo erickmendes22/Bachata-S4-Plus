@@ -36,13 +36,8 @@ fetch_rev() {
 }
 # Stage-only mode is allowed only after native_cache.sh verifies the pinned
 # dependencies, source revision, driver objects and Android ELF metadata.
-if [[ "${BACHATA_REUSE_NATIVE_BUILD:-0}" != "1" ]]; then
-echo "== [1/5] Android/Bionic dependencies"
-# The port defaults to $(nproc), which can exhaust GitHub runner memory when
-# FFmpeg and multiple C++ dependencies are compiled in parallel.
-sed -i 's/^J=$(nproc)$/J=${BACHATA_JOBS:-2}/' "$PORT/android/scripts/port-arm64/android_deps.sh"
-bash "$PORT/android/scripts/port-arm64/android_deps.sh"
-echo "== [2/5] pinned FEXCore Android build"
+build_fex_core() {
+echo "BACHATA_FEX_DEPENDENCY_BUILD_FROM_PINNED_SOURCE"
 FEX_DIR="$WORK/fex"
 FEX_BUILD="$WORK/fex-android"
 fetch_rev "$FEX_DIR" https://github.com/FEX-Emu/FEX.git "$FEX_REV"
@@ -65,6 +60,28 @@ for patch in "$PORT"/android/scripts/port-arm64/patches/fex-*.patch; do
 done
 SRC="$FEX_DIR" OUT="$FEX_BUILD" TUNE_CPU=cortex-a78 \
   bash "$PORT/android/scripts/port-arm64/build_fex_android.sh"
+  test -s "$FEX_BUILD/FEXCore/Source/libFEXCore.a" || {
+    echo "::error::Pinned FEXCore compilation did not produce libFEXCore.a" >&2
+    exit 4
+  }
+}
+
+# A staged GPU/JNI runtime does not prove the FEX static link inputs
+# survived cache restore. Repair only missing FEX object archives instead
+# of rebuilding FFmpeg, SDL3, Turnip loader and the unrelated GPU stack.
+if [[ "${BACHATA_REPAIR_FEX_ONLY:-0}" == "1" ]]; then
+  build_fex_core
+  echo "BACHATA_FEX_STATIC_LIBRARY_REPAIRED"
+  exit 0
+fi
+
+if [[ "${BACHATA_REUSE_NATIVE_BUILD:-0}" != "1" ]]; then
+echo "== [1/5] Android/Bionic dependencies"
+# The port defaults to $(nproc), which can exhaust GitHub runner memory when
+# FFmpeg and multiple C++ dependencies are compiled in parallel.
+sed -i 's/^J=$(nproc)$/J=${BACHATA_JOBS:-2}/' "$PORT/android/scripts/port-arm64/android_deps.sh"
+bash "$PORT/android/scripts/port-arm64/android_deps.sh"
+build_fex_core
 echo "== [3/5] Android Vulkan driver-loader support"
 ADT_DIR="$WORK/libadrenotools"
 ADT_BUILD="$WORK/adrenotools-android"
