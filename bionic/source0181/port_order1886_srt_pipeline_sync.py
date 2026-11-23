@@ -42,7 +42,7 @@ def apply(root: Path) -> dict:
     # The 0.18.1 graft and FEX core may format the signature differently.
     # Match the unique function declaration, never an unrelated Profile use.
     import re
-    expr = r'(IR::Program\\s+TranslateProgram\\s*\\([^{};]*?)\\)\\s*\\{'
+    expr = r'(IR::Program\s+TranslateProgram\s*\([^{};]*?)\)\s*\{'
     matches = list(re.finditer(expr, data[re_c]))
     if len(matches) != 1:
         raise RuntimeError(
