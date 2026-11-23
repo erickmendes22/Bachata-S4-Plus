@@ -230,10 +230,15 @@ def apply(root: Path) -> dict:
         '        Libraries::LibcInternal::ForceRegisterLib(sym);\n',
         '        Libraries::LibcInternal::ForceRegisterLib(sym);\n'
         '        // BACHATA_FIOS2_EARLY_HLE_READY: do not leave real FIOS2 NIDs ENOSYS.\n'
+        '        // BACHATA_SHADOW_PREFER_GUEST_FIOS2: CUSA08809 loaded shadow.cwks\n'
+        '        // before early FIOS2 HLE was added. ArchiveMountSync only aliases\n'
+        '        // /app0; it does not provide the contents of any PSARC archive.\n'
+        '        const bool shadow_guest_archive =\n'
+        '            game_specific_modules_path.filename() == "CUSA08809";\n'
         '        const bool fios_lle_staged =\n'
         '            std::filesystem::exists(game_specific_modules_path / "libSceFios2.sprx") &&\n'
         '            !std::filesystem::exists(game_specific_modules_path / "libSceFios2.use-hle");\n'
-        '        if (!fios_lle_staged) {\n'
+        '        if (!fios_lle_staged && !shadow_guest_archive) {\n'
         '            Libraries::Fios2::RegisterLib(sym);\n'
         '            LOG_INFO(Lib_Kernel, "BACHATA_FIOS2_EARLY_HLE_READY");\n'
         '        }\n',
