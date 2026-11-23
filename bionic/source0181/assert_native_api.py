@@ -73,6 +73,15 @@ def audit(root: Path) -> None:
             "s32 PS4_SYSV_ABI sceKernelMapNamedSystemFlexibleMemory(",
             "Core::VMAType::System",
             'LIB_FUNCTION("kc+LEEIYakc", "libkernel", 1, "libkernel", sceKernelMapNamedSystemFlexibleMemory);'),
+        "src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp": (
+            "BIONIC_PORTABLE_SRT_GUEST_VMM", "BIONIC_PORTABLE_SRT_BAD_POINTER",
+            "BIONIC_PORTABLE_SRT_BAD_READ", "TryReadGuest(",
+            "GenerateSrtProgram(program.info, pass_info);",
+            "SrtOp::CopyExpr", "SrtOp::PushPtrExpr"),
+        "src/shader_recompiler/ir/passes/srt.h": ("SrtWalkerCode", "RunSrtWalker("),
+        "src/shader_recompiler/info.h": ("RunSrtWalker(srt_info.walker_func,",),
+        "src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp": (
+            "std::vector<u32> portable_code(", "if (!walker_func) {"),
         "src/core/guest_cpu/hle_call_adapter.cpp": (
             "BIONIC_GUEST_X86_NONLOCAL_JUMP", "gNQ1V2vfXDE",
             "lKEN2IebgJ0", "guest_setjmp[]", "guest_longjmp[]",
@@ -90,6 +99,9 @@ def audit(root: Path) -> None:
         "src/core/libraries/libs.cpp": ('"core/libraries/np/np_commerce.h"',),
         "src/core/libraries/kernel/file_system.cpp": ("deci_tty6_device.h",),
         "src/core/memory.cpp": ("file->f.",),
+        "src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp": (
+            "FlattenExtendedUserdataPass unimplemented for target architecture.",
+            "runtime_fault_recover", "bbport_threads.h"),
         "src/core/libraries/kernel/threads/semaphore.cpp": (
             "PthreadCancelInterrupt(", "critical_count.fetch_add("),
         "src/core/libraries/videoout/driver.cpp": ("liverpool->EnqueueCommand(",),
