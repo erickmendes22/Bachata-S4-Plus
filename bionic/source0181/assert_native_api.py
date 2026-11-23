@@ -41,6 +41,18 @@ def audit(root: Path) -> None:
             "libSceNpCommerce.sprx",
             '"libSceFiber.sprx", Libraries::Fiber::RegisterFexFiberBridge',
             "#elif defined(SHADPS4_ENABLE_FEX_GUEST_CPU)"),
+        "src/core/loader/elf.h": (
+            "void Open(std::unique_ptr<Core::FileSys::IFile> handle);",
+            "Core::FileSys::FileReader m_f{};"),
+        "src/core/loader/elf.cpp": (
+            "void Elf::Open(std::unique_ptr<Core::FileSys::IFile> owned)",
+            "m_f.Reset(std::move(owned));",),
+        "src/core/module.h": (
+            "std::unique_ptr<Core::FileSys::IFile> source, u32& max_tls_index"),
+        "src/core/module.cpp": ("BACHATA_RELEASE026_MODULE_IFILE",
+                                "elf.Open(std::move(source));"),
+        "src/core/linker.cpp": ("BACHATA_RELEASE026_LOADER_IFILE",
+                                "std::make_unique<Module>(memory,elf_name,std::move(source),max_tls_index)",),
         "src/core/file_sys/fs.h": ("std::unique_ptr<IFile> handle;",
                                     "GetHostFile() const",
                                     "bool MountAlias(std::string_view source_guest"),
@@ -170,6 +182,9 @@ def audit(root: Path) -> None:
                                  "FindByAddress(guest_rip)",),
     }
     forbidden = {
+        "src/core/module.cpp": ("elf.Open(file);",),
+        "src/core/linker.cpp": (
+            "std::make_unique<Module>(memory, elf_name, max_tls_index)",),
         "src/core/libraries/fios2/fios2.cpp": (
             'mnt->Mount(app0_host, guest_mount, true);',
             'Map the FIOS mount point to the same host folder',
