@@ -130,6 +130,8 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == "1" ]]; then
     # Host mocks are insufficient to verify the shadPS4 0.18.1 real ABI.
     src/core/file_sys/fs.cpp
     src/core/file_sys/backends/saf_fs_backend.cpp
+    src/core/loader/elf.cpp
+    src/core/module.cpp
     src/video_core/renderer_vulkan/vk_presenter.cpp
     src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp
     src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
