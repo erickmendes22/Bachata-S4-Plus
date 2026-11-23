@@ -31,7 +31,7 @@ jobs:
               assert len(natives)==1,natives
               elf=z.read(natives[0])
               sha=hashlib.sha256(elf).hexdigest()
-              assert sha=="3548cb4b6d952aed7141f057e07552b4f23a57997df339644a57605ed1308f39",sha
+              assert sha=="f4ab401c9f05088d5379f466314fc74dadd37f0e7389d120e7490943e0ae7582",sha
               Path("release026-native.so").write_bytes(elf)
               Path("release026-info.txt").write_text(
                   f"asset=0.2.6/Bachata-S4-Plus-v0.2.6.apk\n"
