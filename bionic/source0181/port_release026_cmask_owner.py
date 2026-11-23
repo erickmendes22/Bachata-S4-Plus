@@ -292,6 +292,53 @@ ImageView& TextureCache::FindRenderTarget(ImageId image_id, const ImageDesc& des
         "prevent deleting another image's metadata")
     return s
 
+
+def patch_buffer_cache(c: str) -> str:
+    c=once(c,
+        """    if (auto type = texture_cache.IsMeta(device_addr)) {
+        if (*type == TextureCache::MetaType::HTile) {
+            static constexpr u32 ZmaskUncompressed = 0xf;
+            runtime.FillBuffer(arena, arena->Offset(device_addr), size, ZmaskUncompressed);
+            return true;
+        } else {
+            LOG_WARNING(Render_Vulkan, "Unhandled metadata type {}", magic_enum::enum_name(*type));
+        }
+    }
+""",
+        """    // BACHATA_RELEASE026_CMASK_EXPANDED: a texturing/readback alias of a
+    // compressed color-mask surface must produce the expanded CMask bit
+    // pattern for this image's MSAA sample count, not treat it as a random
+    // unmatched buffer or suppress its contents as 'Unhandled metadata'.
+    if (const auto owner_id = texture_cache.ResolveCMaskOwner(device_addr)) {
+        const Image& owner = texture_cache.GetImage(*owner_id);
+        u32 expanded{};
+        switch (owner.info.num_samples) {
+        case 1: expanded = 0xFFFFFFFFu; break;
+        case 2: expanded = 0xDDDDDDDDu; break;
+        case 4: expanded = 0xEEEEEEEEu; break;
+        case 8: expanded = 0xFFFFFFFFu; break;
+        default:
+            LOG_WARNING(Render_Vulkan, "Unsupported CMask sample count: addr={:#x}, samples={}",
+                        device_addr, owner.info.num_samples);
+            return false;
+        }
+        runtime.FillBuffer(arena, arena->Offset(device_addr), size, expanded);
+        return true;
+    }
+    if (auto type = texture_cache.IsMeta(device_addr)) {
+        if (*type == TextureCache::MetaType::HTile) {
+            static constexpr u32 ZmaskUncompressed = 0xf;
+            runtime.FillBuffer(arena, arena->Offset(device_addr), size, ZmaskUncompressed);
+            return true;
+        } else {
+            LOG_WARNING(Render_Vulkan, "Unhandled metadata type {}",
+                        magic_enum::enum_name(*type));
+        }
+    }
+""",
+        "CMask aliased texel expanded values")
+    return c
+
 def audit(header: str, cpp: str) -> None:
     req = {
         "header": [
@@ -331,13 +378,21 @@ def apply(root: Path) -> dict:
         return {"status":"already-applied"}
     new_h, new_c = patch_h(old_h), patch_cpp(old_c)
     audit(new_h, new_c)
+    bc = root / "src/video_core/buffer_cache/buffer_cache.cpp"
+    old_bc = bc.read_text()
+    new_bc = patch_buffer_cache(old_bc)
+    if "BACHATA_RELEASE026_CMASK_EXPANDED" not in new_bc:
+        raise RuntimeError("Missing BufferCache CMask expanded values")
+    # This update must accompany owner tracking in the same source transaction.
     h.write_text(new_h)
     c.write_text(new_c)
+    bc.write_text(new_bc)
     return {"status":"applied","subsystem":"texture-cache",
             "ownership":"ImageId + image_uid",
             "meta":["CMask","FMask","HTile"],
             "stale-cache-state":"invalidated on owner change",
-            "unregister":"only current owner may remove"}
+            "unregister":"only current owner may remove",
+            "cmask_alias":"real expanded patterns for 1/2/4/8 MSAA samples"}
 
 if __name__ == "__main__":
     import argparse, json
