@@ -102,3 +102,49 @@ Two newly tested games on Snapdragon 8 Gen 3 were reported not
 starting, but their CUSA IDs and diagnostics have not been supplied in
 this conversation. Do not attribute their failure to fiber, SRT, or
 Turnip without that evidence.
+
+
+## SM8650 Snapdragon 8 Gen 3: CUSA00552 and CUSA05170 (2026-11-23 17:36 UTC)
+
+Evidence: `bachata-diagnostic-BS4-20261123-E15EE7A3.zip`
+(The Last of Us Remastered, CUSA00552) and
+`bachata-diagnostic-BS4-20261123-91E5B622.zip`
+(Dragon Quest Builders, CUSA05170). Both execute signed
+Bionic `d8a9b6cabc93`, runtime
+`bachata-s4-plus-0.2.7-bionic-ad2cd33dc3c15503`, driver
+`turnip-bd457b30f195cf93`. There is no stale-extraction mismatch.
+
+CUSA05170's observed FIOS2 behavior proved a real common-core bug:
+`sceFiosArchiveMountSync` returned success and a fake handle=1
+without opening `/app0/build.psarc`, instead mounting the
+`/app0` directory at `PhyreFIOS2`. Hence subsequent opens for
+`PhyreFIOS2/gra/shader/shader.GNM.phyre`,
+`apricot.GNM.phyre`, and `vulgar/build_account.en.dic` failed,
+followed by Phyre `initApplication ... (9)` and SIGSEGV.
+
+Real common-code replacement: `PsarcBackend` (PSAR header + big
+endian TOC + zlib block-size metadata) parses the archive manifest
+and reads requested compressed blocks lazily through
+`Core::FileSys::IFile` (including SAF-backed guest files), without
+extracting gigabytes or fabricating asset bytes. FIOS2 returns success
+only after a real valid archive was opened and indexed; missing or
+unsupported archives log explicit failures. Mounted file operations,
+stat, directory traversal, metadata, seek, reading, and unmount use
+actual backend state. No game-specific patches. Fast host compilation
+test verifies multiblock zlib, random reads, folder enumeration and
+invalid archive rejection. Initial test warning was corrected;
+latest source CI `45232500010` passes.
+
+CUSA00552 independently faults at guest RIP `0x800e1e2d0`, host
+read of 0x20, before any observed SRT/PSARC workload. That is NOT
+proof of an archive or driver bug. Host PC points into JIT-generated
+FEX memory. To avoid another speculative HLE change, the fatal
+handler now maps the actual guest RIP against loaded PS4
+modules and records `BIONIC_GUEST_CRASH_MODULE` with the module
+base and RIP-relative offset for the next diagnosis. This changes
+only fatal logging, not graphics or FEX execution.
+
+The runtimeVersion and core marker remain automatically computed
+from actual ELF/commit by the previous verified packaging pipeline.
+This build requires repeat full ARM64 compile and P36 signature;
+successful static CI is not proof of gameplay.
