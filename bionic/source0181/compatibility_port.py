@@ -613,4 +613,12 @@ void GameController::PollState() {
         "Release 0.2.6 CE FIFO: separate tasks, IB chaining, packet snapshot, "
         "shared command data lifetime")
 
+    # Shader SRT dynamic indexing is a coherent 12-file IR/SPIR-V port,
+    # not a forced zero/unsupported-Phi fallback and not an x86 JIT dependency.
+    from port_srt_dynamic_readconst import apply as apply_dynamic_srt
+    result["release026SrtDynamicIndexParity"] = apply_dynamic_srt(root)
+    result["portedInterfaces"].append(
+        "Bachata SRT: bounded metadata layout, ReadConstArray runtime index, "
+        "native ARM64 portable walker and stale shader cache generation")
+
     return result

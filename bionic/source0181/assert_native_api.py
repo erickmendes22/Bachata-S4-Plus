@@ -77,8 +77,15 @@ def audit(root: Path) -> None:
             "BIONIC_PORTABLE_SRT_GUEST_VMM", "BIONIC_PORTABLE_SRT_BAD_POINTER",
             "BIONIC_PORTABLE_SRT_BAD_READ", "TryReadGuest(",
             "GenerateSrtProgram(program.info, pass_info);",
-            "SrtOp::CopyExpr", "SrtOp::PushPtrExpr"),
+            "SrtOp::CopyExpr", "SrtOp::PushPtrExpr",
+            "BACHATA_SRT_RUNTIME_ARRAY_5624", "PrepareSrtReadArrays",
+            "IR::Opcode::ReadConstArray"),
         "src/shader_recompiler/ir/passes/srt.h": ("SrtWalkerCode", "RunSrtWalker("),
+        "src/shader_recompiler/ir/opcodes.inc": ("OPCODE(ReadConstArray,",),
+        "src/shader_recompiler/params.h": ("FindSrtPointer(", "ShaderInputUsageSlot"),
+        "src/video_core/amdgpu/regs_shader.h": ("ReadShaderResourceTable(",),
+        "src/shader_recompiler/backend/spirv/emit_spirv_context_get_set.cpp":
+            ("EmitReadConstArray(",),
         "src/shader_recompiler/info.h": ("RunSrtWalker(srt_info.walker_func,",),
         "src/video_core/amdgpu/liverpool.h": (
             "using CmdBuffer = std::pair<std::vector<u32>, std::vector<u32>>;",

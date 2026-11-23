@@ -23,6 +23,7 @@ sceKernelReleaseFlexibleMemory _Exit sceKernelFutimes strnlen strncmp
 CRITICAL = """
 malloc free realloc calloc vsnprintf puts printf sprintf snprintf
 fopen fclose fread fwrite fseek fflush fprintf fgetc fputs qsort _Log
+_Getpctype _Getptolower _Getptoupper
 """.split()
 def nid(name: str) -> str:
     digest = int.from_bytes(hashlib.sha1(name.encode("utf-8") + SALT).digest()[:8], "little")

@@ -13,6 +13,7 @@
 #include <ctime>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,60 @@
 namespace Libraries::LibcInternal {
 void* FexLibcGuestAllocate(std::size_t bytes);
 namespace {
+// Dinkumware C locale char tables live in PS4 guest VMM memory, not Bionic
+// static storage. Returning a native short* here causes FEX to read outside
+// the emulated address space (the original SotC CUSA08809 failure).
+struct GuestCtypeTables {
+    short classification[257];
+    short lower[257];
+    short upper[257];
+};
+
+GuestCtypeTables* GetGuestCtypeTables() {
+    static std::mutex mutex;
+    static GuestCtypeTables* tables = nullptr;
+    std::lock_guard lock{mutex};
+    if (tables) return tables;
+    auto* allocated = static_cast<GuestCtypeTables*>(
+        FexLibcGuestAllocate(sizeof(GuestCtypeTables)));
+    if (!allocated) return nullptr; // retry after VMM gains capacity
+    allocated->lower[0] = -1;
+    allocated->upper[0] = -1;
+    for (unsigned int c = 0; c != 256; ++c) {
+        short mask = 0;
+        if (c < 32 || c == 127) mask |= 0x80;                // control
+        if (c == ' ') mask |= 0x04;                         // blank
+        if (c >= 9 && c <= 13) mask |= 0x40;       // whitespace
+        if (c == 9) mask |= 0x400;                     // horizontal blank
+        if (c >= 'A' && c <= 'Z') mask |= 0x02;              // upper
+        if (c >= 'a' && c <= 'z') mask |= 0x10;              // lower
+        if (c >= '0' && c <= '9') mask |= 0x20;              // decimal
+        if ((c >= '0' && c <= '9') ||
+            (c >= 'A' && c <= 'F') ||
+            (c >= 'a' && c <= 'f')) mask |= 0x01;            // hex
+        if (c >= 33 && c <= 126 && (mask & 0x232) == 0)
+            mask |= 0x08;                                  // punct
+        allocated->classification[c + 1] = mask;
+        allocated->lower[c + 1] = static_cast<short>(
+            c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
+        allocated->upper[c + 1] = static_cast<short>(
+            c >= 'a' && c <= 'z' ? c - ('a' - 'A') : c);
+    }
+    tables = allocated;
+    return tables;
+}
+const short* PS4_SYSV_ABI Fex__Getpctype() {
+    auto* tables = GetGuestCtypeTables();
+    return tables ? tables->classification + 1 : nullptr;
+}
+const short* PS4_SYSV_ABI Fex__Getptolower() {
+    auto* tables = GetGuestCtypeTables();
+    return tables ? tables->lower + 1 : nullptr;
+}
+const short* PS4_SYSV_ABI Fex__Getptoupper() {
+    auto* tables = GetGuestCtypeTables();
+    return tables ? tables->upper + 1 : nullptr;
+}
 // Run the actual guest x86 comparison callback, never a host function pointer.
 // The HLE call adapter supplies SysV arguments as guest virtual addresses.
 using GuestQsortComparator = int (*)(const void*, const void*);
@@ -471,6 +526,14 @@ void RegisterFexLibcCompatAliases(Core::Loader::SymbolsResolver* sym) {
     ALIAS("YQ0navp+YIc", GuestPuts);
     ALIAS("AEJdIVZTEmo", GuestQsort); // qsort
     ALIAS("zXCi78bYrEI", Fex__Log);  // Dinkumware _Log
+    // Dinkumware C locale tables: invoked by Shadow of the Colossus, but
+    // shared by every PS4 title, independent of libc.prx LLE availability.
+    ALIAS("sUP1hBaouOw", Fex__Getpctype);
+    ALIAS("1uJgoVq3bQU", Fex__Getptolower);
+    ALIAS("rcQCUr0EaRU", Fex__Getptoupper);
+    LIB_FUNCTION("sUP1hBaouOw", "libSceLibcInternal", 1, "libSceLibcInternal", Fex__Getpctype);
+    LIB_FUNCTION("1uJgoVq3bQU", "libSceLibcInternal", 1, "libSceLibcInternal", Fex__Getptolower);
+    LIB_FUNCTION("rcQCUr0EaRU", "libSceLibcInternal", 1, "libSceLibcInternal", Fex__Getptoupper);
     ALIAS("m5wN+SwZOR4", GuestPutchar);
     ALIAS("xeYO4u7uyJ0", GuestFopen);
     ALIAS("uodLYyUip20", GuestFclose);
