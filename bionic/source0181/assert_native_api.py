@@ -268,9 +268,21 @@ def audit(root: Path) -> None:
             "// Initialize modern SlotVector before guest semaphores are created.\n"
             "    orbis_sems.ResizeDestructive(0xFFFFu);"):
         issues.append("FEX semaphore pool is not initialized at HLE registration")
+    # CUSA08809: the imports must be resolved under libSceLibcInternal,
+    # not by unrelated libc aliases which leave ENOSYS 38.
+    libc_boot = (Path(__file__).resolve().parent.parent / "generic/android_libc_boot.cpp").read_text()
+    for marker in ('BACHATA_RELEASE026_LIBCINTERNAL_REAL_NIDS',
+                   'LIB_FUNCTION("8zTFvBIAIN8", "libSceLibcInternal"',
+                   'LIB_FUNCTION("GMpvxPFW924", "libSceLibcInternal"',
+                   'GuestInternalVprintf(', 'GuestInternalMemset('):
+        if marker not in libc_boot:
+            issues.append("FEX libcInternal ABI missing: " + marker)
     # The frequently called PS4 libc _Sin NID requires Dinkumware quadrant ABI.
     libc_overlay = Path(__file__).resolve().parent.parent / "generic/android_libc_compat.cpp"
     libc_text = libc_overlay.read_text()
+    if ('LIB_FUNCTION("MUjC4lbHrK4", "libSceLibcInternal"' not in libc_text or
+        'GuestFflush(OrbisFILE* file)' not in libc_text):
+        issues.append("FEX libcInternal fflush OrbisFILE bridge missing")
     if ('ALIAS("cCXjU72Z0Ow", Fex__Sin)' not in libc_text or
         'double PS4_SYSV_ABI Fex__Sin(double x, unsigned qoff)' not in libc_text):
         issues.append("PS4 _Sin quadrant HLE alias absent from Android FEX")

@@ -388,7 +388,11 @@ int PS4_SYSV_ABI GuestFgetc(OrbisFILE* file) {
     return internal_fread(&ch, 1, 1, file) == 1 ?
         static_cast<unsigned char>(ch) : EOF;
 }
-int PS4_SYSV_ABI GuestFflush(OrbisFILE* file) { return internal_fflush(file); }
+int PS4_SYSV_ABI GuestFflush(OrbisFILE* file) {
+    if (file && !GuestAccess(reinterpret_cast<std::uintptr_t>(file),
+                              sizeof(*file), true)) return EOF;
+    return internal_fflush(file);
+}
 int PS4_SYSV_ABI GuestFseek(OrbisFILE* file, long offset, int whence) {
     return internal_fseek(file, offset, whence);
 }
@@ -587,6 +591,9 @@ void RegisterFexLibcCompatAliases(Core::Loader::SymbolsResolver* sym) {
     ALIAS("MpxhMh8QFro", GuestFwrite);
     ALIAS("QrZZdJ8XsX0", GuestFputs);
     ALIAS("MUjC4lbHrK4", GuestFflush);
+    // The PS4 stream is an OrbisFILE in guest memory, not Bionic FILE*.
+    LIB_FUNCTION("MUjC4lbHrK4", "libSceLibcInternal", 1,
+                 "libSceLibcInternal", GuestFflush);
     ALIAS("rQFVBXp-Cxg", GuestFseek);
     ALIAS("Qazy8LmXTvw", GuestFtell);
     ALIAS("LxcEU+ICu8U", GuestFeof);

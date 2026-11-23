@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <cstdio>
 #include <limits>
 #include <mutex>
 #include <string>
@@ -199,6 +200,25 @@ int PS4_SYSV_ABI GuestVsnprintf(char* dest, std::size_t capacity,
     return _vsnprintf(BoundedFormatOutput, reinterpret_cast<char*>(&out),
                       safe_format.c_str(), &ap);
 }
+// PS4 libSceLibcInternal memset writes only validated guest VMM memory.
+void* PS4_SYSV_ABI GuestInternalMemset(void* dst, int value, std::size_t length) {
+    if (length != 0 && !IsGuestMapped(dst, length, true)) return nullptr;
+    return std::memset(dst, value, length);
+}
+
+// GMpvxPFW924 is vprintf: its va_list is 24-byte x86-64 SysV, not AArch64.
+int PS4_SYSV_ABI GuestInternalVprintf(const char* format, Common::VaList* ap) {
+    constexpr std::size_t MaxPrint = 65536;
+    char* const out = static_cast<char*>(GuestCalloc(1, MaxPrint));
+    if (!out) return -1;
+    const int count = GuestVsnprintf(out, MaxPrint, format, ap);
+    if (count > 0) {
+        const std::size_t n = std::min<std::size_t>(count, MaxPrint - 1);
+        (void)std::fwrite(out, 1, n, stdout);
+    }
+    GuestFree(out);
+    return count;
+}
 } // namespace
 
 void* FexLibcGuestAllocate(std::size_t bytes) { return GuestCalloc(1, bytes); }
@@ -209,6 +229,12 @@ void RegisterFexLibcGuestObjects(Core::Loader::SymbolsResolver* sym);
 void RegisterFexLibcBootAliases(Core::Loader::SymbolsResolver* sym) {
     // Pure HLE registration: never map guest VMM pages from this call.
     RegisterFexLibcCompatAliases(sym);
+    // BACHATA_RELEASE026_LIBCINTERNAL_REAL_NIDS: these imports arrive through
+    // libSceLibcInternal, not through the previously registered libc aliases.
+    LIB_FUNCTION("8zTFvBIAIN8", "libSceLibcInternal", 1,
+                 "libSceLibcInternal", GuestInternalMemset);
+    LIB_FUNCTION("GMpvxPFW924", "libSceLibcInternal", 1,
+                 "libSceLibcInternal", GuestInternalVprintf);
     LIB_FUNCTION("gQX+4GDQjpM", "libc", 1, "libc", GuestMalloc);
     LIB_FUNCTION("tIhsqj0qsFE", "libc", 1, "libc", GuestFree);
     LIB_FUNCTION("Y7aJ1uydPMo", "libc", 1, "libc", GuestRealloc);
