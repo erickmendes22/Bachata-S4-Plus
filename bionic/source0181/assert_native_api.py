@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import ast
 import re
+import subprocess
 from pathlib import Path
 
 def audit(root: Path) -> None:
@@ -122,8 +123,11 @@ def audit(root: Path) -> None:
         "src/core/file_format/psf.cpp": ("#include <algorithm>",),
         "src/main.cpp": ("BachataSaf::Configure", "controller->ApplyRemoteState(",
                          "controller->PollState()"),
-        "src/emulator.cpp": ("BIONIC_BOOT_STAGE=GUEST_LIBC_OBJECTS_END",
-                              "EmulatorSettings.IsLogAppend()"),
+        "src/emulator.cpp": (
+            "BIONIC_BOOT_STAGE=GUEST_LIBC_OBJECTS_END",
+            "EmulatorSettings.IsLogAppend()",
+            "BACHATA_CORE_PARITY=20261123-SRT2-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1",
+            "BACHATA_CORE_REVISION="),
         "src/imgui/big_picture/big_picture.cpp": ("emulator->Restart(runEbootPath)",),
         "src/core/signals.cpp": ("BIONIC_HOST_FAULT_MODULE",),
     }
@@ -153,6 +157,17 @@ def audit(root: Path) -> None:
         "src/sdl_window.cpp": ("controller->UpdateAxisSmoothing()", "controller->Gyro(0);"),
     }
     issues = []
+    # The runtime installer and the binary must never disagree on which
+    # source revision was compiled. Embed the checked-out Git commit (not the
+    # 0.2.7 frontend's inherited 9ceb... revision) into the native log.
+    source_repo = Path(__file__).resolve().parents[2]
+    git_sha = subprocess.check_output(
+        ["git", "-C", str(source_repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    emulator_source = (root / "src/emulator.cpp").read_text()
+    if not re.fullmatch(r"[0-9a-f]{40}", git_sha) or (
+            f"BACHATA_CORE_REVISION={git_sha}" not in emulator_source):
+        issues.append("Native ELF marker does not match the actual source Git revision")
     for rel, markers in required.items():
         path = root / rel
         if not path.is_file():
