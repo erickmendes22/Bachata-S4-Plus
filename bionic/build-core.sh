@@ -69,9 +69,63 @@ SRC="$FEX_DIR" OUT="$FEX_BUILD" TUNE_CPU=cortex-a78 \
 # A staged GPU/JNI runtime does not prove the FEX static link inputs
 # survived cache restore. Repair only missing FEX object archives instead
 # of rebuilding FFmpeg, SDL3, Turnip loader and the unrelated GPU stack.
+# Repair the FFmpeg development prefix required by shadPS4 CMake.
+# APK-stage .so files alone are NOT enough: both the shared libraries and
+# their corresponding FFmpeg include/ trees must exist in deps/prefix.
+repair_ffmpeg_prefix() {
+  local prefix="$DEPS/prefix" so
+  local headers=(libavformat/avformat.h libavcodec/avcodec.h
+                 libavutil/avutil.h libavfilter/avfilter.h
+                 libswscale/swscale.h libswresample/swresample.h)
+  local components=(avformat avcodec avutil avfilter swscale swresample)
+  local can_restage=1 h component
+  for h in "${headers[@]}"; do
+    [[ -s "$prefix/include/$h" ]] || can_restage=0
+  done
+  for component in "${components[@]}"; do
+    [[ -s "$WORK/stage/lib/arm64-v8a/lib${component}.so" ]] || can_restage=0
+  done
+  if [[ "$can_restage" == "1" ]]; then
+    echo "BACHATA_FFMPEG_DEV_PREFIX_RESTAGE_FROM_SIGNED_STAGE"
+    mkdir -p "$prefix/lib"
+    for component in "${components[@]}"; do
+      if [[ ! -s "$prefix/lib/lib${component}.so" ]]; then
+        cp -Lf "$WORK/stage/lib/arm64-v8a/lib${component}.so" \
+          "$prefix/lib/lib${component}.so"
+      fi
+    done
+  else
+    echo "BACHATA_FFMPEG_HEADERS_OR_STAGE_ABSENT_BUILD_DEPS_ONLY"
+    sed -i 's/^J=$(nproc)$/J=${BACHATA_JOBS:-2}/' \
+      "$PORT/android/scripts/port-arm64/android_deps.sh"
+    bash "$PORT/android/scripts/port-arm64/android_deps.sh"
+  fi
+  for h in "${headers[@]}"; do
+    test -s "$prefix/include/$h" || {
+      echo "::error::FFmpeg development header missing after targeted repair: $h" >&2
+      exit 4
+    }
+  done
+  for component in "${components[@]}"; do
+    test -s "$prefix/lib/lib${component}.so" || {
+      echo "::error::FFmpeg development shared library missing after repair: $component" >&2
+      exit 4
+    }
+  done
+  echo "BACHATA_FFMPEG_PREFIX_VERIFIED"
+}
+
+if [[ "${BACHATA_REPAIR_FFMPEG_ONLY:-0}" == "1" ]]; then
+  repair_ffmpeg_prefix
+  exit 0
+fi
+
 if [[ "${BACHATA_REPAIR_FEX_ONLY:-0}" == "1" ]]; then
   build_fex_core
-  echo "BACHATA_FEX_STATIC_LIBRARY_REPAIRED"
+  # Both cached FEX static archives and FFmpeg prefix can be missing.
+  # Repair them in this single targeted mode, never stamp half a cache.
+  repair_ffmpeg_prefix
+  echo "BACHATA_FEX_STATIC_LIBRARY_AND_FFMPEG_PREFIX_REPAIRED"
   exit 0
 fi
 
