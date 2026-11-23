@@ -41,6 +41,25 @@ def apply(root: Path) -> dict:
            "                  VAddr* source_addresses) {",
            "guest-bytecode source address capture")
     sc=sub(sc,
+           """                if (!TryReadGuest(address, flat, value)) {
+                    /* Revalidate changing guest SRT memory every dispatch; do not permanently poison opcode. */
+                    LOG_WARNING(Render_Recompiler,
+                                "BIONIC_PORTABLE_SRT_BAD_READ: opcode={} address={:#x}",
+                                i / 3, address);
+                    value = 0;
+                }
+                flat[b] = value;""",
+           """                const bool guest_read_ok = TryReadGuest(address, flat, value);
+                if (!guest_read_ok) {
+                    /* Revalidate changing guest SRT memory every dispatch; do not permanently poison opcode. */
+                    LOG_WARNING(Render_Recompiler,
+                                "BIONIC_PORTABLE_SRT_BAD_READ: opcode={} address={:#x}",
+                                i / 3, address);
+                    value = 0;
+                }
+                flat[b] = value;""",
+           "read source exactly once")
+    sc=sub(sc,
            """        case SrtOp::CopyImm:
         case SrtOp::CopyExpr: {
             const u32 off = op == SrtOp::CopyImm ? a : values[--nv];
@@ -52,17 +71,18 @@ def apply(root: Path) -> dict:
             const bool null = cur < 0x10000ULL;""",
            "source address initialize")
     sc=sub(sc,
-           """                flat[b] = value;
-            }
-            continue;
-        }
-        case SrtOp::PopPtr:""",
-           """                flat[b] = value;
-                // The same SRT DWORD may be updated by the GPU on later
-                // frames. Record only a source successfully read through
-                // the validated guest VMA. A GPU page refresh will trigger
-                // RefreshFlatBuf() again using this canonical address.
-                if (source_addresses && TryReadGuest(address,flat,value))
+           """                const bool guest_read_ok = TryReadGuest(address, flat, value);
+                if (!guest_read_ok) {
+                    /* Revalidate changing guest SRT memory every dispatch; do not permanently poison opcode. */
+                    LOG_WARNING(Render_Recompiler,
+                                "BIONIC_PORTABLE_SRT_BAD_READ: opcode={} address={:#x}",
+                                i / 3, address);
+                    value = 0;
+                }
+                flat[b] = value;
+                // The same descriptor may be updated by a GPU store later:
+                // record only the validated guest source from THIS one read.
+                if (source_addresses && guest_read_ok)
                     source_addresses[b]=address;
             }
             continue;
