@@ -4,6 +4,7 @@
 // qsort, FILE objects and iostream globals require separate guest semantics.
 #include <algorithm>
 #include <cerrno>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -219,6 +220,51 @@ const char* PS4_SYSV_ABI GuestStrchr(const char* s, int ch) {
 std::size_t PS4_SYSV_ABI GuestStrcspn(const char* a, const char* b) {
     return std::strcspn(a, b);
 }
+
+// The PS4 user-space runtime uses C locale byte-string operations in its
+// worker scheduler. They must not quietly return -ENOSYS on FEX ARM64.
+static unsigned char FoldAscii(unsigned char c) {
+    return c >= 'A' && c <= 'Z' ? static_cast<unsigned char>(c - 'A' + 'a') : c;
+}
+int PS4_SYSV_ABI GuestStrcasecmp(const char* a, const char* b) {
+    std::string left, right;
+    if (!GuestString(a, 1024 * 1024, left) ||
+        !GuestString(b, 1024 * 1024, right)) return -1;
+    for (std::size_t i = 0;; ++i) {
+        const auto x = i < left.size() ? FoldAscii(static_cast<unsigned char>(left[i])) : 0;
+        const auto y = i < right.size() ? FoldAscii(static_cast<unsigned char>(right[i])) : 0;
+        if (x != y || x == 0 || y == 0) return static_cast<int>(x) - static_cast<int>(y);
+    }
+}
+int PS4_SYSV_ABI GuestStrncasecmp(const char* a, const char* b, std::size_t count) {
+    if (!count) return 0;
+    if (count > 1024 * 1024) count = 1024 * 1024;
+    for (std::size_t i = 0; i < count; ++i) {
+        auto pa = reinterpret_cast<std::uintptr_t>(a);
+        auto pb = reinterpret_cast<std::uintptr_t>(b);
+        if (pa > UINTPTR_MAX - i || pb > UINTPTR_MAX - i ||
+            !GuestAccess(pa + i, 1, false) || !GuestAccess(pb + i, 1, false)) return -1;
+        const unsigned char x = FoldAscii(static_cast<unsigned char>(a[i]));
+        const unsigned char y = FoldAscii(static_cast<unsigned char>(b[i]));
+        if (x != y || x == 0 || y == 0) return static_cast<int>(x) - static_cast<int>(y);
+    }
+    return 0;
+}
+const char* PS4_SYSV_ABI GuestStrstr(const char* haystack, const char* needle) {
+    std::string text, pattern;
+    if (!GuestString(haystack, 1024 * 1024, text) ||
+        !GuestString(needle, 1024 * 1024, pattern)) return nullptr;
+    const auto where = text.find(pattern);
+    if (where == std::string::npos) return nullptr;
+    return haystack + where; // the result stays in PS4 guest-addressable memory
+}
+std::size_t PS4_SYSV_ABI GuestStrspn(const char* str, const char* accept) {
+    std::string text, set;
+    if (!GuestString(str, 1024 * 1024, text) ||
+        !GuestString(accept, 1024 * 1024, set)) return 0;
+    return std::strspn(text.c_str(), set.c_str());
+}
+
 int PS4_SYSV_ABI GuestStrcoll(const char* a, const char* b) {
     return std::strcoll(a, b);
 }
@@ -558,6 +604,10 @@ void RegisterFexLibcCompatAliases(Core::Loader::SymbolsResolver* sym) {
     ALIAS("ob5xAW4ln-0", GuestStrchr);
     ALIAS("q0F6yS-rCms", GuestStrcspn);
     ALIAS("gjbmYpP-XJQ", GuestStrcoll);
+    ALIAS("AV6ipCNa4Rw", GuestStrcasecmp);
+    ALIAS("pXvbDfchu6k", GuestStrncasecmp);
+    ALIAS("viiwFMaNamA", GuestStrstr);
+    ALIAS("-kU6bB4M-+k", GuestStrspn);
     ALIAS("SfQIZcqvvms", GuestStrlcpy);
     ALIAS("QNyUWGXmXNc", GuestStrtoumax);
     ALIAS("cpCOXWMgha0", GuestRand);

@@ -220,6 +220,46 @@ def apply(root: Path) -> dict:
                    "FEX libc internal exports")
     result["portedInterfaces"].append("0.18.1 HLE registration + FEX boot diagnostics")
 
+    # Real libSceFiber: shadPS4 desktop's x86 assembly is guarded by
+    # ARCH_X86_64. The ARM64 FEX guest needs its own x86 frame switching
+    # adapter, otherwise FIVE high-frequency Shadow of the Colossus HLE NIDs
+    # silently become UnsupportedHleCallAdapter / ENOSYS.
+    require_replace(
+        libs,
+        '#include "core/libraries/fiber/fiber.h"\n',
+        '#include "core/libraries/fiber/fiber.h"\n'
+        'namespace Libraries::Fiber {\n'
+        'void RegisterFexFiberBridge(Core::Loader::SymbolsResolver* sym);\n'
+        '}\n',
+        "FEX guest fiber registration API")
+    require_replace(
+        libs,
+        '#ifdef ARCH_X86_64\n'
+        '            {"libSceFiber.sprx", Libraries::Fiber::RegisterLib},\n'
+        '#endif\n',
+        '#ifdef ARCH_X86_64\n'
+        '            {"libSceFiber.sprx", Libraries::Fiber::RegisterLib},\n'
+        '#elif defined(SHADPS4_ENABLE_FEX_GUEST_CPU)\n'
+        '            {"libSceFiber.sprx", Libraries::Fiber::RegisterFexFiberBridge},\n'
+        '#endif\n',
+        "FEX guest fiber non-ENOSYS module table")
+
+    from pathlib import Path as _Path
+    fiber_source = _Path(__file__).resolve().parents[1] / "generic" / "android_fex_fiber.cpp"
+    if not fiber_source.is_file():
+        raise RuntimeError("FEX fiber implementation missing: " + str(fiber_source))
+    cmake = root / "CMakeLists.txt"
+    native_libc = fiber_source.with_name("android_libc_compat.cpp")
+    require_replace(
+        cmake,
+        'target_sources(shadps4 PRIVATE "' + str(native_libc) + '")\n',
+        'target_sources(shadps4 PRIVATE "' + str(native_libc) + '")\n'
+        'target_sources(shadps4 PRIVATE "' + str(fiber_source) + '")\n',
+        "link FEX x86-state fiber HLE into ARM64 Bionic native core")
+    result["portedInterfaces"].append(
+        "15 real libSceFiber NIDs on FEX: Initialize/Run/Switch/"
+        "ReturnToThread with guest register and stack continuations")
+
     # Modern input has timestamp-based State and PollState(), but the Android
     # controller socket must keep an atomic button/axes/touch snapshot.
     controller_h = root / "src/input/controller.h"
