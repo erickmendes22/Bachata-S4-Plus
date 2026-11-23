@@ -1,0 +1,55 @@
+name: Audit official Release 0.2.6 Android native core parity
+on:
+  push:
+    paths:
+      - ".github/workflows/bachata-release026-binary-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-026-binary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    steps:
+      - name: Download exact public Release 0.2.6 APK, extract authentic ARM64 native runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bachata-release026
+          cd /tmp/bachata-release026
+          curl --retry 3 --retry-delay 2 -fL \
+            https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.6/Bachata-S4-Plus-v0.2.6.apk \
+            -o release026.apk
+          python3 - <<'PY'
+          import hashlib,zipfile
+          from pathlib import Path
+          apk=Path("release026.apk")
+          with zipfile.ZipFile(apk) as z:
+              natives=[f for f in z.namelist() if f.endswith("lib/arm64-v8a/libbachata_native_runtime.so")]
+              assert len(natives)==1,natives
+              elf=z.read(natives[0])
+              sha=hashlib.sha256(elf).hexdigest()
+              assert sha=="3548cb4b6d952aed7141f057e07552b4f23a57997df339644a57605ed1308f39",sha
+              Path("release026-native.so").write_bytes(elf)
+              Path("release026-info.txt").write_text(
+                  f"asset=0.2.6/Bachata-S4-Plus-v0.2.6.apk\n"
+                  f"apk_sha256={hashlib.sha256(apk.read_bytes()).hexdigest()}\n"
+                  f"native_entry={natives[0]}\n"
+                  f"native_sha256={sha}\n"
+                  f"native_size={len(elf)}\n"
+              )
+              print(Path("release026-info.txt").read_text())
+          PY
+          nm -D -C --defined-only release026-native.so > release026-symbols.txt
+          echo 'BACHATA_RELEASE026_AUTHENTIC_BINARY_SHA_VERIFIED'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Bachata-S4Plus-Release026-Authentic-Native-ELF
+          path: |
+            /tmp/bachata-release026/release026-native.so
+            /tmp/bachata-release026/release026-info.txt
+            /tmp/bachata-release026/release026-symbols.txt
+          compression-level: 5
+          retention-days: 7
