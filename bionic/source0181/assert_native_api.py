@@ -182,7 +182,7 @@ def audit(root: Path) -> None:
             "texture_cache.ResolveCMaskOwner(device_addr)"),
         "src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp": (
             "std::vector<u32> portable_code(", "if (!walker_func) {",
-            "ShaderMetaVersion = 10u;", "return info.Deserialize(ar);"),
+            "ShaderMetaVersion = 11u;", "return info.Deserialize(ar);"),
         "src/core/guest_cpu/hle_call_adapter.cpp": (
             "BIONIC_GUEST_X86_NONLOCAL_JUMP", "gNQ1V2vfXDE",
             "lKEN2IebgJ0", "guest_setjmp[]", "guest_longjmp[]",
@@ -292,6 +292,21 @@ def audit(root: Path) -> None:
                    "case IR::Opcode::ReadConstBuffer:"):
         if marker not in srt_source:
             issues.append("SRT wave uniform constant source proof missing " + marker)
+    # Verify the source-proven guest-read callback exists at the actual IR
+    # barrier, not only in the rasterizer's later binding path.
+    rsrc = (root / "src/shader_recompiler/recompiler.cpp").read_text()
+    hdr = (root / "src/video_core/renderer_vulkan/vk_pipeline_cache.h").read_text()
+    pc = (root / "src/video_core/renderer_vulkan/vk_pipeline_cache.cpp").read_text()
+    raster_src = (root / "src/video_core/renderer_vulkan/vk_rasterizer.cpp").read_text()
+    for marker, blob in (
+        ("BACHATA_ORDER1886_PRE_RESOURCE_SRT_SYNC", rsrc),
+        ("if (guest_reads_done) guest_reads_done();", rsrc),
+        ("void SetSrtSync(std::function<void(Shader::Info&)> callback)", hdr),
+        ("if (srt_sync) srt_sync(info);", pc),
+        ("pipeline_cache.SetSrtSync(", raster_src),
+    ):
+        if marker not in blob:
+            issues.append("The Order SRT pre-resource synchronization missing: " + marker)
     # The frequently called PS4 libc _Sin NID requires Dinkumware quadrant ABI.
     libc_overlay = Path(__file__).resolve().parent.parent / "generic/android_libc_compat.cpp"
     libc_text = libc_overlay.read_text()
