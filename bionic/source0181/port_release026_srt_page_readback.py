@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""Restore the Release 0.2.6 SRT GPU-written source-page refresh chain.
+
+Verified from the authentic 0.2.6/0.2.7 ARM64 ELF:
+ Rasterizer::ReadBackGpuWrittenSrtSources loops page-aligned SRT inputs,
+ checks BufferCache GPU modifications, downloads modified pages, and
+ refreshes the flattened shader resource table for up to four passes.
+ This port uses modern 0.18.1 BufferCache::ReadMemory to download a
+ GPU-modified mapped page on the GPU command-processing thread, where
+ SendCommand<true> must not recursively enqueue itself.
+
+No guest RAM copy is used for GPU-written pages until the GPU's actual
+tracked memory has been downloaded and its fence has completed.
+"""
+from pathlib import Path
+
+def sub(s, old, new, label):
+    n=s.count(old)
+    if n != 1:
+        raise RuntimeError(f"Release SRT GPU page source drift {label}: {n}")
+    return s.replace(old,new,1)
+
+def apply(root: Path) -> dict:
+    srt_h=root/"src/shader_recompiler/ir/passes/srt.h"
+    srt_cpp=root/"src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp"
+    info_h=root/"src/shader_recompiler/info.h"
+    raster_h=root/"src/video_core/renderer_vulkan/vk_rasterizer.h"
+    raster_cpp=root/"src/video_core/renderer_vulkan/vk_rasterizer.cpp"
+    sh=srt_h.read_text();sc=srt_cpp.read_text()
+    ih=info_h.read_text();rh=raster_h.read_text();rc=raster_cpp.read_text()
+
+    sh=sub(sh,
+           "void RunSrtWalker(SrtWalkerCode code, const u32* user_data, u32* flat_dst);",
+           "void RunSrtWalker(SrtWalkerCode code, const u32* user_data, u32* flat_dst,\n"
+           "                  VAddr* source_addresses);",
+           "SRT source-tracking API")
+
+    sc=sub(sc,
+           "void RunSrtWalker(SrtWalkerCode code, const u32* user_data, u32* flat) {",
+           "void RunSrtWalker(SrtWalkerCode code, const u32* user_data, u32* flat,\n"
+           "                  VAddr* source_addresses) {",
+           "guest-bytecode source address capture")
+    sc=sub(sc,
+           """        case SrtOp::CopyImm:
+        case SrtOp::CopyExpr: {
+            const u32 off = op == SrtOp::CopyImm ? a : values[--nv];
+            const bool null = cur < 0x10000ULL;""",
+           """        case SrtOp::CopyImm:
+        case SrtOp::CopyExpr: {
+            const u32 off = op == SrtOp::CopyImm ? a : values[--nv];
+            if (source_addresses) source_addresses[b]=0;
+            const bool null = cur < 0x10000ULL;""",
+           "source address initialize")
+    sc=sub(sc,
+           """                flat[b] = value;
+            }
+            continue;
+        }
+        case SrtOp::PopPtr:""",
+           """                flat[b] = value;
+                // The same SRT DWORD may be updated by the GPU on later
+                // frames. Record only a source successfully read through
+                // the validated guest VMA. A GPU page refresh will trigger
+                // RefreshFlatBuf() again using this canonical address.
+                if (source_addresses && TryReadGuest(address,flat,value))
+                    source_addresses[b]=address;
+            }
+            continue;
+        }
+        case SrtOp::PopPtr:""",
+           "track validated SRT data source")
+    ih=sub(ih,
+           "    std::vector<u32> flattened_ud_buf;\n",
+           "    std::vector<u32> flattened_ud_buf;\n"
+           "    // Release 0.2.6: guest source page for each flattened SRT DWORD.\n"
+           "    // Derived each refresh; never serialized as a host pointer.\n"
+           "    std::vector<VAddr> srt_guest_sources;\n",
+           "Shader::Info transient SRT guest pages")
+    ih=sub(ih,
+           """        flattened_ud_buf.resize(srt_info.flattened_bufsize_dw);
+        ASSERT(user_data.size() <= NUM_USER_DATA_REGS);""",
+           """        flattened_ud_buf.resize(srt_info.flattened_bufsize_dw);
+        srt_guest_sources.assign(flattened_ud_buf.size(), 0);
+        ASSERT(user_data.size() <= NUM_USER_DATA_REGS);""",
+           "refresh SRT guest source vector")
+    ih=sub(ih,
+           "RunSrtWalker(srt_info.walker_func, user_data.data(), flattened_ud_buf.data());",
+           "RunSrtWalker(srt_info.walker_func, user_data.data(), flattened_ud_buf.data(),\n"
+           "                         srt_guest_sources.data());",
+           "call source-aware walker")
+
+    rh=sub(rh,
+           "    bool BindResources(const Pipeline* pipeline);\n",
+           "    // Release 0.2.6 GPU-to-CPU SRT source page refresh.\n"
+           "    void ReadBackGpuWrittenSrtSources(const Shader::Info& stage);\n"
+           "    bool BindResources(const Pipeline* pipeline);\n",
+           "Rasterizer SRT readback method")
+    rc=sub(rc,
+           """        if (!stage) {
+            continue;
+        }
+        set_writes.resize(set_writes.size() + stage->buffers.size()""",
+           """        if (!stage) {
+            continue;
+        }
+        ReadBackGpuWrittenSrtSources(*stage);
+        set_writes.resize(set_writes.size() + stage->buffers.size()""",
+           "readback SRT source pages BEFORE binding any GPU descriptors")
+    rc=sub(rc,
+           "bool Rasterizer::BindResources(const Pipeline* pipeline) {",
+           r"""// BACHATA_RELEASE026_SRT_GPU_PAGE_READBACK
+// Official Release performs up to four passes: a write may update a
+// descriptor pointing at another GPU-written SRT page. Re-evaluate the
+// SRT sources only after the required page has been downloaded.
+void Rasterizer::ReadBackGpuWrittenSrtSources(const Shader::Info& stage) {
+    constexpr u64 PageSize=4096;
+    constexpr u64 PageMask=~u64{PageSize-1};
+    if(stage.srt_guest_sources.empty()) return;
+    for(unsigned pass=0;pass<4;++pass) {
+        bool changed=false;
+        std::unordered_set<VAddr> visited;
+        for(const auto source:stage.srt_guest_sources) {
+            if(source<0x10000 || source>=0x10000000000ULL)continue;
+            const VAddr page=source&PageMask;
+            if(!visited.insert(page).second)continue;
+            if(!buffer_cache.IsRegionGpuModified(page,PageSize))continue;
+            if(!memory->IsValidMapping(page))continue;
+            // Called on the Liverpool GPU command thread. ReadMemory's
+            // assume_locks=true calls DownloadMemory directly, avoiding
+            // a recursive SendCommand<true> and waiting for the actual GPU
+            // copy/fence to complete before RefreshFlatBuf reads the page.
+            buffer_cache.ReadMemory(page,PageSize,false,true);
+            changed=true;
+        }
+        if(!changed)break;
+        auto& writable=const_cast<Shader::Info&>(stage);
+        writable.RefreshFlatBuf();
+        LOG_INFO(Render_Vulkan,
+                 "BACHATA_RELEASE026_SRT_GPU_PAGES_REFRESHED pass={} pages={}",
+                 pass,visited.size());
+    }
+}
+
+bool Rasterizer::BindResources(const Pipeline* pipeline) {""",
+           "Release SRT GPU-written source page readback")
+    # No fallback that silently replaces GPU bytes with stale CPU memory.
+    if "BACHATA_RELEASE026_SRT_GPU_PAGE_READBACK" not in rc:
+        raise RuntimeError("No active Shader::Info-to-BufferCache GPU page readback")
+    for path,txt in ((srt_h,sh),(srt_cpp,sc),(info_h,ih),(raster_h,rh),(raster_cpp,rc)):
+        path.write_text(txt)
+    return {
+        "ported":"Release SRT source addresses and GPU-written page-aware refresh",
+        "provenance":"guest VMAs captured per SRT dword; no invented addresses",
+        "gpuDownload":"real 0.18.1 BufferCache ReadMemory + GPU fence",
+        "passes":4,
+        "notPorted":"additional release image-readback paths and full Arm64SrtEmitter JIT",
+    }
