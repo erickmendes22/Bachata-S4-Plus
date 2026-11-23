@@ -35,8 +35,8 @@ def apply(root: Path) -> dict:
     data[re_h] = only(data[re_h], '#include "common/object_pool.h"',
         '#include <functional>\n#include "common/object_pool.h"', "IR callback include")
     data[re_h] = only(data[re_h],
-        '                                            const Profile& profile);',
-        '                                            const Profile& profile,\n'
+        'const Profile& profile);',
+        'const Profile& profile,\n'
         '                                            const std::function<void()>& guest_reads_done = {});',
         "IR guest read callback declaration")
     data[re_c] = only(data[re_c],
