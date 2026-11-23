@@ -65,7 +65,7 @@ void Elf::Open(std::unique_ptr<Core::FileSys::IFile> owned) {
     if (!m_f.ReadObject(m_self)) {""",
         "Release IFile-based ELF parser")
     mh=replace_once(mh,
-        """    Module(Core::MemoryManager* memory, const std::filesystem::path& file,
+        """    explicit Module(Core::MemoryManager* memory, const std::filesystem::path& file,
                     u32& max_tls_index);""",
         """    // Release 0.2.6/0.2.7: ELF and SELF files are owned guest IFile
     // objects. Keep FEX-specific module initialization, relocations and TLS.
