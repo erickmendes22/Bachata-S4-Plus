@@ -250,3 +250,8 @@ is unsupported by the Release comparison.
 ## Corrigido cache inválido de dependências após SRT3 / Vulkan budget — 23/11/2026
 
 Run `45256239259`: primeiro pré-voo PASS; falha no `cmake` porque o cache do estágio tinha os FFmpeg `.so` para o APK, mas faltava o `out/bionic/deps/prefix/lib/libavformat.so` que a linkedição do shadPS4 exige. O contrato `native_cache.sh` agora testa **todas as seis bibliotecas e seus headers do prefixo**, além da `libFEXCore.a`; o modo `repair_ffmpeg` restaura somente as dependências ausentes, copiando do estágio compilado quando os headers estão intactos ou recompilando as dependências quando é impossível restaurar com segurança. `repair_fex` também verifica FFmpeg, evitando marcar cache parcial pronto. Restam as fontes C++ do Release SRT3, GPU range/live budget e ReadConst a serem compiladas pela execução iniciada neste commit.
+
+
+## Cache de compilação: FFmpeg + SDL3 no prefixo (não confundir com staging) — 23/11/2026
+
+O run `45256239259` comprovou que o stage tinha libs FFmpeg mas `out/bionic/deps/prefix/lib/libavformat.so` faltava no momento da configuração CMake. Além da checagem de `libFEXCore.a`, `native_cache.sh` agora requer as bibliotecas FFmpeg e SDL3 **e respectivos headers** no prefixo de desenvolvimento. `restore_deps` recupera as bibliotecas verificadas do stage, inclusive os nomes SONAME, e recompila seletivamente FFmpeg/SDL3 somente quando faltam headers. `repair_fex` e `repair_ffmpeg` reutilizam esse mesmo procedimento, antes da compilação C++ real. Não repetir a configuração de CMake com prefixo incompleto.
