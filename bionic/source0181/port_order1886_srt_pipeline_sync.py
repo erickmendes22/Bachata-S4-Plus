@@ -39,11 +39,20 @@ def apply(root: Path) -> dict:
         'const Profile& profile,\n'
         '                                            const std::function<void()>& guest_reads_done = {});',
         "IR guest read callback declaration")
-    data[re_c] = only(data[re_c],
-        '                              RuntimeInfo& runtime_info, const Profile& profile) {',
-        '                              RuntimeInfo& runtime_info, const Profile& profile,\n'
-        '                              const std::function<void()>& guest_reads_done) {',
-        "IR guest read callback implementation")
+    # The 0.18.1 graft and FEX core may format the signature differently.
+    # Match the unique function declaration, never an unrelated Profile use.
+    import re
+    expr = r'(IR::Program\\s+TranslateProgram\\s*\\([^{};]*?)\\)\\s*\\{'
+    matches = list(re.finditer(expr, data[re_c]))
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"The Order SRT drift: expected unique TranslateProgram definition, found {len(matches)}")
+    found = matches[0]
+    if 'const Profile& profile' not in found.group(1):
+        raise RuntimeError("Unexpected TranslateProgram ABI: missing Profile")
+    data[re_c] = (data[re_c][:found.start()] + found.group(1) +
+                  ', const std::function<void()>& guest_reads_done) {' +
+                  data[re_c][found.end():])
     data[re_c] = only(data[re_c],
         '    Shader::Optimization::FlattenExtendedUserdataPass(program, resources, profile);\n'
         '    Shader::IR::DumpProgram(program, info, "pre-res-patch.");',
