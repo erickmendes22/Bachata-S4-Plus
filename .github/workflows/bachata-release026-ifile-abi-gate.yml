@@ -1,0 +1,36 @@
+name: Quick Release 0.2.6 IFile loader source-parity ABI gate
+on:
+  push:
+    branches: [feature/release026-direct-ifile-loader-20261123]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate-ifile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct actual working ARM64 FEX plus pinned shadPS4 0.18.1
+        run: |
+          set -euo pipefail
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/zenithblue-oss/shadps4-arm64.git core
+          git -C core checkout --quiet be6bc2e9c60799e071dd2fafa6216e8d80ec619c
+          git -C core config user.name 'Release parity source ABI test'
+          git -C core config user.email 'release-parity@users.noreply.github.com'
+          git -C core remote add shadps4 https://github.com/shadps4-emu/shadPS4.git
+          git -C core fetch --quiet --filter=blob:none shadps4 3912336fdfffbd5c99b59d92e997ea6ebd62216c
+          python3 bionic/source0181/rebase_arm64.py --source core --output out/source0181
+          python3 bionic/source0181/port_0181.py --source core --report out/source0181/bionic-0181-parity.json
+      - name: Enforce modern direct guest IFile ABI without host-only fallbacks
+        run: |
+          set -euo pipefail
+          python3 bionic/source0181/assert_native_api.py --source core
+          grep -Fq 'BACHATA_RELEASE026_MODULE_IFILE' core/src/core/module.cpp
+          grep -Fq 'BACHATA_RELEASE026_LOADER_IFILE' core/src/core/linker.cpp
+          grep -Fq 'FileReader m_f' core/src/core/loader/elf.h
+          grep -Fq 'm_f.Reset(std::move(owned))' core/src/core/loader/elf.cpp
+          ! grep -Fq 'elf.Open(file);' core/src/core/module.cpp
+          ! grep -Fq 'std::make_unique<Module>(memory, elf_name, max_tls_index)' core/src/core/linker.cpp
+          git -C core diff --check
+          echo 'RELEASE026_IFILE_LOADER_SOURCE_CONTRACT_PASS'
