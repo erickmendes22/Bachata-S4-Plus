@@ -621,4 +621,16 @@ void GameController::PollState() {
         "Bachata SRT: bounded metadata layout, ReadConstArray runtime index, "
         "native ARM64 portable walker and stale shader cache generation")
 
+    # The app's 0.2.7 runtime template and upstream's pinned Git SHA are not
+    # the revision of the rebuilt Bionic native core. Emit an explicit marker
+    # from the *actual* emulated process so each diagnostic proves what ran.
+    emulator = root / "src/emulator.cpp"
+    before = '    LOG_INFO(Loader, "Revision {}", Common::g_scm_rev);\n'
+    require_replace(
+        emulator,
+        before,
+        before + '    LOG_INFO(Loader, '
+        '"BACHATA_CORE_PARITY=20261123-SRT2-CTYPE3-CE1-OWNEDCB");\n',
+        "native core binary parity marker")
+
     return result
