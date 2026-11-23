@@ -71,19 +71,16 @@ def apply(root: Path) -> dict:
             const bool null = cur < 0x10000ULL;""",
            "source address initialize")
     sc=sub(sc,
-           """                const bool guest_read_ok = TryReadGuest(address, flat, value);
-                if (!guest_read_ok) {
-                    /* Revalidate changing guest SRT memory every dispatch; do not permanently poison opcode. */
-                    LOG_WARNING(Render_Recompiler,
-                                "BIONIC_PORTABLE_SRT_BAD_READ: opcode={} address={:#x}",
-                                i / 3, address);
-                    value = 0;
-                }
-                flat[b] = value;
-                // The same descriptor may be updated by a GPU store later:
-                // record only the validated guest source from THIS one read.
+           """                flat[b] = value;
+            }
+            continue;
+        }
+        case SrtOp::PopPtr:""",
+           """                flat[b] = value;
+                // Revisit this page if the GPU writes it later; never substitute
+                // a stale CPU descriptor while the GPU version is newer.
                 if (source_addresses && guest_read_ok)
-                    source_addresses[b]=address;
+                    source_addresses[b] = address;
             }
             continue;
         }
