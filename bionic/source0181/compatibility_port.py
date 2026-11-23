@@ -586,4 +586,18 @@ void GameController::PollState() {
         "Full portable ARM64 SRT resource flattening and VMM-validated reads; "
         "legacy x86 pipeline cache rejected")
 
+    # Version 6 persisted host x86 code for SRT walkers. Force a new metadata
+    # namespace and make deserialization failure propagate all the way to the
+    # pipeline cache loader. Otherwise a rejected walker silently looks valid.
+    require_replace(serialized,
+                    "static constexpr u32 ShaderMetaVersion = 6u;",
+                    "static constexpr u32 ShaderMetaVersion = 7u;",
+                    "portable SRT shader metadata cache generation")
+    require_replace(serialized,
+                    "    info.Deserialize(ar);\n    return true;\n",
+                    "    return info.Deserialize(ar);\n",
+                    "propagate incompatible SRT cache deserialization")
+    result["portedInterfaces"].append(
+        "ShaderMetaVersion 7; reject stale x86 SRT metadata and recompile safely")
+
     return result
