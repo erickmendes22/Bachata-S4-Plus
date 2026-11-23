@@ -98,6 +98,12 @@ def audit(root: Path) -> None:
             "owned.second.assign(ccb.begin(), ccb.end());",
             "std::make_shared<CmdBuffer>",
             "ProcessCeUpdate(ccb, owned_buffers)"),
+        "src/video_core/texture_cache/texture_cache.h": (
+            "ResolveCMaskOwner(VAddr address) const", "HasLiveMeta(VAddr address) const",
+            "owner_uid{}", "num_samples = 1"),
+        "src/video_core/texture_cache/texture_cache.cpp": (
+            "BACHATA_RELEASE026_META_OWNER_UID", "RegisterMeta(cmask_addr",
+            "UnregisterMeta(meta_info.cmask_addr, image.image_uid)"),
         "src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp": (
             "std::vector<u32> portable_code(", "if (!walker_func) {",
             "ShaderMetaVersion = 7u;", "return info.Deserialize(ar);"),

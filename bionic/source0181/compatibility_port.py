@@ -633,4 +633,10 @@ void GameController::PollState() {
         '"BACHATA_CORE_PARITY=20261123-SRT2-CTYPE3-CE1-OWNEDCB");\n',
         "native core binary parity marker")
 
+    from port_release026_cmask_owner import apply as apply_meta_owners
+    result["release026CmaskOwnerParity"] = apply_meta_owners(root)
+    result["portedInterfaces"].append(
+        "Release 0.2.6 metadata: CMask/FMask/HTile live owner UID "
+        "validation, address reuse and clear-mask preservation")
+
     return result
