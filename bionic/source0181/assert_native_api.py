@@ -42,6 +42,16 @@ def audit(root: Path) -> None:
             '"libSceFiber.sprx", Libraries::Fiber::RegisterFexFiberBridge',
             "#elif defined(SHADPS4_ENABLE_FEX_GUEST_CPU)"),
         "src/core/file_sys/fs.h": ("std::unique_ptr<IFile> handle;", "GetHostFile() const"),
+        "src/core/file_sys/fs.cpp": (
+            "BACHATA_FIOS2_REAL_PSARC_MOUNT",
+            "MntPoints::MountArchiveBackend(",),
+        "src/core/file_sys/backends/psarc_fs.cpp": (
+            "BIONIC_PSARC_HEADER_INVALID", "BIONIC_PSARC_INDEX_READY",
+            "uncompress(", "ReadBlock(", "PsarcBackend::Open("),
+        "src/core/libraries/fios2/fios2.cpp": (
+            "BIONIC_PSARC_MOUNT_READY", "BIONIC_PSARC_ARCHIVE_UNAVAILABLE",
+            "mnt->MountArchiveBackend(backend,guest_mount)",
+            "BIONIC_PSARC_UNMOUNT_DONE"),
         "src/core/memory.cpp": ("file->GetHostFile()", "file->GetSize()"),
         "src/core/libraries/videoout/driver.cpp": ("BIONIC_PRESENT_IDLE_SKIP",
                                                     "PrepareBlankFrame(true)"),
@@ -132,6 +142,10 @@ def audit(root: Path) -> None:
         "src/core/signals.cpp": ("BIONIC_HOST_FAULT_MODULE",),
     }
     forbidden = {
+        "src/core/libraries/fios2/fios2.cpp": (
+            'mnt->Mount(app0_host, guest_mount, true);',
+            'Map the FIOS mount point to the same host folder',
+            '*handle = 1; // non-zero fake handle'),
         "src/core/libraries/libs.cpp": ('"core/libraries/np/np_commerce.h"',),
         "src/core/libraries/kernel/file_system.cpp": ("deci_tty6_device.h",),
         "src/core/memory.cpp": ("file->f.",),
