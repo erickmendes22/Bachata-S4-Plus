@@ -14,6 +14,8 @@ std::optional<std::filesystem::path> Resolve(std::string_view guest_path);
 bool List(std::string_view guest_directory, std::vector<Entry>& entries);
 // Lightweight broker STAT: no provider file descriptor or data copy.
 bool StatPath(std::string_view guest_path, bool* is_directory = nullptr);
+// Direct independent provider fd for 0.18.1 IFile, matching Release SafFsBackend.
+std::optional<int> OpenFd(std::string_view guest_path);
 std::optional<int> DuplicateFd(const std::filesystem::path& path);
 void Shutdown();
 }
