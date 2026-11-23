@@ -656,14 +656,14 @@ void GameController::PollState() {
     # pipeline cache loader. Otherwise a rejected walker silently looks valid.
     require_replace(serialized,
                     "static constexpr u32 ShaderMetaVersion = 6u;",
-                    "static constexpr u32 ShaderMetaVersion = 11u;",
+                    "static constexpr u32 ShaderMetaVersion = 12u;",
                     "portable SRT shader metadata cache generation")
     require_replace(serialized,
                     "    info.Deserialize(ar);\n    return true;\n",
                     "    return info.Deserialize(ar);\n",
                     "propagate incompatible SRT cache deserialization")
     result["portedInterfaces"].append(
-        "ShaderMetaVersion 11; invalidate shaders specialized on stale SRT pages")
+        "ShaderMetaVersion 12; invalidate old ReadConst SRT dependency order")
 
     # The 0.2.6 release ELF owns each copied DCB/CCB pair; upstream 0.18.1
     # instead aborts when the shared 2-MiB queue staging space is exhausted.

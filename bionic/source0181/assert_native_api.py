@@ -182,7 +182,7 @@ def audit(root: Path) -> None:
             "texture_cache.ResolveCMaskOwner(device_addr)"),
         "src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp": (
             "std::vector<u32> portable_code(", "if (!walker_func) {",
-            "ShaderMetaVersion = 11u;", "return info.Deserialize(ar);"),
+            "ShaderMetaVersion = 12u;", "return info.Deserialize(ar);"),
         "src/core/guest_cpu/hle_call_adapter.cpp": (
             "BIONIC_GUEST_X86_NONLOCAL_JUMP", "gNQ1V2vfXDE",
             "lKEN2IebgJ0", "guest_setjmp[]", "guest_longjmp[]",
@@ -307,6 +307,17 @@ def audit(root: Path) -> None:
     ):
         if marker not in blob:
             issues.append("The Order SRT pre-resource synchronization missing: " + marker)
+    srt_impl = (root / "src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp").read_text()
+    for need in ("ORDER1886_SRT_DEPENDENCY_WORKLIST", "ORDER1886_SRT_GVN_SLOT_PARITY",
+                 "ORDER1886_SRT_UNRESOLVED", "const size_t limit = pass_info.pointer_uses.size() + 1"):
+        if need not in srt_impl:
+            issues.append("Missing source-backed Order SRT dependency fix " + need)
+    actual_libs = (root / "src/core/libraries/libs.cpp").read_text()
+    if "BACHATA_SHADOW_PREFER_GUEST_FIOS2" not in actual_libs:
+        issues.append("Early HLE still hijacks Shadow PSARC archive loader")
+    actual_raster = (root / "src/video_core/renderer_vulkan/vk_rasterizer.cpp").read_text()
+    if "BACHATA_SURFACE_FORMAT_TABLE_CHECK" not in actual_raster:
+        issues.append("Unsupported AMD SurfaceFormat combinations still assert")
     # The frequently called PS4 libc _Sin NID requires Dinkumware quadrant ABI.
     libc_overlay = Path(__file__).resolve().parent.parent / "generic/android_libc_compat.cpp"
     libc_text = libc_overlay.read_text()
