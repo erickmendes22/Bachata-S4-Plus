@@ -49,7 +49,12 @@ def audit(root: Path) -> None:
             "MntPoints::MountArchiveBackend(",
             "BACHATA_RELEASE026_MOUNT_ALIAS",
             "MntPoints::MountAlias(std::string_view",
-            "const auto stack = source->backends"),
+            "const auto stack = source->backends",
+            "BACHATA_RELEASE026_SAF_BACKEND",
+            "OpenSafGuestFile(*corrected)"),
+        "src/core/file_sys/backends/saf_fs_backend.cpp": (
+            "BACHATA_RELEASE026_SAF_FD_OPEN",
+            "OpenSafGuestFile(", "::pread(", "BachataSaf::OpenFd("),
         "src/core/file_sys/backends/psarc_fs.cpp": (
             "BIONIC_PSARC_HEADER_INVALID", "BIONIC_PSARC_INDEX_READY",
             "uncompress(", "ReadBlock(", "PsarcBackend::Open("),
@@ -238,6 +243,12 @@ def audit(root: Path) -> None:
                 issues.append("FEX fiber true guest state logic missing: " + marker)
     # Catch CMake duplicate definitions *before* initializing NDK/FEX/cache.
     cmake = (root / "CMakeLists.txt").read_text()
+    if "saf_fs_backend.cpp" not in cmake:
+        issues.append("Release direct SAF guest IFile missing from native core link")
+    bridge = Path(__file__).resolve().parent.parent / "generic/android_saf_bridge.cpp"
+    if not bridge.is_file() or (
+            "BACHATA_RELEASE026_SAF_DIRECT_FD" not in bridge.read_text()):
+        issues.append("Android SAF direct provider fd broker is missing")
     if "android_fex_fiber.cpp" not in cmake:
         issues.append("FEX native fiber HLE absent from native core link")
     if re.search(r"(?m)^\\s*src/sdl_window\\.cpp\\s*$", cmake):
