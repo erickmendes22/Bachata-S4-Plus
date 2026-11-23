@@ -53,8 +53,8 @@ GuestCtypeTables* GetGuestCtypeTables() {
         short mask = 0;
         if (c < 32 || c == 127) mask |= 0x80;                // control
         if (c == ' ') mask |= 0x04;                         // blank
-        if (c >= '\\t' && c <= '\\r') mask |= 0x40;       // whitespace
-        if (c == '\\t') mask |= 0x400;                     // horizontal blank
+        if (c >= 9 && c <= 13) mask |= 0x40;       // whitespace
+        if (c == 9) mask |= 0x400;                     // horizontal blank
         if (c >= 'A' && c <= 'Z') mask |= 0x02;              // upper
         if (c >= 'a' && c <= 'z') mask |= 0x10;              // lower
         if (c >= '0' && c <= '9') mask |= 0x20;              // decimal
