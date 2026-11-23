@@ -36,7 +36,7 @@ def compact_runtime(
     Otherwise a same-name APK install can retain the old extracted root and
     its old GUEST_RUNTIME_BUILD marker even if the APK contains a newer .so.
     """
-    if not re.fullmatch(r"bachata-s4-plus-0\\.2\\.7-bionic-[0-9a-f]{16}", runtime_version):
+    if not re.fullmatch(r"bachata-s4-plus-0\.2\.7-bionic-[0-9a-f]{16}", runtime_version):
         raise ValueError("Bionic runtime name must contain the native ELF digest")
     if not re.fullmatch(r"[0-9a-f]{40}", core_revision):
         raise ValueError("Invalid core source revision for runtime manifest")
@@ -77,12 +77,12 @@ def compact_runtime(
         guest_info["sha256"] = core_sha256
         guest_info["label"] = new_label
         changed_metadata = {
-            GUEST_BUILD_JSON: (json.dumps(guest_info, indent=2, ensure_ascii=False) + "\\n").encode("utf-8"),
+            GUEST_BUILD_JSON: (json.dumps(guest_info, indent=2, ensure_ascii=False) + "\n").encode("utf-8"),
             GUEST_BUILD_TXT: (
-                "variant=built\\n" +
-                f"revision={guest_revision}\\n" +
-                f"sha256={core_sha256}\\n" +
-                f"label={new_label}\\n"
+                "variant=built\n" +
+                f"revision={guest_revision}\n" +
+                f"sha256={core_sha256}\n" +
+                f"label={new_label}\n"
             ).encode("utf-8"),
         }
         for info in z_in.infolist():
