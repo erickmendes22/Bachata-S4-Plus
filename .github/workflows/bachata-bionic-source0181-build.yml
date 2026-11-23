@@ -49,7 +49,10 @@ jobs:
       - name: Validate overlays and native source patch application
         run: |
           set -euo pipefail
-          python3 -m py_compile bionic/generic/*.py bionic/source0181/*.py
+          python3 -m py_compile bionic/generic/*.py bionic/source0181/*.py bionic/apk/*.py
+          # Verify runtimeVersion changes with core SHA, extracted guest marker
+          # tracks core SHA, and extraction manifest hashes match updated files.
+          python3 bionic/apk/test_runtime_identity.py
           # Exercise x86 guest register/RSP/RET fiber transitions on a host mock
           # BEFORE building Android/FEX, to catch missing assembly semantics.
           python3 bionic/source0181/test_fex_fiber.py
@@ -602,6 +605,24 @@ jobs:
             --output out/apk/Bachata-S4Plus-Bionic-unsigned.apk \
             --patched-classes8 out/apk/classes8-bionic.dex \
             --revision "$(cat out/bionic/stage/BIONIC_SOURCE_REVISION.txt)"
+          # Fail packaging (before P36 signing) if the name used by the
+          # Android runtime installer still points at the previously extracted
+          # 9ceb... runtime or is not tied to the actual native ELF digest.
+          python3 - <<'PY'
+          import hashlib, json, zipfile
+          from pathlib import Path
+          apk=Path("out/apk/Bachata-S4Plus-Bionic-unsigned.apk")
+          with zipfile.ZipFile(apk) as z:
+              manifest=json.loads(z.read("assets/runtime/manifest.json"))
+              info=json.loads(z.read("assets/bachata-bionic-build.json"))
+              elf=z.read("lib/arm64-v8a/libbachata_bionic_core.so")
+              expected="bachata-s4-plus-0.2.7-bionic-"+hashlib.sha256(elf).hexdigest()[:16]
+              assert manifest["runtimeVersion"]==expected==info["runtimeVersion"]
+              assert "9ceb09280798" not in manifest["runtimeVersion"]
+              assert info["nativeCoreRevisionMarker"].encode("ascii") in elf
+              assert info["nativeCoreMarker"].encode("ascii") in elf
+          print("BACHATA_NEW_CORE_FORCES_RUNTIME_EXTRACTION",expected)
+          PY
           python3 - <<'PY'
           import zipfile
           with zipfile.ZipFile('out/apk/Bachata-S4Plus-Bionic-unsigned.apk') as z:

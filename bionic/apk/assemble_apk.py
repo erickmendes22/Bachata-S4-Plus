@@ -76,10 +76,22 @@ def main() -> None:
     if not re.fullmatch(r"[0-9a-f]{40}", core_source_revision):
         die("Native core source revision metadata is invalid")
     core_binary = staged["libbachata_bionic_core.so"].read_bytes()
+    core_sha = sha256(core_binary)
+    if args.revision != core_source_revision:
+        die(f"Native source revision mismatch: stage={core_source_revision}, "
+            f"request={args.revision}")
+    # This is the version the Android runtime installer checks before
+    # reusing its extracted directory. The previous packaging script did
+    # not update runtimeVersion, so every new APK reused the old 9ceb...
+    # extracted root and old GUEST_RUNTIME_BUILD name.
+    runtime_version = f"bachata-s4-plus-{BASE_RELEASE}-bionic-{core_sha[:16]}"
+    parity_marker = "BACHATA_CORE_PARITY=20261123-SRT2-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1"
+    revision_marker = f"BACHATA_CORE_REVISION={core_source_revision}"
     for marker in (b"BIONIC_MANAGED_USER_PATH_READY", b"SDL_VULKAN_LIBRARY",
-                   b"Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run"):
+                   b"Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run",
+                   parity_marker.encode("ascii"), revision_marker.encode("ascii")):
         if marker not in core_binary:
-            die(f"Compiled native core is missing required boot integration: {marker!r}")
+            die(f"Compiled native core is missing required current-build integration: {marker!r}")
 
     # Preserve all of the v0.2.7 UI, settings, DEX, drivers, patches,
     # icons and managed glibc runtime; overwrite ONLY compiled native libs
@@ -96,7 +108,9 @@ def main() -> None:
         names = set(original.namelist())
         if not (CRITICAL_PRESERVED | {RUNTIME_ZIP, RUNTIME_MANIFEST}).issubset(names) or NATIVE_MANIFEST not in names:
             die("APK 0.2.7 missing the expected Android frontend files")
-        compact_zip, compact_manifest = compact_runtime(original)
+        compact_zip, compact_manifest = compact_runtime(
+            original, runtime_version=runtime_version,
+            core_revision=core_source_revision, core_sha256=core_sha)
         changed[RUNTIME_ZIP] = compact_zip
         changed[RUNTIME_MANIFEST] = compact_manifest
         original_manifest = json.loads(original.read(NATIVE_MANIFEST))
@@ -122,7 +136,11 @@ def main() -> None:
                 "baseSha256": EXPECTED_BASE_SHA256,
                 "revision": args.revision,
                 "backend": "generic-shadps4-fex-android-bionic",
-                "nativeCoreSha256": sha256(changed[NATIVE_DIR + "libbachata_bionic_core.so"]),
+                "nativeCoreSha256": core_sha,
+                "runtimeVersion": runtime_version,
+                "runtimeExtractionIdentity": "native-core-sha256",
+                "nativeCoreMarker": parity_marker,
+                "nativeCoreRevisionMarker": revision_marker,
                 "nativeCoreSourceRevision": core_source_revision,
                 "legacyFallback": False,
                 "glibcFallback": "025",
@@ -155,6 +173,31 @@ def main() -> None:
             if GLIBC_KEEP not in names_in_runtime or GLIBC_DROP & names_in_runtime:
                 die("Wrong glibc runtime variants in slimmed APK")
         new_runtime_manifest = json.loads(result.read(RUNTIME_MANIFEST))
+        if new_runtime_manifest.get("runtimeVersion") != runtime_version:
+            die("Installer runtimeVersion did not change with native core hash")
+        original_runtime_version = json.loads(original.read(RUNTIME_MANIFEST)).get("runtimeVersion")
+        if original_runtime_version == runtime_version:
+            die("Installer may silently reuse old extracted runtime")
+        with zipfile.ZipFile(io.BytesIO(result.read(RUNTIME_ZIP))) as packaged_runtime:
+            guest_meta = json.loads(packaged_runtime.read("usr/share/bachata/guest-runtime.json"))
+            if (guest_meta.get("revision") != "bionic-" + core_source_revision[:12] or
+                    guest_meta.get("sha256") != core_sha):
+                die("Guest runtime revision metadata was not refreshed")
+            if f"revision=bionic-{core_source_revision[:12]}" not in (
+                    packaged_runtime.read("usr/share/bachata/guest-runtime.txt").decode()):
+                die("Text guest runtime marker still describes the old core")
+            recorded = {x["path"]: x for x in new_runtime_manifest["files"]}
+            for path in ("usr/share/bachata/guest-runtime.json",
+                         "usr/share/bachata/guest-runtime.txt"):
+                entry = recorded.get(path)
+                data = packaged_runtime.read(path)
+                if not entry or entry.get("sha256") != sha256(data) or entry.get("size") != len(data):
+                    die(f"Runtime re-extraction file integrity mismatch: {path}")
+        build_identity = json.loads(result.read("assets/bachata-bionic-build.json"))
+        if (build_identity.get("runtimeVersion") != runtime_version or
+                build_identity.get("nativeCoreSha256") != core_sha or
+                build_identity.get("nativeCoreRevisionMarker") != revision_marker):
+            die("APK build provenance and runtime installation identity disagree")
         all_runtime_paths = {x.get("path") for x in new_runtime_manifest.get("files", [])}
         if GLIBC_KEEP not in all_runtime_paths or GLIBC_DROP & all_runtime_paths:
             die("Wrong glibc variants still referenced by manifest")
@@ -179,6 +222,7 @@ def main() -> None:
            original.read(NATIVE_DIR + "libbachata_native_runtime.so"):
             die("Old native runtime was not replaced")
 
+    print(f"BIONIC_RUNTIME_IDENTITY_VERIFIED: {runtime_version} / {revision_marker}")
     print(f"BIONIC_APK_PRE_SIGN_VALIDATED: {args.output} ({args.output.stat().st_size} bytes)")
     print("Only GitHub Actions may perform apk zipalign, signing and publication.")
 
