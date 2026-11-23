@@ -631,14 +631,14 @@ void GameController::PollState() {
     # pipeline cache loader. Otherwise a rejected walker silently looks valid.
     require_replace(serialized,
                     "static constexpr u32 ShaderMetaVersion = 6u;",
-                    "static constexpr u32 ShaderMetaVersion = 8u;",
+                    "static constexpr u32 ShaderMetaVersion = 9u;",
                     "portable SRT shader metadata cache generation")
     require_replace(serialized,
                     "    info.Deserialize(ar);\n    return true;\n",
                     "    return info.Deserialize(ar);\n",
                     "propagate incompatible SRT cache deserialization")
     result["portedInterfaces"].append(
-        "ShaderMetaVersion 8; invalidate old permanently-zeroed SRT walkers and x86 JIT")
+        "ShaderMetaVersion 9; transient guest-source page tracking plus uniform SRT operands")
 
     # The 0.2.6 release ELF owns each copied DCB/CCB pair; upstream 0.18.1
     # instead aborts when the shared 2-MiB queue staging space is exhausted.
@@ -707,6 +707,12 @@ void GameController::PollState() {
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
+
+    from port_release026_srt_page_readback import apply as apply_srt_gpu_pages
+    result["release026GpuWrittenSrtPageReadback"] = apply_srt_gpu_pages(root)
+    result["portedInterfaces"].append(
+        "Release 0.2.6 GPU-written SRT source page capture; mapped page readback "
+        "with GPU fence and up to four dependent descriptor refresh passes")
 
     # Working official Release 0.2.6/0.2.7 does not parse PSARC here.
     # The former generic parser was a speculative divergence; remove it
