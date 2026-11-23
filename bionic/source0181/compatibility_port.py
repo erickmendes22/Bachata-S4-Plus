@@ -664,14 +664,25 @@ void GameController::PollState() {
     # The app's 0.2.7 runtime template and upstream's pinned Git SHA are not
     # the revision of the rebuilt Bionic native core. Emit an explicit marker
     # from the *actual* emulated process so each diagnostic proves what ran.
+    # Every native core revision must carry its *real* source commit in the
+    # guest-visible log. This is also verified against the packaged ELF by
+    # assemble_apk.py; never reuse a fixed BACHATA_CORE_PARITY marker.
+    repo_dir = Path(__file__).resolve().parents[2]
+    source_revision = subprocess.check_output(
+        ["git", "-C", str(repo_dir), "rev-parse", "HEAD"], text=True
+    ).strip()
+    if len(source_revision) != 40 or any(ch not in "0123456789abcdef" for ch in source_revision):
+        raise RuntimeError("Invalid Bionic native core source Git revision")
+    parity_marker = "BACHATA_CORE_PARITY=20261123-SRT2-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1"
+    revision_marker = "BACHATA_CORE_REVISION=" + source_revision
     emulator = root / "src/emulator.cpp"
     before = '    LOG_INFO(Loader, "Revision {}", Common::g_scm_rev);\n'
     require_replace(
         emulator,
         before,
-        before + '    LOG_INFO(Loader, '
-        '"BACHATA_CORE_PARITY=20261123-SRT2-CTYPE3-CE1-OWNEDCB");\n',
-        "native core binary parity marker")
+        before + f'    LOG_INFO(Loader, "{parity_marker}");\n'
+               + f'    LOG_INFO(Loader, "{revision_marker}");\n',
+        "revision-accurate native core parity and source markers")
 
     from port_release026_cmask_owner import apply as apply_meta_owners
     result["release026CmaskOwnerParity"] = apply_meta_owners(root)
