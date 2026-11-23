@@ -119,14 +119,14 @@ def patch_h(s: str) -> str:
     s=once(s,
         """    void MarkAsMaybeDirty(ImageId image_id, Image& image);
 
-    /// Removes the image and any image views/surface metas that reference it.""",
+    /// Removes the image and any views/surface metas that reference it.""",
         """    void MarkAsMaybeDirty(ImageId image_id, Image& image);
 
     // Metadata ownership follows image UID, not merely an address or slot.
     void RegisterMeta(VAddr address, MetaDataInfo info);
     void UnregisterMeta(VAddr address, u64 owner_uid);
 
-    /// Removes the image and any image views/surface metas that reference it.""",
+    /// Removes the image and any views/surface metas that reference it.""",
         "register/unregister declaration")
     # MetaDataInfo is currently defined at end of class. Forward-declare
     # before RegisterMeta; the method parameter may have an incomplete type.
