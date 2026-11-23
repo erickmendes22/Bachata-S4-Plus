@@ -73,6 +73,13 @@ SRC="$FEX_DIR" OUT="$FEX_BUILD" TUNE_CPU=cortex-a78 \
 # APK-stage .so files alone are NOT enough: both the shared libraries and
 # their corresponding FFmpeg include/ trees must exist in deps/prefix.
 repair_ffmpeg_prefix() {
+  # The native cache contract now owns complete FFmpeg + SDL3 prefix
+  # restoration (headers, shared libraries and versioned SONAMEs).
+  # Run it first; do not fork another copy of the restore algorithm.
+  if [[ -f "$ROOT/bionic/source0181/native_cache.sh" ]]; then
+    NDK="$NDK" bash "$ROOT/bionic/source0181/native_cache.sh" restore_deps
+    return
+  fi
   local prefix="$DEPS/prefix" so
   local headers=(libavformat/avformat.h libavcodec/avcodec.h
                  libavutil/avutil.h libavfilter/avfilter.h
