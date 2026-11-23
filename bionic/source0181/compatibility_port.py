@@ -726,6 +726,17 @@ void GameController::PollState() {
         "Release SAF broker direct fd backed IFile, independent positional reads, "
         "case-insensitive fallback on actual game files; no unnecessary full copy")
 
+    # The retained FEX 0.16 Module/Elf loader still reopened every binary
+    # through host filesystem paths. The verified Release and modern 0.18.1
+    # both accept a moved IFile; preserve this for mounted app0/SAF modules
+    # without changing ARM64 guest initialization or relocation semantics.
+    from port_release026_ifile_loader import apply as apply_release026_ifile
+    result["release026GuestIFileLoader"] = apply_release026_ifile(root)
+    result["portedInterfaces"].append(
+        "Release guest IFile-based ELF/Module/Linker boot; SAF game modules "
+        "own their fd and host-only system modules use HostFile IFile")
+
+
     # CUSA00552 crashes before first frame at x86 RIP 0x800e1e2d0 and
     # host SIGSEGV reading 0x20. The current host PC is JIT-generated code,
     # so dladdr cannot name the game module. Symbolize the GUEST RIP against
