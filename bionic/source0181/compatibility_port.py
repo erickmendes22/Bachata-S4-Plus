@@ -700,6 +700,17 @@ void GameController::PollState() {
         "PSARC zlib read-only IBackend: actual archive TOC, lazy block reads, "
         "valid mount/unmount lifecycle, SAF-backed source, no fake /app0 mount")
 
+    # Official Release 0.2.6 AND 0.2.7 share the same authentic ELF
+    # f4ab401c...; its FIOS2 mount ALWAYS uses MountAlias("/app0", prefix).
+    # Our earlier PSARC-only attempt was an unsupported assumption: restore
+    # the working guest-to-guest alias while keeping streaming PSARC only
+    # when there is no mounted /app0 backend to share.
+    from port_release026_mount_alias import apply as apply_release026_alias
+    result["release026Fios2MountAlias"] = apply_release026_alias(root)
+    result["portedInterfaces"].append(
+        "Official 0.2.6/0.2.7 FIOS2 MountAlias guest backend parity: "
+        "SAF/updates/mods preserved; archive reader is fallback only")
+
     # CUSA00552 crashes before first frame at x86 RIP 0x800e1e2d0 and
     # host SIGSEGV reading 0x20. The current host PC is JIT-generated code,
     # so dladdr cannot name the game module. Symbolize the GUEST RIP against
