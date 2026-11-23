@@ -104,6 +104,10 @@ def audit(root: Path) -> None:
         "src/video_core/texture_cache/texture_cache.cpp": (
             "BACHATA_RELEASE026_META_OWNER_UID", "RegisterMeta(cmask_addr",
             "UnregisterMeta(meta_info.cmask_addr, image.image_uid)"),
+        "src/video_core/buffer_cache/buffer_cache.cpp": (
+            "BACHATA_RELEASE026_CMASK_EXPANDED",
+            "0xDDDDDDDDu", "0xEEEEEEEEu",
+            "texture_cache.ResolveCMaskOwner(device_addr)"),
         "src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp": (
             "std::vector<u32> portable_code(", "if (!walker_func) {",
             "ShaderMetaVersion = 7u;", "return info.Deserialize(ar);"),
