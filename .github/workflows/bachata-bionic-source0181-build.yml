@@ -60,6 +60,17 @@ jobs:
           python3 bionic/source0181/test_psarc_reader.py
           # Compile actual native SAF backend and validate independent BSF1 fds.
           python3 bionic/source0181/test_saf_backend.py
+          # Exercise the actual BSF1 broker code: a FIOS mount alias must
+          # resolve to /app0 for remote Android DocumentsProvider files.
+          c++ -std=c++20 -O1 -Wall -Wextra -Werror \
+            -I bionic/generic bionic/generic/android_saf_bridge.cpp \
+            bionic/generic/test_saf_alias.cpp -o /tmp/bachata-saf-alias-test
+          mkdir -p /tmp/bachata-saf-alias-root
+          printf 'TEST' > /tmp/bachata-saf-alias-root/resource.bin
+          dd if=/dev/zero bs=60 count=1 status=none >> /tmp/bachata-saf-alias-root/resource.bin
+          /tmp/bachata-saf-alias-test \
+            /tmp/bachata-saf-alias-root/resource.bin \
+            /tmp/bachata-saf-alias-root
           bash -n bionic/generic/build-generic.sh
           bash -n bionic/source0181/build_host_protoc.sh
           bash -n bionic/source0181/native_cache.sh
