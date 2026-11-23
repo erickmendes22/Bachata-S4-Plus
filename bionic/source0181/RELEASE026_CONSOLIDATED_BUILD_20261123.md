@@ -67,3 +67,38 @@ was using upstream-2026 `profile.support_bda` absent in the pinned
 uses that exact API. A redundant `u8 > 256` comparison was also
 removed. The fast source/ABI recheck passed in run `45206833645`.
 No gameplay claim is made by a successful compile.
+
+
+## Critical FEX HLE gap: real libSceFiber guest x86 context switching
+
+- The test `E35154E3` was run on the actual 20261123 core. Among its 823
+  `ENOSYS (38)` calls, 801 were `libSceFiber` functions
+  `sceFiberInitialize`, `sceFiberOptParamInitialize`, `sceFiberRun`,
+  `sceFiberGetInfo` and `sceFiberRename`. This behavior was not
+  affected by qsort, _Log, CMask or the independent CE FIFO.
+- Pinned shadPS4 0.18.1 registers `libSceFiber.sprx` ONLY under
+  `ARCH_X86_64`; ARM64/FEX therefore fell through to generated
+  `UnsupportedHleCallAdapter` NIDs. This is an **actual structural
+  HLE registration bug**, independent of any device GPU generation.
+- New `bionic/generic/android_fex_fiber.cpp` supplies all **15 PS4
+  libSceFiber NIDs**, including Run/Switch/ReturnToThread, by saving and
+  restoring the FEX guest x86 GPR/XMM/RSP state at the syscall/RET boundary,
+  not calling x86 assembler from the ARM64 host and not faking successes.
+  Verifies guest memory ranges, alignment and fiber state. Wired into
+  `ModulesToLoad` under `SHADPS4_ENABLE_FEX_GUEST_CPU` and the actual
+  CMake target. Desktop x86 implementation is unchanged.
+- Additional invoked `libc` NIDs `strcasecmp`, `strncasecmp`,
+  `strstr` and `strspn` are implemented with validation of the game
+  guest's memory before dereferencing it.
+- A compile-and-run host ABI test `test_fex_fiber.py` is mandatory
+  in the fast CI preflight. It simulates a new fiber entry, a Switch
+  to a second fiber, its return to the first suspended context, and
+  ReturnToThread while checking the original guest callee-saved
+  registers and user-visible return argument.
+- **Successful** fast source/ABI audit:
+  `45217475240`. THIS IS NOT A DEVICE GAMEPLAY VALIDATION.
+
+Two newly tested games on Snapdragon 8 Gen 3 were reported not
+starting, but their CUSA IDs and diagnostics have not been supplied in
+this conversation. Do not attribute their failure to fiber, SRT, or
+Turnip without that evidence.
