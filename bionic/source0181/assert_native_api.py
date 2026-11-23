@@ -45,26 +45,19 @@ def audit(root: Path) -> None:
                                     "GetHostFile() const",
                                     "bool MountAlias(std::string_view source_guest"),
         "src/core/file_sys/fs.cpp": (
-            "BACHATA_FIOS2_REAL_PSARC_MOUNT",
-            "MntPoints::MountArchiveBackend(",
             "BACHATA_RELEASE026_MOUNT_ALIAS",
             "MntPoints::MountAlias(std::string_view",
             "const auto stack = source->backends",
             "BachataSaf::RegisterGuestAlias(original, alias)",
             "BACHATA_RELEASE026_SAF_BACKEND",
-            "OpenSafGuestFile(*corrected)"),
+            "return OpenSafGuestFile(*corrected)"),
         "src/core/file_sys/backends/saf_fs_backend.cpp": (
             "BACHATA_RELEASE026_SAF_FD_OPEN",
             "OpenSafGuestFile(", "::pread(", "BachataSaf::OpenFd("),
-        "src/core/file_sys/backends/psarc_fs.cpp": (
-            "BIONIC_PSARC_HEADER_INVALID", "BIONIC_PSARC_INDEX_READY",
-            "uncompress(", "ReadBlock(", "PsarcBackend::Open("),
         "src/core/libraries/fios2/fios2.cpp": (
-            "BIONIC_PSARC_MOUNT_READY", "BIONIC_PSARC_ARCHIVE_UNAVAILABLE",
-            "mnt->MountArchiveBackend(backend,guest_mount)",
             "BACHATA_FIOS2_RELEASE_ALIAS_READY",
-            'mnt->MountAlias("/app0", guest_mount)',
-            "BACHATA_FIOS2_RELEASE_UNMOUNT"),
+            'mnt->MountAlias("/app0", alias)',
+            "BACHATA_RELEASE026_FIOS_ALIAS_SOURCE_MISSING"),
         "src/core/memory.cpp": ("file->GetHostFile()", "file->GetSize()"),
         "src/core/libraries/videoout/driver.cpp": ("BIONIC_PRESENT_IDLE_SKIP",
                                                     "PrepareBlankFrame(true)"),
@@ -160,7 +153,11 @@ def audit(root: Path) -> None:
         "src/core/libraries/fios2/fios2.cpp": (
             'mnt->Mount(app0_host, guest_mount, true);',
             'Map the FIOS mount point to the same host folder',
-            '*handle = 1; // non-zero fake handle'),
+            "BIONIC_PSARC_MOUNT_READY",
+            "MountArchiveBackend(",
+            "GetHostPath(\"/app0\")"),
+        "src/core/file_sys/fs.cpp": (
+            'if (auto remote = BachataSaf::Resolve(*corrected))',),
         "src/core/libraries/libs.cpp": ('"core/libraries/np/np_commerce.h"',),
         "src/core/libraries/kernel/file_system.cpp": ("deci_tty6_device.h",),
         "src/core/memory.cpp": ("file->f.",),
@@ -244,6 +241,8 @@ def audit(root: Path) -> None:
                 issues.append("FEX fiber true guest state logic missing: " + marker)
     # Catch CMake duplicate definitions *before* initializing NDK/FEX/cache.
     cmake = (root / "CMakeLists.txt").read_text()
+    if "psarc_fs.cpp" in cmake:
+        issues.append("Speculative PSARC engine still linked alongside verified Release MountAlias")
     if "saf_fs_backend.cpp" not in cmake:
         issues.append("Release direct SAF guest IFile missing from native core link")
     bridge = Path(__file__).resolve().parent.parent / "generic/android_saf_bridge.cpp"
