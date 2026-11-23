@@ -93,7 +93,10 @@ def audit(root: Path) -> None:
         "src/video_core/buffer_cache/buffer_cache.cpp": (
             "BACHATA_RELEASE026_SRT_GPU_RANGE_TRACKING",
             "gpu_modified_ranges.Intersects(addr,size)",
-            "srt_source_pages.Add(page & ~u64{4095},4096)"),
+            "srt_source_pages.Add(page & ~u64{4095},4096)",
+            "BACHATA_RELEASE026_CMASK_EXPANDED",
+            "0xDDDDDDDDu", "0xEEEEEEEEu",
+            "texture_cache.ResolveCMaskOwner(device_addr)"),
         "src/video_core/renderer_vulkan/vk_rasterizer.cpp": (
             "BACHATA_RELEASE026_SRT_GPU_PAGE_READBACK",
             "ReadBackGpuWrittenSrtSources(*stage)",
@@ -160,10 +163,6 @@ def audit(root: Path) -> None:
             "UnregisterMeta(meta_info.cmask_addr, image.image_uid)",
             "telemetry.live_budget",
             "GetGpuMemoryTelemetry()"),
-        "src/video_core/buffer_cache/buffer_cache.cpp": (
-            "BACHATA_RELEASE026_CMASK_EXPANDED",
-            "0xDDDDDDDDu", "0xEEEEEEEEu",
-            "texture_cache.ResolveCMaskOwner(device_addr)"),
         "src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp": (
             "std::vector<u32> portable_code(", "if (!walker_func) {",
             "ShaderMetaVersion = 9u;", "return info.Deserialize(ar);"),
