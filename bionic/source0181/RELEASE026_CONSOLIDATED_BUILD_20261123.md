@@ -38,3 +38,20 @@ Release 0.2.6 parity gaps still include CMask ownership, BufferCache
 GPU dirty tracking and readback, Vulkan memory budgeting, SAF broker
 semantics, and remaining FEX libc/HLE aliases. These remain unverified
 and must not be reported as fixed by this build.
+
+## Coherent CMask ownership + metadata-buffer alias correction
+
+- Source port `port_release026_cmask_owner.py` records current
+  `ImageId` and `image_uid` for CMask, FMask and HTile, transfers owner
+  on address reuse and invalidates the prior owner's clear mask. Metadata
+  removal is owner-checked; the `IsMeta`, `IsMetaCleared`, `ClearMeta`
+  and `TouchMeta` operations reject stale/unregistered owners and invalid
+  slice indices. A stale image cannot erase another live image’s CMask.
+- Real `BufferCache::SynchronizeMemoryFromImage` CMask path now fills the
+  alias with expanded sample-dependent patterns, matching modern shadPS4:
+  samples=1/8 `0xFFFFFFFF`, samples=2 `0xDDDDDDDD`, samples=4
+  `0xEEEEEEEE`. Unknown sample counts fail instead of fabricated bits.
+- All modifications are applied to the pinned 0.18.1 source with
+  fail-closed assertions and coherent source API checks in preflight.
+- Source integration CI passed at run `45204246272` after replacing
+  the only initial strict-anchor mismatch; none of this proves gameplay.
