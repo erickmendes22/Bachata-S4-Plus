@@ -139,7 +139,9 @@ def audit(root: Path) -> None:
             "BACHATA_CORE_PARITY=20261123-SRT2-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1",
             "BACHATA_CORE_REVISION="),
         "src/imgui/big_picture/big_picture.cpp": ("emulator->Restart(runEbootPath)",),
-        "src/core/signals.cpp": ("BIONIC_HOST_FAULT_MODULE",),
+        "src/core/signals.cpp": ("BIONIC_HOST_FAULT_MODULE",
+                                 "BIONIC_GUEST_CRASH_MODULE",
+                                 "FindByAddress(guest_rip)",),
     }
     forbidden = {
         "src/core/libraries/fios2/fios2.cpp": (
