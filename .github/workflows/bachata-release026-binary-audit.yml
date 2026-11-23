@@ -44,6 +44,33 @@ jobs:
           PY
           nm -D -C --defined-only release026-native.so > release026-symbols.txt
           echo 'BACHATA_RELEASE026_AUTHENTIC_BINARY_SHA_VERIFIED'
+          # The previous parity report claimed 3548cb... was the 0.2.6
+          # working binary. It is NOT: the official 0.2.6 is f4ab401c...
+          # Inspect both Release 0.2.6 and 0.2.7 to avoid conflating them.
+          curl --retry 3 --retry-delay 2 -fL \
+            https://github.com/erickmendes22/Bachata-S4-Plus/releases/download/0.2.7/Bachata-S4-Plus-v0.2.7.apk \
+            -o release027.apk
+          python3 - <<'PY'
+          import hashlib,zipfile
+          from pathlib import Path
+          apk=Path("release027.apk")
+          with zipfile.ZipFile(apk) as z:
+              natives=[f for f in z.namelist() if f.endswith("lib/arm64-v8a/libbachata_native_runtime.so")]
+              assert len(natives)==1,natives
+              elf=z.read(natives[0])
+              sha=hashlib.sha256(elf).hexdigest()
+              Path("release027-native.so").write_bytes(elf)
+              Path("release027-info.txt").write_text(
+                  f"asset=0.2.7/Bachata-S4-Plus-v0.2.7.apk\n"
+                  f"apk_sha256={hashlib.sha256(apk.read_bytes()).hexdigest()}\n"
+                  f"native_entry={natives[0]}\n"
+                  f"native_sha256={sha}\n"
+                  f"native_size={len(elf)}\n"
+              )
+              print(Path("release027-info.txt").read_text())
+          PY
+          nm -D -C --defined-only release027-native.so > release027-symbols.txt
+          echo 'BACHATA_RELEASE_026_027_PAIR_BINARY_VERIFIED'
       - uses: actions/upload-artifact@v4
         with:
           name: Bachata-S4Plus-Release026-Authentic-Native-ELF
@@ -51,5 +78,8 @@ jobs:
             /tmp/bachata-release026/release026-native.so
             /tmp/bachata-release026/release026-info.txt
             /tmp/bachata-release026/release026-symbols.txt
+            /tmp/bachata-release026/release027-native.so
+            /tmp/bachata-release026/release027-info.txt
+            /tmp/bachata-release026/release027-symbols.txt
           compression-level: 5
           retention-days: 7
