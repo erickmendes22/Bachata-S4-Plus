@@ -91,12 +91,14 @@ def apply(root: Path) -> dict:
         '    if (srt_sync) srt_sync(info); // Refresh GPU-written sources before cache permutation.\n'
         '    auto spec = Shader::StageSpecialization(info, runtime_info, profile, binding);',
         "already-compiled shader specialization barrier")
+    # Anchor to the first GPU binding in Rasterizer::Rasterizer: upstream
+    # and Android grafts differ in initialization-list formatting.
     data[raster] = only(data[raster],
-        '       guest_markers_enabled{EmulatorSettings.IsVkGuestMarkersEnabled()} {\n',
-        '       guest_markers_enabled{EmulatorSettings.IsVkGuestMarkersEnabled()} {\n'
+        '    if (!EmulatorSettings.IsNullGPU()) {\n',
         '    pipeline_cache.SetSrtSync([this](Shader::Info& info) {\n'
         '        ReadBackGpuWrittenSrtSources(info);\n'
-        '    });\n',
+        '    });\n'
+        '    if (!EmulatorSettings.IsNullGPU()) {\n',
         "registered callback before GPU thread starts")
     for p, content in data.items():
         p.write_text(content)
