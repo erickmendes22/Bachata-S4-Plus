@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <boost/container/flat_map.hpp>
 #include <queue>
@@ -237,7 +238,7 @@ void RunSrtWalker(SrtWalkerCode code, const u32* user_data, u32* flat) {
                 u64 next{};
                 const u64 address = cur + u32(off << 2);
                 if (!TryReadGuest(address, flat, next)) {
-                    std::atomic_ref<u32>(ops[i]).fetch_or(SrtZeroed, std::memory_order_relaxed);
+                    /* Revalidate changing guest SRT memory every dispatch; do not permanently poison opcode. */
                     LOG_WARNING(Render_Recompiler,
                                 "BIONIC_PORTABLE_SRT_BAD_POINTER: opcode={} address={:#x}",
                                 i / 3, address);
@@ -257,7 +258,7 @@ void RunSrtWalker(SrtWalkerCode code, const u32* user_data, u32* flat) {
                 u32 value{};
                 const u64 address = cur + u32(off << 2);
                 if (!TryReadGuest(address, flat, value)) {
-                    std::atomic_ref<u32>(ops[i]).fetch_or(SrtZeroed, std::memory_order_relaxed);
+                    /* Revalidate changing guest SRT memory every dispatch; do not permanently poison opcode. */
                     LOG_WARNING(Render_Recompiler,
                                 "BIONIC_PORTABLE_SRT_BAD_READ: opcode={} address={:#x}",
                                 i / 3, address);
@@ -467,9 +468,80 @@ static bool IsAllowedOffsetInstruction(const IR::Inst* inst) {
     }
 }
 
+// RELEASE026_SRT_UNIFORM_OFFSET_PROOF: A guest ReadLane may be evaluated
+// on the CPU only for a wave-uniform value. Never guess a Phi predecessor.
+static bool IsUniformSrtSource(const IR::Value& v, std::unordered_set<IR::Inst*>& active,
+                               unsigned depth = 0) {
+    if (depth > 64) return false;
+    if (v.IsImmediate()) return true;
+    auto* inst = v.TryInst();
+    if (!inst || !active.insert(inst).second) return false;
+    bool uniform = false;
+    switch (inst->GetOpcode()) {
+    case IR::Opcode::GetUserData:
+        uniform = true;
+        break;
+    case IR::Opcode::Phi: {
+        uniform = inst->NumArgs() > 0;
+        if (uniform) {
+            const auto first = inst->Arg(0);
+            for (size_t i = 1; uniform && i < inst->NumArgs(); ++i)
+                uniform = inst->Arg(i) == first;
+            if (uniform) uniform = IsUniformSrtSource(first, active, depth + 1);
+        }
+        break;
+    }
+    case IR::Opcode::BitCastU32F32:
+    case IR::Opcode::BitCastF32U32:
+    case IR::Opcode::BitwiseNot32:
+        uniform = IsUniformSrtSource(inst->Arg(0), active, depth + 1);
+        break;
+    case IR::Opcode::IAdd32:
+    case IR::Opcode::ISub32:
+    case IR::Opcode::IMul32:
+    case IR::Opcode::ShiftLeftLogical32:
+    case IR::Opcode::ShiftRightLogical32:
+    case IR::Opcode::BitwiseAnd32:
+    case IR::Opcode::BitwiseOr32:
+    case IR::Opcode::BitwiseXor32:
+    case IR::Opcode::UMin32:
+    case IR::Opcode::UMax32:
+    case IR::Opcode::BitFieldUExtract:
+        uniform = true;
+        for (size_t i = 0; uniform && i < inst->NumArgs(); ++i)
+            uniform = IsUniformSrtSource(inst->Arg(i), active, depth + 1);
+        break;
+    default:
+        break; // Vector-register and lane-dependent values remain GPU work.
+    }
+    active.erase(inst);
+    return uniform;
+}
+
 static bool ComputeOffset(Code& c, PassInfo& pass_info, const IR::Value& off_dw) {
     auto inst = off_dw.Inst();
     switch (inst->GetOpcode()) {
+    case IR::Opcode::Phi: {
+        if (inst->NumArgs() == 0) return false;
+        const auto first = inst->Arg(0);
+        for (size_t i = 1; i < inst->NumArgs(); ++i)
+            if (inst->Arg(i) != first) return false;
+        std::unordered_set<IR::Inst*> active{inst};
+        if (!IsUniformSrtSource(first, active)) return false;
+        return EmitOperand(c, pass_info, first);
+    }
+    case IR::Opcode::ReadFirstLane:
+    case IR::Opcode::ReadLane: {
+        std::unordered_set<IR::Inst*> active{inst};
+        if (!IsUniformSrtSource(inst->Arg(0), active)) {
+            LOG_WARNING(Render_Recompiler, "RELEASE026_SRT_NONUNIFORM_LANE_REQUIRES_GPU");
+            return false; // no arbitrary predecessor or zero offset
+        }
+        return EmitOperand(c, pass_info, inst->Arg(0));
+    }
+    case IR::Opcode::BitCastU32F32:
+    case IR::Opcode::BitCastF32U32:
+        return EmitOperand(c, pass_info, inst->Arg(0));
     case IR::Opcode::GetUserData:
         Emit(c, SrtOp::LoadFlat, static_cast<u32>(inst->Arg(0).ScalarReg()));
         return true;

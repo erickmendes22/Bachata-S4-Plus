@@ -623,7 +623,7 @@ void GameController::PollState() {
                     "        ar.Advance(walker_func_size);",
                     "deserialization of incompatible x86 pipeline cache")
     result["portedInterfaces"].append(
-        "Full portable ARM64 SRT resource flattening and VMM-validated reads; "
+        "Portable ARM64 SRT with proven-uniform Phi/ReadLane and VMM-validated reads; "
         "legacy x86 pipeline cache rejected")
 
     # Version 6 persisted host x86 code for SRT walkers. Force a new metadata
@@ -631,14 +631,14 @@ void GameController::PollState() {
     # pipeline cache loader. Otherwise a rejected walker silently looks valid.
     require_replace(serialized,
                     "static constexpr u32 ShaderMetaVersion = 6u;",
-                    "static constexpr u32 ShaderMetaVersion = 7u;",
+                    "static constexpr u32 ShaderMetaVersion = 8u;",
                     "portable SRT shader metadata cache generation")
     require_replace(serialized,
                     "    info.Deserialize(ar);\n    return true;\n",
                     "    return info.Deserialize(ar);\n",
                     "propagate incompatible SRT cache deserialization")
     result["portedInterfaces"].append(
-        "ShaderMetaVersion 7; reject stale x86 SRT metadata and recompile safely")
+        "ShaderMetaVersion 8; invalidate old permanently-zeroed SRT walkers and x86 JIT")
 
     # The 0.2.6 release ELF owns each copied DCB/CCB pair; upstream 0.18.1
     # instead aborts when the shared 2-MiB queue staging space is exhausted.
@@ -673,7 +673,7 @@ void GameController::PollState() {
     ).strip()
     if len(source_revision) != 40 or any(ch not in "0123456789abcdef" for ch in source_revision):
         raise RuntimeError("Invalid Bionic native core source Git revision")
-    parity_marker = "BACHATA_CORE_PARITY=20261123-SRT2-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1-RELEASEFIOS2-SAFDIRECT2"
+    parity_marker = "BACHATA_CORE_PARITY=20261123-SRT3-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1-RELEASEFIOS2-SAFDIRECT2-GPUCLAMP1-BUDGET1-RCSNAP1"
     revision_marker = "BACHATA_CORE_REVISION=" + source_revision
     emulator = root / "src/emulator.cpp"
     before = '    LOG_INFO(Loader, "Revision {}", Common::g_scm_rev);\n'
@@ -689,6 +689,24 @@ void GameController::PollState() {
     result["portedInterfaces"].append(
         "Release 0.2.6 metadata: CMask/FMask/HTile live owner UID "
         "validation, address reuse and clear-mask preservation")
+
+    from port_release026_gpu_range import apply as apply_gpu_range
+    result["release026GpuMappedRange"] = apply_gpu_range(root)
+    result["portedInterfaces"].append(
+        "PS4 40-bit GPU ClampGpuRangeSize, mapped VMA boundary validation "
+        "for oversized guest buffer ranges")
+
+    from port_release026_gpu_live_budget import apply as apply_gpu_live_budget
+    result["release026LiveGpuMemoryBudget"] = apply_gpu_live_budget(root)
+    result["portedInterfaces"].append(
+        "Release live Vulkan memory budget and VMA usage telemetry; texture GC "
+        "adjusts to actual Android memory pressure")
+
+    from port_release026_readconst_snapshot import apply as apply_readconst_snapshot
+    result["release026ReadConstSnapshot"] = apply_readconst_snapshot(root)
+    result["portedInterfaces"].append(
+        "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
+        "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
 
     # Working official Release 0.2.6/0.2.7 does not parse PSARC here.
     # The former generic parser was a speculative divergence; remove it

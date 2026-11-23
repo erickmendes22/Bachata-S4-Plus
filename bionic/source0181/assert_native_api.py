@@ -58,7 +58,9 @@ def audit(root: Path) -> None:
             "BACHATA_FIOS2_RELEASE_ALIAS_READY",
             'mnt->MountAlias("/app0", alias)',
             "BACHATA_RELEASE026_FIOS_ALIAS_SOURCE_MISSING"),
-        "src/core/memory.cpp": ("file->GetHostFile()", "file->GetSize()"),
+        "src/core/memory.cpp": ("file->GetHostFile()", "file->GetSize()",
+                                 "BACHATA_RELEASE026_GPU_RANGE_CLAMP",
+                                 "ClampGpuRangeSize(VAddr address, u64 requested)"),
         "src/core/libraries/videoout/driver.cpp": ("BIONIC_PRESENT_IDLE_SKIP",
                                                     "PrepareBlankFrame(true)"),
         "src/core/libraries/videoout/driver.h": ("bool SubmitFlip(VideoOutPort*",),
@@ -78,15 +80,24 @@ def audit(root: Path) -> None:
         "src/video_core/renderer_vulkan/vk_instance.h": ("IsShaderSubgroupClockSupported",
                                                          "IsMultisampleStorageImageSupported",
                                                          "IsImageViewMinLodSupported",
-                                                         "GetMaxSamplerAllocationCount"),
-        "src/video_core/renderer_vulkan/vk_instance.cpp": ("BIONIC_VULKAN_DEVICE",),
+                                                         "GetMaxSamplerAllocationCount",
+                                                         "GetLiveGpuMemoryBudget() const",
+                                                         "GetGpuMemoryTelemetry() const"),
+        "src/video_core/renderer_vulkan/vk_instance.cpp": ("BIONIC_VULKAN_DEVICE",
+                                                          "BACHATA_RELEASE026_GPU_LIVE_BUDGET",
+                                                          "vmaGetHeapBudgets("),
+        "src/video_core/renderer_vulkan/vk_rasterizer.cpp": (
+            "BACHATA_RELEASE026_READCONST_SNAPSHOT",
+            "MakeReadConstSnapshot(", "desc.used_as_readconst",
+            "!buffer_cache.IsRegionGpuModified(",
+            "scheduler.DeferOperation("),
         "src/video_core/renderer_vulkan/vk_platform.cpp": (
             "BIONIC_VULKAN_CUSTOM_BRIDGE_READY", "BIONIC_VULKAN_CUSTOM_REQUIRED"),
         "src/common/elf_info.h": ("GetNpCommIds()", "GetSplashPath()"),
         "src/imgui/imgui_texture.h": ("DecodePngFile(",),
         "src/common/logging/log.cpp": ("void Terminate() {", "std::current_exception()",
                                       "std::quick_exit(", "TERMINATE_WITH_UNKNOWN_EXCEPTION"),
-        "src/core/memory.h": ("System = 9,",),
+        "src/core/memory.h": ("System = 9,", "u64 ClampGpuRangeSize("),
         "src/core/libraries/kernel/memory.h": (
             "s32 PS4_SYSV_ABI sceKernelMapNamedSystemFlexibleMemory(",),
         "src/core/libraries/kernel/memory.cpp": (
@@ -94,6 +105,9 @@ def audit(root: Path) -> None:
             "Core::VMAType::System",
             'LIB_FUNCTION("kc+LEEIYakc", "libkernel", 1, "libkernel", sceKernelMapNamedSystemFlexibleMemory);'),
         "src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp": (
+            "RELEASE026_SRT_UNIFORM_OFFSET_PROOF",
+            "RELEASE026_SRT_NONUNIFORM_LANE_REQUIRES_GPU",
+            "IR::Opcode::Phi", "IR::Opcode::ReadLane",
             "BIONIC_PORTABLE_SRT_GUEST_VMM", "BIONIC_PORTABLE_SRT_BAD_POINTER",
             "BIONIC_PORTABLE_SRT_BAD_READ", "TryReadGuest(",
             "GenerateSrtProgram(program.info, pass_info);",
@@ -101,6 +115,10 @@ def audit(root: Path) -> None:
             "BACHATA_SRT_RUNTIME_ARRAY_5624", "PrepareSrtReadArrays",
             "IR::Opcode::ReadConstArray"),
         "src/shader_recompiler/ir/passes/srt.h": ("SrtWalkerCode", "RunSrtWalker("),
+        "src/shader_recompiler/resource.h": ("bool used_as_readconst{};",),
+        "src/shader_recompiler/ir/passes/resource_patching_pass.cpp": (
+            "buffer.used_as_readconst |= desc.used_as_readconst;",
+            ".used_as_readconst = inst.GetOpcode() == IR::Opcode::ReadConstBuffer"),
         "src/shader_recompiler/ir/opcodes.inc": ("OPCODE(ReadConstArray,",),
         "src/shader_recompiler/params.h": ("FindSrtPointer(", "ShaderInputUsageSlot"),
         "src/video_core/amdgpu/regs_shader.h": ("ReadShaderResourceTable(",),
@@ -123,14 +141,16 @@ def audit(root: Path) -> None:
             "owner_uid{}", "num_samples = 1"),
         "src/video_core/texture_cache/texture_cache.cpp": (
             "BACHATA_RELEASE026_META_OWNER_UID", "RegisterMeta(cmask_addr",
-            "UnregisterMeta(meta_info.cmask_addr, image.image_uid)"),
+            "UnregisterMeta(meta_info.cmask_addr, image.image_uid)",
+            "telemetry.live_budget",
+            "GetGpuMemoryTelemetry()"),
         "src/video_core/buffer_cache/buffer_cache.cpp": (
             "BACHATA_RELEASE026_CMASK_EXPANDED",
             "0xDDDDDDDDu", "0xEEEEEEEEu",
             "texture_cache.ResolveCMaskOwner(device_addr)"),
         "src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp": (
             "std::vector<u32> portable_code(", "if (!walker_func) {",
-            "ShaderMetaVersion = 7u;", "return info.Deserialize(ar);"),
+            "ShaderMetaVersion = 8u;", "return info.Deserialize(ar);"),
         "src/core/guest_cpu/hle_call_adapter.cpp": (
             "BIONIC_GUEST_X86_NONLOCAL_JUMP", "gNQ1V2vfXDE",
             "lKEN2IebgJ0", "guest_setjmp[]", "guest_longjmp[]",
@@ -142,7 +162,7 @@ def audit(root: Path) -> None:
         "src/emulator.cpp": (
             "BIONIC_BOOT_STAGE=GUEST_LIBC_OBJECTS_END",
             "EmulatorSettings.IsLogAppend()",
-            "BACHATA_CORE_PARITY=20261123-SRT2-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1-RELEASEFIOS2-SAFDIRECT2",
+            "BACHATA_CORE_PARITY=20261123-SRT3-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1-RELEASEFIOS2-SAFDIRECT2-GPUCLAMP1-BUDGET1-RCSNAP1",
             "BACHATA_CORE_REVISION="),
         "src/imgui/big_picture/big_picture.cpp": ("emulator->Restart(runEbootPath)",),
         "src/core/signals.cpp": ("BIONIC_HOST_FAULT_MODULE",
@@ -150,6 +170,8 @@ def audit(root: Path) -> None:
                                  "FindByAddress(guest_rip)",),
     }
     forbidden = {
+        "src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp": (
+            "std::atomic_ref<u32>(ops[i]).fetch_or(SrtZeroed",),
         "src/core/libraries/fios2/fios2.cpp": (
             'mnt->Mount(app0_host, guest_mount, true);',
             'Map the FIOS mount point to the same host folder',
