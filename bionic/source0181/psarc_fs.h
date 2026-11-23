@@ -13,6 +13,7 @@
 #include "core/file_sys/ifile.h"
 
 namespace Core::FileSys {
+struct PsarcStorage;
 class PsarcBackend final : public IBackend {
 public:
     explicit PsarcBackend(std::unique_ptr<IFile> archive);
@@ -27,7 +28,6 @@ public:
     std::optional<std::vector<u8>> ReadFile(std::string_view rel) const override;
 
 private:
-    struct Shared;
-    std::shared_ptr<Shared> m_shared;
+    std::shared_ptr<PsarcStorage> m_shared;
 };
 } // namespace Core::FileSys
