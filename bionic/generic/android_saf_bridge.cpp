@@ -4,6 +4,7 @@
 #include "android_saf_bridge.h"
 #include "android_saf_transport.h"
 #include <cerrno>
+#include <algorithm>
 #include <cstdio>
 #include <fcntl.h>
 #include <mutex>
@@ -75,6 +76,43 @@ bool GetList(const Session& s,std::string_view rel,std::vector<Entry>& out) {
     }
     return cursor==r.bytes.size();
 }
+// Match the working Release's case-insensitive PS4 guest file search in a
+// case-sensitive Android DocumentsProvider. Do NOT synthesize missing files.
+// LIST is used only after an exact STAT/OPEN failed, with bounded depth.
+std::optional<std::string> FindActualCase(const Session& s, std::string_view wanted) {
+    if (!Valid(wanted) || wanted.size()>4096) return std::nullopt;
+    auto fold=[](unsigned char c) -> unsigned char {
+        return c>='A' && c<='Z' ? static_cast<unsigned char>(c-'A'+'a') : c;
+    };
+    auto insensitive=[&](std::string_view a,std::string_view b) {
+        if(a.size()!=b.size())return false;
+        for(std::size_t i=0;i<a.size();++i)
+            if(fold(static_cast<unsigned char>(a[i])) !=
+               fold(static_cast<unsigned char>(b[i])))return false;
+        return true;
+    };
+    std::string resolved;
+    std::size_t from=0;
+    for(unsigned depth=0;from<wanted.size() && depth<32;++depth) {
+        const auto slash=wanted.find('/',from);
+        const auto segment=wanted.substr(from,slash==wanted.npos?wanted.npos:slash-from);
+        if(segment.empty())return std::nullopt;
+        std::vector<Entry> found;
+        if(!GetList(s,resolved,found))return std::nullopt;
+        auto exact=std::find_if(found.begin(),found.end(),[&](const Entry& e){
+            return e.name==segment;
+        });
+        if(exact==found.end())exact=std::find_if(found.begin(),found.end(),
+            [&](const Entry& e){return insensitive(e.name,segment);});
+        if(exact==found.end())return std::nullopt;
+        if(slash!=wanted.npos&&!exact->directory)return std::nullopt;
+        if(!resolved.empty())resolved+='/';
+        resolved+=exact->name;
+        if(slash==wanted.npos)return resolved;
+        from=slash+1;
+    }
+    return std::nullopt;
+}
 void Warn(const char* event,std::string_view path,int error=0) {
     std::fprintf(stderr,"BIONIC_SAF_%s relative=%.*s code=%d\n",
        event,int(path.size()),path.data(),error);
@@ -133,22 +171,29 @@ std::optional<fs::path> Resolve(std::string_view guest) {
     auto& s=S();
     std::scoped_lock lk(s.lock);
     if(!s.active)return std::nullopt;
-    const auto found=s.handles.find(*relative);
-    if(found!=s.handles.end())return s.shadow/(*relative);
-    const auto meta=GetStat(s,*relative);
+    auto canonical=*relative;
+    auto meta=GetStat(s,canonical);
+    if(!meta) {
+        if(const auto alternative=FindActualCase(s,canonical)) {
+            canonical=*alternative;
+            meta=GetStat(s,canonical);
+        }
+    }
     if(!meta)return std::nullopt;
-    const auto path=s.shadow/(*relative);
+    const auto found=s.handles.find(canonical);
+    if(found!=s.handles.end())return s.shadow/canonical;
+    const auto path=s.shadow/canonical;
     std::error_code ec;
     if(meta->directory) {
         fs::create_directories(path,ec);
-        if(ec)Warn("MKDIR_FAILED",*relative,ec.value());
+        if(ec)Warn("MKDIR_FAILED",canonical,ec.value());
         return ec?std::nullopt:std::optional<fs::path>{path};
     }
     // Do not pin every directory listing's files. Only OPEN files the
     // application actually touches; bound cache by the process fd limit.
-    auto reply=Protocol::Request(s.socket,s.token,3,Remote(s,*relative));
+    auto reply=Protocol::Request(s.socket,s.token,3,Remote(s,canonical));
     if(reply.status!=0 || reply.fd<0) {
-        Warn("OPEN_FAILED",*relative,reply.status);
+        Warn("OPEN_FAILED",canonical,reply.status);
         return std::nullopt;
     }
     fs::create_directories(path.parent_path(),ec);
@@ -159,7 +204,7 @@ std::optional<fs::path> Resolve(std::string_view guest) {
         fs::create_symlink("/proc/self/fd/"+std::to_string(reply.fd),path,ec);
     }
     if(ec) {
-        Warn("SYMLINK_FAILED",*relative,ec.value());close(reply.fd);
+        Warn("SYMLINK_FAILED",canonical,ec.value());close(reply.fd);
         return std::nullopt;
     }
     // The alias handles only stat/path lookup. Real game reads request an
@@ -171,9 +216,9 @@ std::optional<fs::path> Resolve(std::string_view guest) {
         close(previous->second);
         s.handles.erase(previous);
     }
-    s.handles.emplace(*relative,reply.fd);
+    s.handles.emplace(canonical,reply.fd);
     std::fprintf(stderr,"BIONIC_SAF_OPEN relative=%s size=%llu\n",
-        relative->c_str(),static_cast<unsigned long long>(meta->size));
+        canonical.c_str(),static_cast<unsigned long long>(meta->size));
     return path;
 }
 bool StatPath(std::string_view guest, bool* is_directory) {
@@ -182,7 +227,11 @@ bool StatPath(std::string_view guest, bool* is_directory) {
     auto& s = S();
     std::scoped_lock lk(s.lock);
     if (!s.active) return false;
-    const auto meta = GetStat(s, *relative);
+    auto meta = GetStat(s, *relative);
+    if(!meta) {
+        if(const auto actual=FindActualCase(s,*relative))
+            meta=GetStat(s,*actual);
+    }
     if (!meta) return false;
     if (is_directory) *is_directory = meta->directory;
     return true;
@@ -191,13 +240,40 @@ bool List(std::string_view guest,std::vector<Entry>& out) {
     auto relative=GuestPath(guest,true);
     if(!relative)return false;
     auto& s=S();std::scoped_lock lk(s.lock);
-    return s.active && GetList(s,*relative,out);
+    if(!s.active)return false;
+    if(GetList(s,*relative,out))return true;
+    const auto actual=FindActualCase(s,*relative);
+    return actual && GetList(s,*actual,out);
 }
 bool IsVirtualPath(const fs::path& path) {
     auto& s=S();std::scoped_lock lk(s.lock);
     if(!s.active)return false;
     auto relative=path.lexically_relative(s.shadow).generic_string();
     return Valid(relative);
+}
+// BACHATA_RELEASE026_SAF_DIRECT_FD: issue an independent BSF1 OPEN per
+// emulated file rather than first creating a symlink in app-private storage.
+// FEX no longer depends on /proc/self/fd while reading game assets.
+std::optional<int> OpenFd(std::string_view guest) {
+    auto relative=GuestPath(guest);
+    if(!relative)return std::nullopt;
+    auto& s=S();
+    std::scoped_lock lk(s.lock);
+    if(!s.active)return std::nullopt;
+    std::string canonical=*relative;
+    auto reply=Protocol::Request(s.socket,s.token,3,Remote(s,canonical));
+    if((reply.status!=0 || reply.fd<0)) {
+        if(const auto actual=FindActualCase(s,canonical)) {
+            canonical=*actual;
+            reply=Protocol::Request(s.socket,s.token,3,Remote(s,canonical));
+        }
+    }
+    if(reply.status!=0 || reply.fd<0) {
+        Warn("DIRECT_FD_OPEN_FAILED",canonical,reply.status);
+        return std::nullopt;
+    }
+    std::fprintf(stderr,"BACHATA_RELEASE026_SAF_DIRECT_FD_OPEN relative=%s\n",canonical.c_str());
+    return reply.fd; // caller must close; independent of cached symlink handles
 }
 std::optional<int> DuplicateFd(const fs::path& host) {
     auto& s=S();std::scoped_lock lk(s.lock);
