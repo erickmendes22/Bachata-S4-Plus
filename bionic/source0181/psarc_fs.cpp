@@ -31,8 +31,8 @@ std::string Normalize(std::string_view src) {
     ret.reserve(src.size());
     for (char c:src) ret.push_back(c=='\\' ? '/' :
         c>='A'&&c<='Z' ? char(c-'A'+'a') : c);
-    while (!ret.empty() && (ret.front()=='/' || ret.front()=='.' &&
-           ret.size()>1 && ret[1]=='/')) {
+    while (!ret.empty() && (ret.front()=='/' || (ret.front()=='.' &&
+           ret.size()>1 && ret[1]=='/'))) {
         if (ret[0]=='/') ret.erase(0,1);
         else ret.erase(0,2);
     }
