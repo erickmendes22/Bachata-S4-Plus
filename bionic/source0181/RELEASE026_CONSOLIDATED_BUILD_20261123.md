@@ -55,3 +55,15 @@ and must not be reported as fixed by this build.
   fail-closed assertions and coherent source API checks in preflight.
 - Source integration CI passed at run `45204246272` after replacing
   the only initial strict-anchor mismatch; none of this proves gameplay.
+
+## First native compiler gate: single pinned-0.18.1 API incompatibility corrected
+
+GitHub Actions run `45204565565` compiled the incremental target but
+stopped at precisely one C++ error: `flatten_extended_userdata_pass.cpp`
+was using upstream-2026 `profile.support_bda` absent in the pinned
+0.18.1 `Shader::Profile`. The pinned version's
+`CollectShaderInfoPass/EmitReadConst` are controlled by the
+`IsDirectMemoryAccessEnabled()` setting directly; the SRT port now
+uses that exact API. A redundant `u8 > 256` comparison was also
+removed. The fast source/ABI recheck passed in run `45206833645`.
+No gameplay claim is made by a successful compile.
