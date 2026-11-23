@@ -24,10 +24,13 @@ def apply(root: Path) -> dict:
     srt_h=root/"src/shader_recompiler/ir/passes/srt.h"
     srt_cpp=root/"src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp"
     info_h=root/"src/shader_recompiler/info.h"
+    bc_h=root/"src/video_core/buffer_cache/buffer_cache.h"
+    bc_cpp=root/"src/video_core/buffer_cache/buffer_cache.cpp"
     raster_h=root/"src/video_core/renderer_vulkan/vk_rasterizer.h"
     raster_cpp=root/"src/video_core/renderer_vulkan/vk_rasterizer.cpp"
     sh=srt_h.read_text();sc=srt_cpp.read_text()
     ih=info_h.read_text();rh=raster_h.read_text();rc=raster_cpp.read_text()
+    bh=bc_h.read_text();bc=bc_cpp.read_text()
 
     sh=sub(sh,
            "void RunSrtWalker(SrtWalkerCode code, const u32* user_data, u32* flat_dst);",
@@ -106,6 +109,45 @@ def apply(root: Path) -> dict:
            "                         srt_guest_sources.data());",
            "call source-aware walker")
 
+    # Official Release checks the exact DWORD write provenance, then
+    # tracks the containing SRT page so later GPU writes cannot be lost
+    # to a coarser page-local memory tracker. Uses the existing modern
+    # 0.18 RangeSet rather than creating a parallel region allocator.
+    bh=sub(bh,
+           "    [[nodiscard]] bool IsRegionGpuModified(VAddr addr, size_t size);",
+           "    [[nodiscard]] bool IsRegionGpuModified(VAddr addr, size_t size);\\n"
+           "    [[nodiscard]] bool IsRangeGpuWritten(VAddr addr, size_t size);\\n"
+           "    void TrackSrtSourcePage(VAddr page);",
+           "Release GPU-written SRT range/page tracking declarations")
+    bh=sub(bh,
+           "    RangeSet gpu_modified_ranges;",
+           "    RangeSet gpu_modified_ranges;\\n"
+           "    RangeSet srt_source_pages;",
+           "track pages referenced by guest shader descriptors")
+    bc=sub(bc,
+           """bool BufferCache::IsRegionGpuModified(VAddr addr, size_t size) {
+    return memory_tracker->IsRegionGpuModified(addr, size);
+}""",
+           """bool BufferCache::IsRegionGpuModified(VAddr addr, size_t size) {
+    // The original Release preserves GPU-write provenance of SRT pages
+    // independently of the broad page-level memory tracker.
+    return memory_tracker->IsRegionGpuModified(addr, size) ||
+           (srt_source_pages.Intersects(addr, size) &&
+            gpu_modified_ranges.Intersects(addr, size));
+}
+
+// BACHATA_RELEASE026_SRT_GPU_RANGE_TRACKING
+bool BufferCache::IsRangeGpuWritten(VAddr addr, size_t size) {
+    if (size==0 || addr>UINT64_MAX-size) return false;
+    return gpu_modified_ranges.Intersects(addr,size) ||
+           memory_tracker->IsRegionGpuModified(addr,size);
+}
+void BufferCache::TrackSrtSourcePage(VAddr page) {
+    if (page<0x10000 || page>=0x10000000000ULL) return;
+    srt_source_pages.Add(page & ~u64{4095},4096);
+}""",
+           "Release GPU source tracking implementation")
+
     rh=sub(rh,
            "    bool BindResources(const Pipeline* pipeline);\n",
            "    // Release 0.2.6 GPU-to-CPU SRT source page refresh.\n"
@@ -145,6 +187,10 @@ void Rasterizer::ReadBackGpuWrittenSrtSources(const Shader::Info& stage) {
             if(!visited.insert(page).second)continue;
             if(!buffer_cache.IsRegionGpuModified(page,PageSize))continue;
             if(!IsMapped(page,PageSize))continue;
+            // The actual Release first checks exact 4-byte SRT operand
+            // writer state, not only the larger 4KiB backing region.
+            if(!buffer_cache.IsRangeGpuWritten(source,sizeof(u32)))continue;
+            buffer_cache.TrackSrtSourcePage(page);
             // Called on the Liverpool GPU command thread. ReadMemory's
             // assume_locks=true calls DownloadMemory directly, avoiding
             // a recursive SendCommand<true> and waiting for the actual GPU
@@ -166,10 +212,12 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {""",
     # No fallback that silently replaces GPU bytes with stale CPU memory.
     if "BACHATA_RELEASE026_SRT_GPU_PAGE_READBACK" not in rc:
         raise RuntimeError("No active Shader::Info-to-BufferCache GPU page readback")
-    for path,txt in ((srt_h,sh),(srt_cpp,sc),(info_h,ih),(raster_h,rh),(raster_cpp,rc)):
+    for path,txt in ((srt_h,sh),(srt_cpp,sc),(info_h,ih),
+                     (bc_h,bh),(bc_cpp,bc),(raster_h,rh),(raster_cpp,rc)):
         path.write_text(txt)
     return {
         "ported":"Release SRT source addresses and GPU-written page-aware refresh",
+        "sourceTracking":"BufferCache IsRangeGpuWritten + TrackSrtSourcePage backed by modern RangeSet",
         "provenance":"guest VMAs captured per SRT dword; no invented addresses",
         "gpuDownload":"real 0.18.1 BufferCache ReadMemory + GPU fence",
         "passes":4,
