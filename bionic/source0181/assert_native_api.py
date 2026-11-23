@@ -81,7 +81,8 @@ def audit(root: Path) -> None:
         "src/shader_recompiler/ir/passes/srt.h": ("SrtWalkerCode", "RunSrtWalker("),
         "src/shader_recompiler/info.h": ("RunSrtWalker(srt_info.walker_func,",),
         "src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp": (
-            "std::vector<u32> portable_code(", "if (!walker_func) {"),
+            "std::vector<u32> portable_code(", "if (!walker_func) {",
+            "ShaderMetaVersion = 7u;", "return info.Deserialize(ar);"),
         "src/core/guest_cpu/hle_call_adapter.cpp": (
             "BIONIC_GUEST_X86_NONLOCAL_JUMP", "gNQ1V2vfXDE",
             "lKEN2IebgJ0", "guest_setjmp[]", "guest_longjmp[]",
