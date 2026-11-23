@@ -30,7 +30,7 @@ bool Directory(std::string_view path) {
 bool File(std::string_view path) {
     return path=="sce_sys/param.sfo" || path=="gra/shader/shader.GNM.phyre";
 }
-std::vector<std::uint8_t> List(std::string_view path) {
+std::vector<std::uint8_t> BuildResponseList(std::string_view path) {
     std::string leaf;
     bool dir=false;
     if(path.empty()){leaf="gra";dir=true;}
@@ -69,7 +69,7 @@ Reply Request(const std::string&,const std::string&,int opcode,std::string_view 
         Be64(ret.bytes,File(path)?64:0);
         Be64(ret.bytes,0);
     } else if(opcode==2){
-        ret.status=0;ret.bytes=List(path);
+        ret.status=0;ret.bytes=BuildResponseList(path);
     } else if(opcode==3 && File(path)){
         ret.fd=::open(g_local_file.c_str(),O_RDONLY|O_CLOEXEC);
         if(ret.fd>=0){ret.status=0;g_last_open=path;}
