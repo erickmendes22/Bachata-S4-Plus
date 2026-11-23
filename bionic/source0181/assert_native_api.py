@@ -82,12 +82,15 @@ def audit(root: Path) -> None:
         "src/shader_recompiler/info.h": ("RunSrtWalker(srt_info.walker_func,",),
         "src/video_core/amdgpu/liverpool.h": (
             "using CmdBuffer = std::pair<std::vector<u32>, std::vector<u32>>;",
-            "CmdBuffer owned_buffers = {}"),
+            "std::shared_ptr<CmdBuffer> owned_buffers = {}",
+            "std::queue<Task::Handle> ce_submits"),
         "src/video_core/amdgpu/liverpool.cpp": (
             "BACHATA_RELEASE026_OWNED_DCB_CCB",
+            "BACHATA_RELEASE026_CE_QUEUE_PARITY",
             "owned.first.assign(dcb.begin(), dcb.end());",
             "owned.second.assign(ccb.begin(), ccb.end());",
-            "std::move(owned_buffers)"),
+            "std::make_shared<CmdBuffer>",
+            "ProcessCeUpdate(ccb, owned_buffers)"),
         "src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp": (
             "std::vector<u32> portable_code(", "if (!walker_func) {",
             "ShaderMetaVersion = 7u;", "return info.Deserialize(ar);"),
@@ -109,6 +112,7 @@ def audit(root: Path) -> None:
         "src/core/libraries/kernel/file_system.cpp": ("deci_tty6_device.h",),
         "src/core/memory.cpp": ("file->f.",),
         "src/video_core/amdgpu/liverpool.cpp": (
+            "cblock.Reset();", "!ce_task.handle.done()",
             "dcb copy buffer out of reserved space",
             "ccb copy buffer out of reserved space"),
         "src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp": (

@@ -19,6 +19,8 @@
 #include "core/libraries/libs.h"
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
 #include "common/va_ctx.h"
+#include "common/logging/log.h"
+#include "core/guest_cpu/guest_callback.h"
 #include "core/libraries/libc_internal/printf.h"
 #include "core/libraries/libc_internal/libc_internal_io.h"
 #include "core/libraries/kernel/file_system.h"
@@ -27,6 +29,24 @@
 namespace Libraries::LibcInternal {
 void* FexLibcGuestAllocate(std::size_t bytes);
 namespace {
+// Run the actual guest x86 comparison callback, never a host function pointer.
+// The HLE call adapter supplies SysV arguments as guest virtual addresses.
+using GuestQsortComparator = int (*)(const void*, const void*);
+thread_local const void* active_guest_comparator{};
+
+struct GuestSortScope {
+    const void* old{};
+    explicit GuestSortScope(const void* fn) : old{active_guest_comparator} {
+        active_guest_comparator = fn;
+    }
+    ~GuestSortScope() { active_guest_comparator = old; }
+};
+
+int HostGuestQsortComparator(const void* lhs, const void* rhs) {
+    const auto result = Core::GuestCpu::RunGuestFunctionOrAbort(
+        active_guest_comparator, "libc qsort compare", lhs, rhs);
+    return static_cast<std::int32_t>(result);
+}
 bool GuestAccess(std::uintptr_t address, std::size_t count, bool write) {
     if (count == 0) return true;
     if (!address || count > std::numeric_limits<std::uintptr_t>::max() - address) return false;
@@ -75,6 +95,31 @@ int PS4_SYSV_ABI GuestPuts(const char* str) {
     return static_cast<int>(text.size() + 1);
 }
 int PS4_SYSV_ABI GuestPutchar(int ch) { return std::putchar(ch); }
+
+// Release 0.2.6 behavior: qsort is a guest callback API, not a direct Bionic
+// alias. The comparator is x86_64 PS4 code and must cross through FEX.
+void PS4_SYSV_ABI GuestQsort(void* base, std::size_t nitems, std::size_t width,
+                             GuestQsortComparator compare) {
+    if (nitems < 2) return;
+    if (!base || !compare || width == 0 ||
+        nitems > std::numeric_limits<std::size_t>::max() / width ||
+        !GuestAccess(reinterpret_cast<std::uintptr_t>(base), nitems * width, true)) {
+        LOG_ERROR(Core_Linker, "BIONIC_LIBC_QSORT_INVALID_RANGE");
+        return;
+    }
+    if (!Core::GuestCpu::IsGuestFunctionAddress(reinterpret_cast<const void*>(compare))) {
+        LOG_ERROR(Core_Linker, "BIONIC_LIBC_QSORT_BAD_GUEST_COMPARATOR");
+        return;
+    }
+    GuestSortScope guard{reinterpret_cast<const void*>(compare)};
+    std::qsort(base, nitems, width, HostGuestQsortComparator);
+}
+
+// Dinkumware _Log(double, int): flag 0 computes ln, nonzero computes log10.
+// Retains the PS4 SysV floating-point argument and XMM0 return ABI.
+double PS4_SYSV_ABI Fex__Log(double x, int decimal_flag) {
+    return decimal_flag ? std::log10(x) : std::log(x);
+}
 
 char* PS4_SYSV_ABI GuestStrerror(int code) {
     thread_local char* output = nullptr;
@@ -424,6 +469,8 @@ void RegisterFexLibcGuestObjects(Core::Loader::SymbolsResolver* sym) {
 void RegisterFexLibcCompatAliases(Core::Loader::SymbolsResolver* sym) {
 #define ALIAS(nid, function) LIB_FUNCTION(nid, "libc", 1, "libc", function)
     ALIAS("YQ0navp+YIc", GuestPuts);
+    ALIAS("AEJdIVZTEmo", GuestQsort); // qsort
+    ALIAS("zXCi78bYrEI", Fex__Log);  // Dinkumware _Log
     ALIAS("m5wN+SwZOR4", GuestPutchar);
     ALIAS("xeYO4u7uyJ0", GuestFopen);
     ALIAS("uodLYyUip20", GuestFclose);

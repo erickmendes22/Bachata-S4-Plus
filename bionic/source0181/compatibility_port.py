@@ -607,4 +607,10 @@ void GameController::PollState() {
     result["portedInterfaces"].append(
         "Bachata 0.2.6 owned PM4 DCB/CCB buffers retained by each GPU coroutine")
 
+    from port_release026_ce_engine import apply as apply_ce_engine
+    result["release026CeSchedulerParity"] = apply_ce_engine(root)
+    result["portedInterfaces"].append(
+        "Release 0.2.6 CE FIFO: separate tasks, IB chaining, packet snapshot, "
+        "shared command data lifetime")
+
     return result
