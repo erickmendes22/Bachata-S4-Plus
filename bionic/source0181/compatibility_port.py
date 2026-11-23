@@ -710,15 +710,15 @@ void GameController::PollState() {
     prefix_include(signals, '#include "core/module.h"', "crash module address API")
     prefix_include(signals, '#include "common/singleton.h"', "crash module singleton")
     old_signal = ('                LOG_CRITICAL(Debug, '
-                  '"FEX guest state at fault: rip={:#x} rax={:#x}", guest_rip,\\n'
+                  '"FEX guest state at fault: rip={:#x} rax={:#x}", guest_rip,\n'
                   '                             guest_rax);')
     new_signal = (old_signal +
-                  '\\n                if (auto* module = '
-                  'Common::Singleton<Core::Linker>::Instance()->FindByAddress(guest_rip)) {\\n'
+                  '\n                if (auto* module = '
+                  'Common::Singleton<Core::Linker>::Instance()->FindByAddress(guest_rip)) {\n'
                   '                    LOG_CRITICAL(Debug, '
-                  '"BIONIC_GUEST_CRASH_MODULE file={} module_base={:#x} rip_offset={:#x}",\\n'
+                  '"BIONIC_GUEST_CRASH_MODULE file={} module_base={:#x} rip_offset={:#x}",\n'
                   '                                 module->file.string(), '
-                  'module->GetBaseAddress(), guest_rip - module->GetBaseAddress());\\n'
+                  'module->GetBaseAddress(), guest_rip - module->GetBaseAddress());\n'
                   '                }')
     require_replace(signals, old_signal, new_signal,
                     "symbolize guest RIP inside the original PS4 game module")
