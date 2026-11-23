@@ -86,7 +86,24 @@ def audit(root: Path) -> None:
         "src/video_core/renderer_vulkan/vk_instance.cpp": ("BIONIC_VULKAN_DEVICE",
                                                           "BACHATA_RELEASE026_GPU_LIVE_BUDGET",
                                                           "vmaGetHeapBudgets("),
+        "src/video_core/buffer_cache/buffer_cache.h": (
+            "bool IsRangeGpuWritten(VAddr addr, size_t size);",
+            "void TrackSrtSourcePage(VAddr page);",
+            "RangeSet srt_source_pages;"),
+        "src/video_core/buffer_cache/buffer_cache.cpp": (
+            "BACHATA_RELEASE026_SRT_GPU_RANGE_TRACKING",
+            "gpu_modified_ranges.Intersects(addr,size)",
+            "srt_source_pages.Add(page & ~u64{4095},4096)",
+            "BACHATA_RELEASE026_CMASK_EXPANDED",
+            "0xDDDDDDDDu", "0xEEEEEEEEu",
+            "texture_cache.ResolveCMaskOwner(device_addr)"),
         "src/video_core/renderer_vulkan/vk_rasterizer.cpp": (
+            "BACHATA_RELEASE026_SRT_GPU_PAGE_READBACK",
+            "ReadBackGpuWrittenSrtSources(*stage)",
+            "buffer_cache.IsRangeGpuWritten(source,sizeof(u32))",
+            "buffer_cache.TrackSrtSourcePage(page)",
+            "buffer_cache.ReadMemory(page,PageSize,false,true);",
+            "writable.RefreshFlatBuf();",
             "BACHATA_RELEASE026_READCONST_SNAPSHOT",
             "MakeReadConstSnapshot(", "desc.used_as_readconst",
             "!buffer_cache.IsRegionGpuModified(",
@@ -114,7 +131,8 @@ def audit(root: Path) -> None:
             "SrtOp::CopyExpr", "SrtOp::PushPtrExpr",
             "BACHATA_SRT_RUNTIME_ARRAY_5624", "PrepareSrtReadArrays",
             "IR::Opcode::ReadConstArray"),
-        "src/shader_recompiler/ir/passes/srt.h": ("SrtWalkerCode", "RunSrtWalker("),
+        "src/shader_recompiler/ir/passes/srt.h": ("SrtWalkerCode", "RunSrtWalker(",
+                                                 "VAddr* source_addresses"),
         "src/shader_recompiler/resource.h": ("bool used_as_readconst{};",),
         "src/shader_recompiler/ir/passes/resource_patching_pass.cpp": (
             "buffer.used_as_readconst |= desc.used_as_readconst;",
@@ -124,7 +142,8 @@ def audit(root: Path) -> None:
         "src/video_core/amdgpu/regs_shader.h": ("ReadShaderResourceTable(",),
         "src/shader_recompiler/backend/spirv/emit_spirv_context_get_set.cpp":
             ("EmitReadConstArray(",),
-        "src/shader_recompiler/info.h": ("RunSrtWalker(srt_info.walker_func,",),
+        "src/shader_recompiler/info.h": ("RunSrtWalker(srt_info.walker_func,",
+                                      "srt_guest_sources.assign(", "srt_guest_sources.data()"),
         "src/video_core/amdgpu/liverpool.h": (
             "using CmdBuffer = std::pair<std::vector<u32>, std::vector<u32>>;",
             "std::shared_ptr<CmdBuffer> owned_buffers = {}",
@@ -144,13 +163,9 @@ def audit(root: Path) -> None:
             "UnregisterMeta(meta_info.cmask_addr, image.image_uid)",
             "telemetry.live_budget",
             "GetGpuMemoryTelemetry()"),
-        "src/video_core/buffer_cache/buffer_cache.cpp": (
-            "BACHATA_RELEASE026_CMASK_EXPANDED",
-            "0xDDDDDDDDu", "0xEEEEEEEEu",
-            "texture_cache.ResolveCMaskOwner(device_addr)"),
         "src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp": (
             "std::vector<u32> portable_code(", "if (!walker_func) {",
-            "ShaderMetaVersion = 8u;", "return info.Deserialize(ar);"),
+            "ShaderMetaVersion = 9u;", "return info.Deserialize(ar);"),
         "src/core/guest_cpu/hle_call_adapter.cpp": (
             "BIONIC_GUEST_X86_NONLOCAL_JUMP", "gNQ1V2vfXDE",
             "lKEN2IebgJ0", "guest_setjmp[]", "guest_longjmp[]",
@@ -162,7 +177,7 @@ def audit(root: Path) -> None:
         "src/emulator.cpp": (
             "BIONIC_BOOT_STAGE=GUEST_LIBC_OBJECTS_END",
             "EmulatorSettings.IsLogAppend()",
-            "BACHATA_CORE_PARITY=20261123-SRT3-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1-RELEASEFIOS2-SAFDIRECT2-GPUCLAMP1-BUDGET1-RCSNAP1",
+            "BACHATA_CORE_PARITY=20261123-SRT4-GPUPAGE1-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1-RELEASEFIOS2-SAFDIRECT2-GPUCLAMP1-BUDGET1-RCSNAP1",
             "BACHATA_CORE_REVISION="),
         "src/imgui/big_picture/big_picture.cpp": ("emulator->Restart(runEbootPath)",),
         "src/core/signals.cpp": ("BIONIC_HOST_FAULT_MODULE",
