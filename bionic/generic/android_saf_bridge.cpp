@@ -23,6 +23,28 @@ struct Session {
     bool active=false;
 };
 Session& S() {static Session s;return s;}
+// Guest aliases are a separate mapping from the SAF broker session; do not
+// take Session::lock recursively when Resolve/StatPath/OpenFd calls GuestPath.
+std::mutex& AliasLock() {static std::mutex mutex;return mutex;}
+std::unordered_map<std::string,std::string>& AliasMap() {
+    static std::unordered_map<std::string,std::string> aliases;
+    return aliases;
+}
+std::optional<std::string> SourceGuestPath(std::string_view guest) {
+    std::scoped_lock lock{AliasLock()};
+    std::size_t most_specific=0;
+    std::optional<std::string> converted;
+    for(const auto& [alias,source]:AliasMap()) {
+        if((guest==alias || (guest.size()>alias.size() &&
+           guest.starts_with(alias) && guest[alias.size()]=='/')) &&
+           alias.size()>most_specific) {
+            most_specific=alias.size();
+            converted=source;
+            converted->append(guest.substr(alias.size()));
+        }
+    }
+    return converted;
+}
 bool Valid(std::string_view p,bool root=false) {
     if(p.empty())return root;
     if(p[0]=='/' || p.size()>4096 || p.find('\\')!=p.npos ||
@@ -38,6 +60,13 @@ bool Valid(std::string_view p,bool root=false) {
     return true;
 }
 std::optional<std::string> GuestPath(std::string_view path,bool allow_root=false) {
+    // FIOS2 names such as PhyreFIOS2/gra/shader must resolve to the same
+    // /app0 SAF root the official Release maps with MntPoints::MountAlias.
+    // The previously added MountAlias copied only local backend pointers,
+    // which alone cannot make the separately handled Android SAF fallback
+    // recognize the alias. Translate it before broker STAT/LIST/OPEN.
+    const auto remapped=SourceGuestPath(path);
+    if(remapped)path=*remapped;
     if(path=="/app0"||path=="/hostapp")
         return allow_root?std::optional<std::string>{""}:std::nullopt;
     if(path.starts_with("/app0/"))path.remove_prefix(6);
@@ -125,6 +154,7 @@ bool Configure(const std::string& socket,const std::string& token,
     std::scoped_lock lk(s.lock);
     for(auto& [key,fd]:s.handles)close(fd);
     s.handles.clear();s.active=false;s.prefix.clear();
+    { std::scoped_lock alias_lock{AliasLock()};AliasMap().clear(); }
     s.socket=socket;s.token=token;
     s.shadow=storage/(".bachata-saf-fex-"+std::to_string(getpid()));
     std::error_code ec;
@@ -165,6 +195,20 @@ bool Configure(const std::string& socket,const std::string& token,
     return true;
 }
 bool Enabled(){auto& s=S();std::scoped_lock lk(s.lock);return s.active;}
+void RegisterGuestAlias(std::string_view source_guest,std::string_view alias_guest) {
+    // Only the actual game-root virtual mounts may be forwarded into the
+    // selected SAF game provider. Never alias another or absolute host path.
+    if(source_guest!="/app0" && source_guest!="/hostapp")return;
+    if(alias_guest.empty() || alias_guest.size()>1024 ||
+       alias_guest.find("..")!=alias_guest.npos ||
+       alias_guest.find('\\')!=alias_guest.npos ||
+       alias_guest.find('\0')!=alias_guest.npos)return;
+    std::scoped_lock lock{AliasLock()};
+    AliasMap().insert_or_assign(std::string(alias_guest),std::string(source_guest));
+    std::fprintf(stderr,"BACHATA_RELEASE026_SAF_ALIAS source=%.*s alias=%.*s\n",
+                 int(source_guest.size()),source_guest.data(),
+                 int(alias_guest.size()),alias_guest.data());
+}
 std::optional<fs::path> Resolve(std::string_view guest) {
     auto relative=GuestPath(guest);
     if(!relative)return std::nullopt;
