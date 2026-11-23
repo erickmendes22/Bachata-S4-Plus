@@ -199,3 +199,49 @@ missing direct /app0 files, FIOS async return/callback. The true
 Release does not export some of the methods previously attributed
 to it, so do not claim these issues solved by unrelated GPU changes.
 Need device validation after this coherent VFS parity rebuild.
+
+
+## Release-parity pass 2: SAF descriptor backend and virtual FIOS mount names
+
+Working reference is **both official Release 0.2.6 and 0.2.7** sharing
+the authentic native ELF SHA `f4ab401c9f05088d5379f466314fc74dadd37f0e7389d120e7490943e0ae7582`.
+Source ports must be based on actual Release ARM64 function semantics,
+not the mislabeled `3548cb4b...` binary.
+
+Additional missing common-core functionality observed in the ELF:
+`Core::FileSys::SafFsBackend::Open` and the
+`Core::FileSys::SafBrokerClient` family. The old Bionic VFS's remote
+path fallback created cached symlinks to `/proc/self/fd/N`;
+a cloned `MntPoints::MountAlias("/app0", "PhyreFIOS2")` also did
+not let remote-only files be opened by the SAF bridge because its
+`GuestPath` originally accepted only `/app0` and `/hostapp`.
+
+Corrections now integrated and source-CI verified:
+- Real independent broker `OpenFd` in `android_saf_bridge.cpp` with
+  case-insensitive bounded lookup only after exact game file paths fail.
+- Real `SafGuestFile : IFile` with owning fd lifetime, independent
+  `pread`/Seek/Tell/Stat/Size and on-demand copy `Map`, instead of
+  requiring cached symlink files before reading the native Android game.
+  Original symlink fallback remains for compatibility.
+- `BachataSaf::RegisterGuestAlias("/app0","PhyreFIOS2")` is called by
+  genuine `MntPoints::MountAlias`, and broker `GuestPath` translates
+  all guest aliases before STAT/LIST/OPEN, not only for Dragon Quest
+  Builders or hardcoded PSARC shader filenames. Alias mappings are
+  cleared when switching game SAF roots.
+- End-to-end host test compiles and runs actual
+  `android_saf_bridge.cpp` against a BSF1 mock, verifies exact and
+  case-folded FIOS alias STAT/LIST/OPEN. Separate native C++ tests
+  verify independent descriptor cursors and lazy PSARC zlib blocks.
+  CI fast audit success `45239181747`.
+- Native image marker:
+  `BACHATA_CORE_PARITY=20261123-SRT2-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1-PSARC1-ALIAS1-SAFD1`.
+  Both revision and new runtimeVersion generated from actual new
+  source commit/core ELF digest, automatically forcing re-extraction.
+
+**Scope note**: These are authentic Release-style VFS/broker
+capabilities. This build does not yet claim to resolve The Order's
+SRT Phi or unsupported/corrupt format descriptors, nor CUSA00552's
+guest null dereference; the latter now logs module+RIP offset on
+fatal crash to enable a specific follow-up. Both Release and current
+port assert on unsupported data formats; blindly forcing format 58
+is unsupported by the Release comparison.
