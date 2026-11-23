@@ -559,12 +559,16 @@ static bool ComputeOffset(Code& c, PassInfo& pass_info, const IR::Value& off_dw)
         Emit(c, SrtOp::LoadFlat, static_cast<u32>(inst->Arg(0).ScalarReg()));
         return true;
     case IR::Opcode::ReadConst:
-    case IR::Opcode::ReadConstBuffer:
-        if (u16 offset = GetFlatbufOffset(pass_info.DeduplicateInstruction(inst)); offset != 0) {
-            Emit(c, SrtOp::LoadFlat, offset);
-            return true;
-        }
-        return false;
+    case IR::Opcode::ReadConstBuffer: {
+        // ORDER1886_SRT_GVN_SLOT_PARITY: exact source commit 5fbd19fd.
+        // A GVN duplicate may already have been assigned by a different root.
+        auto* canonical = pass_info.DeduplicateInstruction(inst);
+        u16 offset = GetFlatbufOffset(canonical);
+        if (!offset) offset = GetFlatbufOffset(inst);
+        if (!offset) return false;
+        Emit(c, SrtOp::LoadFlat, offset);
+        return true;
+    }
     case IR::Opcode::IAdd32:
         return EmitOperator(c, pass_info, inst, SrtOp::Add);
     case IR::Opcode::ISub32:
@@ -604,74 +608,102 @@ static bool EmitOffset(Code& c, PassInfo& pass_info, const IR::Value& off_dw) {
     return true;
 }
 
-static void VisitPointer(const IR::Value& off_dw, IR::Inst* subtree, PassInfo& pass_info,
-                         Code& c) {
-    if (subtree->GetOpcode() == IR::Opcode::ReadConst && subtree->Flags<u16>() == 0 ||
-        subtree->GetOpcode() == IR::Opcode::ReadConstBuffer &&
-            subtree->Flags<IR::BufferInstInfo>().flatbuf_off_dw == 0) {
-        return;
-    }
-
+// ORDER1886_SRT_DEPENDENCY_WORKLIST: port commit c781ee89 and 14c1c755.
+// An offset may depend on a read that is assigned later in the same subtree
+// or a different SGPR root. Do not replace genuinely divergent lanes with zero.
+static void VisitPointer(const IR::Value& off_dw, IR::Inst* subtree,
+                         PassInfo& pass_info, Code& c) {
+    if ((subtree->GetOpcode() == IR::Opcode::ReadConst &&
+         subtree->Flags<u16>() == 0) ||
+        (subtree->GetOpcode() == IR::Opcode::ReadConstBuffer &&
+         subtree->Flags<IR::BufferInstInfo>().flatbuf_off_dw == 0)) return;
+    Code prefix;
     if (off_dw.IsImmediate()) {
-        Emit(c, SrtOp::PushPtrImm, off_dw.U32());
-    } else if (EmitOffset(c, pass_info, off_dw)) {
-        Emit(c, SrtOp::PushPtrExpr);
+        Emit(prefix, SrtOp::PushPtrImm, off_dw.U32());
+    } else if (EmitOffset(prefix, pass_info, off_dw)) {
+        Emit(prefix, SrtOp::PushPtrExpr);
     } else {
-        LOG_ERROR(Render_Recompiler, "Failed to compute offset for SRT walker");
-        return;
+        return; // Retry when another root has assigned the dependency.
     }
-    PassInfo::PtrUserList* use_list = pass_info.GetUsesAsPointer(subtree);
-    ASSERT(use_list);
-
-    // First copy all the src data from this tree level
-    // That way, all data that was contiguous in the guest SRT is also contiguous in the
-    // flattened buffer.
-    for (auto [src_off_dw, use] : *use_list) {
-        if (src_off_dw.IsImmediate()) {
-            Emit(c, SrtOp::CopyImm, src_off_dw.U32(), pass_info.dst_off_dw);
-        } else if (EmitOffset(c, pass_info, src_off_dw)) {
-            Emit(c, SrtOp::CopyExpr, 0, pass_info.dst_off_dw);
+    const auto* uses = pass_info.GetUsesAsPointer(subtree);
+    if (!uses) return;
+    c.insert(c.end(), prefix.begin(), prefix.end());
+    using Pending = std::pair<IR::Value, IR::Inst*>;
+    std::vector<Pending> pending;
+    pending.reserve(uses->size());
+    for (const auto& [offset, use] : *uses) {
+        auto* canonical = pass_info.DeduplicateInstruction(use);
+        const u16 existing = GetFlatbufOffset(canonical);
+        if (existing) {
+            if (!GetFlatbufOffset(use)) SetFlatbufOffset(use, existing);
+        } else if (GetFlatbufOffset(use)) {
+            SetFlatbufOffset(canonical, GetFlatbufOffset(use));
         } else {
-            LOG_ERROR(Render_Recompiler, "Failed to compute offset for SRT walker");
-            continue;
-        }
-
-        SetFlatbufOffset(use, pass_info.dst_off_dw);
-        pass_info.dst_off_dw++;
-    }
-
-    // Then visit any children used as pointers
-    for (const auto [src_off_dw, use] : *use_list) {
-        if (pass_info.GetUsesAsPointer(use)) {
-            VisitPointer(src_off_dw, use, pass_info, c);
+            pending.emplace_back(offset, use);
         }
     }
-
+    for (size_t round = 0, max_rounds = pending.size();
+         round < max_rounds && !pending.empty(); ++round) {
+        bool progress = false;
+        for (size_t i = 0; i < pending.size();) {
+            const auto [offset, use] = pending[i];
+            Code expr;
+            if (!offset.IsImmediate() && !EmitOffset(expr, pass_info, offset)) {
+                ++i; // The flatbuf slot is not available yet.
+                continue;
+            }
+            if (offset.IsImmediate()) {
+                Emit(c, SrtOp::CopyImm, offset.U32(), pass_info.dst_off_dw);
+            } else {
+                c.insert(c.end(), expr.begin(), expr.end());
+                Emit(c, SrtOp::CopyExpr, 0, pass_info.dst_off_dw);
+            }
+            auto* canonical = pass_info.DeduplicateInstruction(use);
+            SetFlatbufOffset(use, pass_info.dst_off_dw);
+            if (canonical != use) SetFlatbufOffset(canonical, pass_info.dst_off_dw);
+            ++pass_info.dst_off_dw;
+            pending.erase(pending.begin() + i);
+            progress = true;
+        }
+        if (!progress) break;
+    }
+    for (const auto& [offset, use] : *uses) {
+        if (GetFlatbufOffset(use) && pass_info.GetUsesAsPointer(use))
+            VisitPointer(offset, use, pass_info, c);
+    }
     Emit(c, SrtOp::PopPtr);
 }
 
 static void GenerateSrtProgram(Info& info, PassInfo& pass_info) {
-    if (pass_info.srt_roots.empty()) {
-        return;
-    }
-
-    Code c{SrtMagic};
+    if (pass_info.srt_roots.empty()) return;
+    Code code{SrtMagic};
     pass_info.dst_off_dw = NUM_USER_DATA_REGS;
     ASSERT(pass_info.dst_off_dw == info.srt_info.flattened_bufsize_dw);
-
-    for (const auto& [sgpr_base, root] : pass_info.srt_roots) {
-        VisitPointer(IR::Value(static_cast<u32>(sgpr_base)), root, pass_info, c);
+    // Fixed-point walk across all roots, not a one-time forward pass.
+    const size_t limit = pass_info.pointer_uses.size() + 1;
+    for (size_t round = 0; round < limit; ++round) {
+        const u16 before = pass_info.dst_off_dw;
+        for (const auto& [sgpr, root] : pass_info.srt_roots)
+            VisitPointer(IR::Value(static_cast<u32>(sgpr)), root, pass_info, code);
+        if (pass_info.dst_off_dw == before) break;
     }
-    Emit(c, SrtOp::End);
-
-    info.srt_info.walker_func = StoreWalker(c.data(), c.size());
-    info.srt_info.walker_func_size = c.size() * sizeof(u32);
-
-    if (EmulatorSettings.IsDumpShaders()) {
-        DumpSrtProgram(info, c.data(), c.size());
+    size_t unresolved = 0;
+    for (const auto& [parent, uses] : pass_info.pointer_uses)
+        for (const auto& [offset, use] : uses)
+            if (!GetFlatbufOffset(use)) ++unresolved;
+    if (unresolved) {
+        static std::atomic<u32> report_count{0};
+        const u32 report = report_count.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (report <= 16 || report % 128 == 0)
+            LOG_WARNING(Render_Recompiler,
+                "ORDER1886_SRT_UNRESOLVED: shader={:#x} count={} report={}",
+                info.pgm_hash, unresolved, report);
     }
-
+    Emit(code, SrtOp::End);
+    info.srt_info.walker_func = StoreWalker(code.data(), code.size());
+    info.srt_info.walker_func_size = code.size() * sizeof(u32);
     info.srt_info.flattened_bufsize_dw = pass_info.dst_off_dw;
+    if (EmulatorSettings.IsDumpShaders()) DumpSrtProgram(info, code.data(), code.size());
 }
 
 static bool IsReadConstSource(const IR::Value base) {
