@@ -16,7 +16,9 @@ test -f "$SRC/src/core/linker.cpp" || { echo "Generic PS4 linker absent" >&2; ex
 test -f "$SRC/externals/CMakeLists.txt" || { echo "shadPS4 externals absent" >&2; exit 2; }
 test -f "$SRC/externals/sdl3/CMakeLists.txt" || { echo "Recursive submodules required" >&2; exit 2; }
 test -s "$FEX_BUILD/FEXCore/Source/libFEXCore.a" || {
-  echo "Bionic FEXCore not built by build-core.sh" >&2; exit 2;
+  echo "::error::BIONIC_STATIC_FEXCORE_CACHE_INVALID: stage was accepted without FEXCore static library" >&2
+  echo "::error::native_cache.sh must select repair_fex or rebuild before this expensive compile step" >&2
+  exit 2
 }
 
 if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == 1 ]]; then
@@ -124,6 +126,10 @@ echo "BIONIC_INCREMENTAL_NINJA_DRY_RUN_LINES=$(wc -l < "$WORK/ndk-ninja-incremen
 # These are real Ninja objects and are reused by the full shadPS4 target.
 if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == "1" ]]; then
   priority_sources=(
+    # Compile the actual Release-parity VFS and FIOS2 units first.
+    # Host mocks are insufficient to verify the shadPS4 0.18.1 real ABI.
+    src/core/file_sys/fs.cpp
+    src/core/file_sys/backends/saf_fs_backend.cpp
     src/video_core/renderer_vulkan/vk_presenter.cpp
     src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp
     src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
