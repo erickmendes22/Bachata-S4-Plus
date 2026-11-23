@@ -690,26 +690,14 @@ void GameController::PollState() {
         "Release 0.2.6 metadata: CMask/FMask/HTile live owner UID "
         "validation, address reuse and clear-mask preservation")
 
-    # Generic PSARC support is required by CUSA05170 (Dragon Quest Builders).
-    # Previous FEX FIOS2 returned fake success and mounted /app0 in place of
-    # /app0/build.psarc. Real archive bytes must be opened through the guest
-    # filesystem, including SAF, and presented as an IBackend.
-    from port_psarc_fios import apply as apply_psarc_fios
-    result["realFios2PsarcBackend"] = apply_psarc_fios(root)
-    result["portedInterfaces"].append(
-        "PSARC zlib read-only IBackend: actual archive TOC, lazy block reads, "
-        "valid mount/unmount lifecycle, SAF-backed source, no fake /app0 mount")
-
-    # Official Release 0.2.6 AND 0.2.7 share the same authentic ELF
-    # f4ab401c...; its FIOS2 mount ALWAYS uses MountAlias("/app0", prefix).
-    # Our earlier PSARC-only attempt was an unsupported assumption: restore
-    # the working guest-to-guest alias while keeping streaming PSARC only
-    # when there is no mounted /app0 backend to share.
+    # Working official Release 0.2.6/0.2.7 does not parse PSARC here.
+    # The former generic parser was a speculative divergence; remove it
+    # instead of leaving it enabled as a fallback.
     from port_release026_mount_alias import apply as apply_release026_alias
     result["release026Fios2MountAlias"] = apply_release026_alias(root)
     result["portedInterfaces"].append(
         "Official 0.2.6/0.2.7 FIOS2 MountAlias guest backend parity: "
-        "SAF/updates/mods preserved; archive reader is fallback only")
+        "SAF/updates/mods preserved; no host-mount/PSARC alternate code")
 
     # The verified Release ELF also has SafFsBackend::Open and SafBrokerClient,
     # whereas our new VFS only reopened short-lived /proc/self/fd symlinks.
