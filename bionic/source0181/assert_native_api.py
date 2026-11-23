@@ -170,8 +170,6 @@ def audit(root: Path) -> None:
                                  "FindByAddress(guest_rip)",),
     }
     forbidden = {
-        "src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp": (
-            "std::atomic_ref<u32>(ops[i]).fetch_or(SrtZeroed",),
         "src/core/libraries/fios2/fios2.cpp": (
             'mnt->Mount(app0_host, guest_mount, true);',
             'Map the FIOS mount point to the same host folder',
@@ -189,7 +187,8 @@ def audit(root: Path) -> None:
             "ccb copy buffer out of reserved space"),
         "src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp": (
             "FlattenExtendedUserdataPass unimplemented for target architecture.",
-            "runtime_fault_recover", "bbport_threads.h"),
+            "runtime_fault_recover", "bbport_threads.h",
+            "std::atomic_ref<u32>(ops[i]).fetch_or(SrtZeroed"),
         "src/core/libraries/kernel/threads/semaphore.cpp": (
             "PthreadCancelInterrupt(", "critical_count.fetch_add("),
         "src/core/libraries/videoout/driver.cpp": ("liverpool->EnqueueCommand(",),
