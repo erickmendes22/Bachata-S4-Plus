@@ -245,3 +245,8 @@ guest null dereference; the latter now logs module+RIP offset on
 fatal crash to enable a specific follow-up. Both Release and current
 port assert on unsupported data formats; blindly forcing format 58
 is unsupported by the Release comparison.
+
+
+## Corrigido cache inválido de dependências após SRT3 / Vulkan budget — 23/11/2026
+
+Run `45256239259`: primeiro pré-voo PASS; falha no `cmake` porque o cache do estágio tinha os FFmpeg `.so` para o APK, mas faltava o `out/bionic/deps/prefix/lib/libavformat.so` que a linkedição do shadPS4 exige. O contrato `native_cache.sh` agora testa **todas as seis bibliotecas e seus headers do prefixo**, além da `libFEXCore.a`; o modo `repair_ffmpeg` restaura somente as dependências ausentes, copiando do estágio compilado quando os headers estão intactos ou recompilando as dependências quando é impossível restaurar com segurança. `repair_fex` também verifica FFmpeg, evitando marcar cache parcial pronto. Restam as fontes C++ do Release SRT3, GPU range/live budget e ReadConst a serem compiladas pela execução iniciada neste commit.
