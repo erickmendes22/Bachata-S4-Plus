@@ -74,6 +74,7 @@ jobs:
           bash -n bionic/generic/build-generic.sh
           bash -n bionic/source0181/build_host_protoc.sh
           bash -n bionic/source0181/native_cache.sh
+          grep -Fq "BIONIC_NATIVE_COMPILER_PREFIX_READY" bionic/source0181/native_cache.sh
           python3 -m py_compile bionic/source0181/incremental_inputs.py
           python3 bionic/source0181/incremental_inputs.py selftest
           python3 bionic/source0181/port_release026_cmd_buffers.py selftest
@@ -385,24 +386,26 @@ jobs:
           elif [[ "$mode" == "restage" ]]; then
             NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 \
               BACHATA_REUSE_NATIVE_BUILD=1 bash bionic/build-core.sh
-            NDK="$ANDROID_HOME/ndk/30.0.14904198" bash bionic/source0181/native_cache.sh stamp
           elif [[ "$mode" == "repair_fex" ]]; then
             echo "BACHATA_REPAIR_FEXCORE_AND_VERIFY_FFMPEG_DEV_PREFIX"
             NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 \
               BACHATA_REPAIR_FEX_ONLY=1 bash bionic/build-core.sh
-            NDK="$ANDROID_HOME/ndk/30.0.14904198" bash bionic/source0181/native_cache.sh stamp
           elif [[ "$mode" == "repair_ffmpeg" ]]; then
             echo "BACHATA_REPAIR_FFMPEG_DEV_PREFIX_ONLY_NO_FEX_REBUILD"
             NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 \
               BACHATA_REPAIR_FFMPEG_ONLY=1 bash bionic/build-core.sh
-            NDK="$ANDROID_HOME/ndk/30.0.14904198" bash bionic/source0181/native_cache.sh stamp
           elif [[ "$mode" == "rebuild" ]]; then
             NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 bash bionic/build-core.sh
-            NDK="$ANDROID_HOME/ndk/30.0.14904198" bash bionic/source0181/native_cache.sh stamp
           else
             echo "::error::Unrecognized prerequisite cache mode"
             exit 2
           fi
+          # Restore cross-compiler FFmpeg and SDL linker inputs even when the
+          # separately cached APK-stage .so files already appear complete.
+          NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 \
+            bash bionic/source0181/native_cache.sh restore_deps
+          NDK="$ANDROID_HOME/ndk/30.0.14904198" \
+            bash bionic/source0181/native_cache.sh stamp
 
       - name: Build host protoc from matching pinned protobuf source and test ABI
         run: |
