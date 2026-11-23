@@ -115,13 +115,13 @@ def apply(root: Path) -> dict:
     # 0.18 RangeSet rather than creating a parallel region allocator.
     bh=sub(bh,
            "    [[nodiscard]] bool IsRegionGpuModified(VAddr addr, size_t size);",
-           "    [[nodiscard]] bool IsRegionGpuModified(VAddr addr, size_t size);\\n"
-           "    [[nodiscard]] bool IsRangeGpuWritten(VAddr addr, size_t size);\\n"
+           "    [[nodiscard]] bool IsRegionGpuModified(VAddr addr, size_t size);\n"
+           "    [[nodiscard]] bool IsRangeGpuWritten(VAddr addr, size_t size);\n"
            "    void TrackSrtSourcePage(VAddr page);",
            "Release GPU-written SRT range/page tracking declarations")
     bh=sub(bh,
            "    RangeSet gpu_modified_ranges;",
-           "    RangeSet gpu_modified_ranges;\\n"
+           "    RangeSet gpu_modified_ranges;\n"
            "    RangeSet srt_source_pages;",
            "track pages referenced by guest shader descriptors")
     bc=sub(bc,
