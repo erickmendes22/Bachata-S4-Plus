@@ -700,4 +700,30 @@ void GameController::PollState() {
         "PSARC zlib read-only IBackend: actual archive TOC, lazy block reads, "
         "valid mount/unmount lifecycle, SAF-backed source, no fake /app0 mount")
 
+    # CUSA00552 crashes before first frame at x86 RIP 0x800e1e2d0 and
+    # host SIGSEGV reading 0x20. The current host PC is JIT-generated code,
+    # so dladdr cannot name the game module. Symbolize the GUEST RIP against
+    # the loaded PS4 executable/module and log its relative offset instead.
+    # This changes only the fatal/crash path, not normal execution.
+    signals = root / "src/core/signals.cpp"
+    prefix_include(signals, '#include "core/linker.h"', "crash module linker API")
+    prefix_include(signals, '#include "core/module.h"', "crash module address API")
+    prefix_include(signals, '#include "common/singleton.h"', "crash module singleton")
+    old_signal = ('                LOG_CRITICAL(Debug, '
+                  '"FEX guest state at fault: rip={:#x} rax={:#x}", guest_rip,\\n'
+                  '                             guest_rax);')
+    new_signal = (old_signal +
+                  '\\n                if (auto* module = '
+                  'Common::Singleton<Core::Linker>::Instance()->FindByAddress(guest_rip)) {\\n'
+                  '                    LOG_CRITICAL(Debug, '
+                  '"BIONIC_GUEST_CRASH_MODULE file={} module_base={:#x} rip_offset={:#x}",\\n'
+                  '                                 module->file.string(), '
+                  'module->GetBaseAddress(), guest_rip - module->GetBaseAddress());\\n'
+                  '                }')
+    require_replace(signals, old_signal, new_signal,
+                    "symbolize guest RIP inside the original PS4 game module")
+    result["portedInterfaces"].append(
+        "FEX fatal guest RIP mapped to PS4 eboot/prx module+offset; "
+        "no speculative game-specific GPU or libc changes")
+
     return result
