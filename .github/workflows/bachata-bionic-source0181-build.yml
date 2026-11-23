@@ -50,6 +50,9 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m py_compile bionic/generic/*.py bionic/source0181/*.py
+          # Exercise x86 guest register/RSP/RET fiber transitions on a host mock
+          # BEFORE building Android/FEX, to catch missing assembly semantics.
+          python3 bionic/source0181/test_fex_fiber.py
           bash -n bionic/generic/build-generic.sh
           bash -n bionic/source0181/build_host_protoc.sh
           bash -n bionic/source0181/native_cache.sh
