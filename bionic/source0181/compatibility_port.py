@@ -631,14 +631,14 @@ void GameController::PollState() {
     # pipeline cache loader. Otherwise a rejected walker silently looks valid.
     require_replace(serialized,
                     "static constexpr u32 ShaderMetaVersion = 6u;",
-                    "static constexpr u32 ShaderMetaVersion = 8u;",
+                    "static constexpr u32 ShaderMetaVersion = 9u;",
                     "portable SRT shader metadata cache generation")
     require_replace(serialized,
                     "    info.Deserialize(ar);\n    return true;\n",
                     "    return info.Deserialize(ar);\n",
                     "propagate incompatible SRT cache deserialization")
     result["portedInterfaces"].append(
-        "ShaderMetaVersion 8; invalidate old permanently-zeroed SRT walkers and x86 JIT")
+        "ShaderMetaVersion 9; invalidate old permanently-zeroed SRT walkers and x86 JIT")
 
     # The 0.2.6 release ELF owns each copied DCB/CCB pair; upstream 0.18.1
     # instead aborts when the shared 2-MiB queue staging space is exhausted.
@@ -673,7 +673,7 @@ void GameController::PollState() {
     ).strip()
     if len(source_revision) != 40 or any(ch not in "0123456789abcdef" for ch in source_revision):
         raise RuntimeError("Invalid Bionic native core source Git revision")
-    parity_marker = "BACHATA_CORE_PARITY=20261123-SRT3-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1-RELEASEFIOS2-SAFDIRECT2-GPUCLAMP1-BUDGET1-RCSNAP1"
+    parity_marker = "BACHATA_CORE_PARITY=20261123-SRT4-GPUPAGE1-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1-RELEASEFIOS2-SAFDIRECT2-GPUCLAMP1-BUDGET1-RCSNAP1-IFILE1-FIOSERR1"
     revision_marker = "BACHATA_CORE_REVISION=" + source_revision
     emulator = root / "src/emulator.cpp"
     before = '    LOG_INFO(Loader, "Revision {}", Common::g_scm_rev);\n'
@@ -704,6 +704,9 @@ void GameController::PollState() {
 
     from port_release026_readconst_snapshot import apply as apply_readconst_snapshot
     result["release026ReadConstSnapshot"] = apply_readconst_snapshot(root)
+    # Track actual GPU-written guest descriptor pages before creating Vulkan bindings.
+    from port_release026_srt_page_readback import apply as apply_srt_gpu_pages
+    result["release026GpuWrittenSrtPageReadback"] = apply_srt_gpu_pages(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
@@ -713,6 +716,9 @@ void GameController::PollState() {
     # instead of leaving it enabled as a fallback.
     from port_release026_mount_alias import apply as apply_release026_alias
     result["release026Fios2MountAlias"] = apply_release026_alias(root)
+    # Correct false-success queries for a failed FIOS async operation.
+    from port_release026_fios_async_errors import apply as apply_fios_async_errors
+    result["release026FiosAsyncErrorSemantics"] = apply_fios_async_errors(root)
     result["portedInterfaces"].append(
         "Official 0.2.6/0.2.7 FIOS2 MountAlias guest backend parity: "
         "SAF/updates/mods preserved; no host-mount/PSARC alternate code")
