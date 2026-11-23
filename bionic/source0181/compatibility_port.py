@@ -600,4 +600,11 @@ void GameController::PollState() {
     result["portedInterfaces"].append(
         "ShaderMetaVersion 7; reject stale x86 SRT metadata and recompile safely")
 
+    # The 0.2.6 release ELF owns each copied DCB/CCB pair; upstream 0.18.1
+    # instead aborts when the shared 2-MiB queue staging space is exhausted.
+    from port_release026_cmd_buffers import apply as apply_owned_cmd_buffers
+    result["release026GpuCommandBufferParity"] = apply_owned_cmd_buffers(root)
+    result["portedInterfaces"].append(
+        "Bachata 0.2.6 owned PM4 DCB/CCB buffers retained by each GPU coroutine")
+
     return result
