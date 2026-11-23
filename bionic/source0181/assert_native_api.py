@@ -142,7 +142,7 @@ def audit(root: Path) -> None:
         "src/emulator.cpp": (
             "BIONIC_BOOT_STAGE=GUEST_LIBC_OBJECTS_END",
             "EmulatorSettings.IsLogAppend()",
-            "BACHATA_CORE_PARITY=20261123-SRT2-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1-PSARC1-ALIAS1-SAFD1",
+            "BACHATA_CORE_PARITY=20261123-SRT2-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1-RELEASEFIOS2-SAFDIRECT2",
             "BACHATA_CORE_REVISION="),
         "src/imgui/big_picture/big_picture.cpp": ("emulator->Restart(runEbootPath)",),
         "src/core/signals.cpp": ("BIONIC_HOST_FAULT_MODULE",
