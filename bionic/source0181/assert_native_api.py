@@ -279,12 +279,26 @@ def audit(root: Path) -> None:
                    'GuestInternalVprintf(', 'GuestInternalMemset('):
         if marker not in libc_boot:
             issues.append("FEX libcInternal ABI missing: " + marker)
+    for marker in ('BACHATA_FEX_LIBCINTERNAL_IMPORTS_READY',
+                   'INTERNAL_ALIAS("gQX+4GDQjpM", GuestMalloc)',
+                   'INTERNAL_ALIAS("tIhsqj0qsFE", GuestFree)',
+                   'INTERNAL_ALIAS("Q2V+iqvjgC0", GuestVsnprintf)',
+                   'INTERNAL_ALIAS("Q3VBxCXhUHs", GuestInternalMemcpy)'):
+        if marker not in libc_boot:
+            issues.append("Critical Shadow libcInternal import missing " + marker)
     # The frequently called PS4 libc _Sin NID requires Dinkumware quadrant ABI.
     libc_overlay = Path(__file__).resolve().parent.parent / "generic/android_libc_compat.cpp"
     libc_text = libc_overlay.read_text()
     if ('LIB_FUNCTION("MUjC4lbHrK4", "libSceLibcInternal"' not in libc_text or
         'GuestFflush(OrbisFILE* file)' not in libc_text):
         issues.append("FEX libcInternal fflush OrbisFILE bridge missing")
+    if ('AddPrintfAlias(sym, "hcuQgD53UxM", PrintKind::Printf, "libSceLibcInternal")' not in libc_text or
+        'LIB_FUNCTION("wLlFkwG9UcQ", "libSceLibcInternal"' not in libc_text):
+        issues.append("Real namespace printf/time HLE exports missing")
+    early_fios = (root / "src/core/libraries/libs.cpp").read_text()
+    if ('BACHATA_FIOS2_EARLY_HLE_READY' not in early_fios or
+        'Libraries::Fios2::RegisterLib(sym);' not in early_fios):
+        issues.append("Early complete FIOS2 HLE registration absent")
     if ('ALIAS("cCXjU72Z0Ow", Fex__Sin)' not in libc_text or
         'double PS4_SYSV_ABI Fex__Sin(double x, unsigned qoff)' not in libc_text):
         issues.append("PS4 _Sin quadrant HLE alias absent from Android FEX")

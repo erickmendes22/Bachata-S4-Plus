@@ -220,6 +220,26 @@ def apply(root: Path) -> dict:
                    "FEX libc internal exports")
     result["portedInterfaces"].append("0.18.1 HLE registration + FEX boot diagnostics")
 
+    # FIOS2 HLE was registered only when sceSysmoduleLoadModule was called.
+    # The real games import FIOS2 during ELF relocation, before that call.
+    # Boot registration must precede guest import relocation on Bionic.
+    prefix_include(libs, '#include "core/libraries/fios2/fios2.h"',
+                   "FIOS2 HLE module before guest ELF relocation")
+    require_replace(
+        libs,
+        '        Libraries::LibcInternal::ForceRegisterLib(sym);\n',
+        '        Libraries::LibcInternal::ForceRegisterLib(sym);\n'
+        '        // BACHATA_FIOS2_EARLY_HLE_READY: do not leave real FIOS2 NIDs ENOSYS.\n'
+        '        const bool fios_lle_staged =\n'
+        '            std::filesystem::exists(game_specific_modules_path / "libSceFios2.sprx") &&\n'
+        '            !std::filesystem::exists(game_specific_modules_path / "libSceFios2.use-hle");\n'
+        '        if (!fios_lle_staged) {\n'
+        '            Libraries::Fios2::RegisterLib(sym);\n'
+        '            LOG_INFO(Lib_Kernel, "BACHATA_FIOS2_EARLY_HLE_READY");\n'
+        '        }\n',
+        "register actual FIOS2 HLE before linker relocation")
+    result["portedInterfaces"].append("FIOS2 complete HLE NIDs early on FEX, unless LLE staged")
+
     # Real libSceFiber: shadPS4 desktop's x86 assembly is guarded by
     # ARCH_X86_64. The ARM64 FEX guest needs its own x86 frame switching
     # adapter, otherwise FIVE high-frequency Shadow of the Colossus HLE NIDs

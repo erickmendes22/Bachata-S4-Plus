@@ -206,6 +206,17 @@ void* PS4_SYSV_ABI GuestInternalMemset(void* dst, int value, std::size_t length)
     return std::memset(dst, value, length);
 }
 
+// Validate both sides of guest memory copies, never dereference raw host pointers.
+void* PS4_SYSV_ABI GuestInternalMemcpy(void* dst, const void* source, std::size_t bytes) {
+    if (bytes && (!IsGuestMapped(dst, bytes, true) ||
+                  !IsGuestMapped(source, bytes, false))) return nullptr;
+    return std::memcpy(dst, source, bytes);
+}
+int PS4_SYSV_ABI GuestInternalMemcmp(const void* a, const void* b, std::size_t bytes) {
+    if (bytes && (!IsGuestMapped(a, bytes, false) ||
+                  !IsGuestMapped(b, bytes, false))) return 0;
+    return std::memcmp(a, b, bytes);
+}
 // GMpvxPFW924 is vprintf: its va_list is 24-byte x86-64 SysV, not AArch64.
 int PS4_SYSV_ABI GuestInternalVprintf(const char* format, Common::VaList* ap) {
     constexpr std::size_t MaxPrint = 65536;
@@ -235,6 +246,25 @@ void RegisterFexLibcBootAliases(Core::Loader::SymbolsResolver* sym) {
                  "libSceLibcInternal", GuestInternalMemset);
     LIB_FUNCTION("GMpvxPFW924", "libSceLibcInternal", 1,
                  "libSceLibcInternal", GuestInternalVprintf);
+    // BACHATA_FEX_LIBCINTERNAL_IMPORTS_READY: real CUSA08809 imports from
+    // libSceLibcInternal, not the similarly named libc namespace.
+#define INTERNAL_ALIAS(nid, fn) LIB_FUNCTION(nid, "libSceLibcInternal", 1, "libSceLibcInternal", fn)
+    INTERNAL_ALIAS("gQX+4GDQjpM", GuestMalloc);
+    INTERNAL_ALIAS("tIhsqj0qsFE", GuestFree);
+    INTERNAL_ALIAS("Y7aJ1uydPMo", GuestRealloc);
+    INTERNAL_ALIAS("2X5agFjKxMc", GuestCalloc);
+    INTERNAL_ALIAS("Ujf3KzMvRmI", GuestMemalign);
+    INTERNAL_ALIAS("cVSk9y8URbc", GuestPosixMemalign);
+    INTERNAL_ALIAS("NDcSfcYZRC8", GuestMallocUsableSize);
+    INTERNAL_ALIAS("Q2V+iqvjgC0", GuestVsnprintf);
+    INTERNAL_ALIAS("Q3VBxCXhUHs", GuestInternalMemcpy);
+    INTERNAL_ALIAS("DfivPArhucg", GuestInternalMemcmp);
+    INTERNAL_ALIAS("+P6FRGH4LfA", FexMemmove);
+    INTERNAL_ALIAS("fJnpuVVBbKk", FexOperatorNew);
+    INTERNAL_ALIAS("hdm0YfMa7TQ", FexOperatorNew);
+    INTERNAL_ALIAS("lYDzBVE5mZs", FexOperatorDelete);
+    INTERNAL_ALIAS("FOt55ZNaVJk", FexOperatorDelete);
+#undef INTERNAL_ALIAS
     LIB_FUNCTION("gQX+4GDQjpM", "libc", 1, "libc", GuestMalloc);
     LIB_FUNCTION("tIhsqj0qsFE", "libc", 1, "libc", GuestFree);
     LIB_FUNCTION("Y7aJ1uydPMo", "libc", 1, "libc", GuestRealloc);

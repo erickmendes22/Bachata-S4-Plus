@@ -511,12 +511,13 @@ private:
     PrintKind mode;
 };
 
-void AddPrintfAlias(Core::Loader::SymbolsResolver* sym, const char* nid, PrintKind kind) {
+void AddPrintfAlias(Core::Loader::SymbolsResolver* sym, const char* nid, PrintKind kind,
+                    const char* library = "libc") {
     Core::Loader::SymbolResolver sr{};
     sr.name = nid;
-    sr.library = "libc";
+    sr.library = library;
     sr.library_version = 1;
-    sr.module = "libc";
+    sr.module = library;
     sr.type = Core::Loader::SymbolType::Function;
     sym->AddFunction(sr, std::make_shared<SysvPrintHle>(kind));
 }
@@ -620,6 +621,7 @@ void RegisterFexLibcCompatAliases(Core::Loader::SymbolsResolver* sym) {
     ALIAS("cpCOXWMgha0", GuestRand);
     ALIAS("VPbJwTCgME0", GuestSrand);
     ALIAS("wLlFkwG9UcQ", GuestTime);
+    LIB_FUNCTION("wLlFkwG9UcQ", "libSceLibcInternal", 1, "libSceLibcInternal", GuestTime);
     ALIAS("-VVn74ZyhEs", GuestDifftime);
     ALIAS("cCXjU72Z0Ow", Fex__Sin); // _Sin with quadrant offset
     ALIAS("H8ya2H00jbI", Fex_sin);
@@ -663,8 +665,10 @@ void RegisterFexLibcCompatAliases(Core::Loader::SymbolsResolver* sym) {
     add_guest_nonlocal_jump("lKEN2IebgJ0"); // longjmp
     add_guest_nonlocal_jump("+F+9hhi6k9Q"); // _longjmp
     AddPrintfAlias(sym, "hcuQgD53UxM", PrintKind::Printf);
+    AddPrintfAlias(sym, "hcuQgD53UxM", PrintKind::Printf, "libSceLibcInternal");
     AddPrintfAlias(sym, "tcVi5SivF7Q", PrintKind::Sprintf);
     AddPrintfAlias(sym, "eLdDw6l0-bU", PrintKind::Snprintf);
+    AddPrintfAlias(sym, "eLdDw6l0-bU", PrintKind::Snprintf, "libSceLibcInternal");
     AddPrintfAlias(sym, "fffwELXNVFA", PrintKind::Fprintf);
 #undef ALIAS
 }
