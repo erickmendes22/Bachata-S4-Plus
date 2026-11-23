@@ -702,6 +702,12 @@ void GameController::PollState() {
         "Release live Vulkan memory budget and VMA usage telemetry; texture GC "
         "adjusts to actual Android memory pressure")
 
+    from port_release026_readconst_snapshot import apply as apply_readconst_snapshot
+    result["release026ReadConstSnapshot"] = apply_readconst_snapshot(root)
+    result["portedInterfaces"].append(
+        "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
+        "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
+
     # Working official Release 0.2.6/0.2.7 does not parse PSARC here.
     # The former generic parser was a speculative divergence; remove it
     # instead of leaving it enabled as a fallback.
