@@ -66,8 +66,11 @@ static std::vector<ReadConstArray> PrepareSrtReadArrays(IR::Program& program,
                                                         const ResourceDiscoveryList& resources,
                                                         const Profile& profile) {
     std::vector<ReadConstArray> arrays;
-    if (!program.info.params ||
-        (EmulatorSettings.IsDirectMemoryAccessEnabled() && profile.support_bda)) {
+    // The pinned shadPS4 0.18.1 Profile has no support_bda member.
+    // Direct readconst specialization in this source is controlled solely
+    // by IsDirectMemoryAccessEnabled() (see EmitReadConst / CollectShaderInfo).
+    static_cast<void>(profile);
+    if (!program.info.params || EmulatorSettings.IsDirectMemoryAccessEnabled()) {
         return arrays;
     }
     std::vector<IR::Inst*> reads;
@@ -242,11 +245,9 @@ def apply(root: Path) -> dict:
 
     regs_path = root / "src/video_core/amdgpu/regs_shader.h"
     regs = updated[regs_path]
-    regs = replace_one(regs,
-        "    const size_t slots_size = bininfo.num_input_usage_slots * sizeof(Shader::ShaderInputUsageSlot);\n",
-        "    if (bininfo.num_input_usage_slots > 256) return;\n"
-        "    const size_t slots_size = bininfo.num_input_usage_slots * sizeof(Shader::ShaderInputUsageSlot);\n",
-        "bound shader footer slot count")
+    # num_input_usage_slots is u8 in the pinned BinaryInfo; its maximum is
+    # 255 and cannot overflow the 256-element input usage buffer. Do not emit
+    # a tautological comparison warning against 256 into the NDK build.
     regs = replace_one(regs,
         "            params.srt_metadata.resize(slots_address - code_address - bininfo.length);\n",
         "            // Corrupted SRT metadata must never request unbounded host memory.\n"
