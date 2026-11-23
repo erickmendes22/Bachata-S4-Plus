@@ -531,4 +531,59 @@ void GameController::PollState() {
     result["fexGuestNonLocalJumps"] = apply_guest_nonlocal_jump(root)
     result["portedInterfaces"].append("PS4 FreeBSD x86 setjmp/longjmp guest-native FEX veneers")
 
+    # The original 0.18.1 FlattenExtendedUserdataPass is x86/Xbyak-only.
+    # ARM64 previously reached UNREACHABLE_MSG during the first compute shader.
+    # Use the complete portable bytecode SRT walker (GPL-2.0+, Mark Hall 2026),
+    # adapted to our PS4 guest VMM, not a no-op that loses shader resources.
+    srt = root / "src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp"
+    original_srt = srt.read_text()
+    if ("#ifdef ARCH_X86_64" not in original_srt or
+        "FlattenExtendedUserdataPass unimplemented for target architecture." not in original_srt):
+        raise RuntimeError("Expected pinned 0.18.1 x86-only SRT source")
+    native_srt = Path(__file__).with_name("flatten_extended_userdata_arm64.cpp").read_text()
+    if ("BIONIC_PORTABLE_SRT_GUEST_VMM" not in native_srt or
+        "GenerateSrtProgram(program.info, pass_info);" not in native_srt or
+        "SrtOp::CopyExpr" not in native_srt):
+        raise RuntimeError("Incomplete ARM64 SRT resource walker")
+    srt.write_text(native_srt)
+
+    srt_h = root / "src/shader_recompiler/ir/passes/srt.h"
+    require_replace(
+        srt_h,
+        "using PFN_SrtWalker = void PS4_SYSV_ABI (*)(const u32* /*user_data*/, u32* /*flat_dst*/);\n"
+        "PFN_SrtWalker RegisterWalkerCode(const u8* ptr, size_t size);",
+        "using SrtWalkerCode = const u32*; // portable bytecode, not x86 JIT\n"
+        "SrtWalkerCode RegisterWalkerCode(const u8* ptr, size_t size);\n"
+        "void RunSrtWalker(SrtWalkerCode code, const u32* user_data, u32* flat_dst);",
+        "portable SRT ABI header")
+    require_replace(srt_h, "    PFN_SrtWalker walker_func{};",
+                    "    SrtWalkerCode walker_func{};",
+                    "portable SRT pointer type")
+
+    shader_info = root / "src/shader_recompiler/info.h"
+    require_replace(shader_info,
+                    "srt_info.walker_func(user_data.data(), flattened_ud_buf.data());",
+                    "RunSrtWalker(srt_info.walker_func, user_data.data(), flattened_ud_buf.data());",
+                    "actually execute ARM64 portable walker")
+
+    serialized = root / "src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp"
+    require_replace(serialized,
+                    "srt.Write(reinterpret_cast<void*>(walker_func), walker_func_size);",
+                    "std::vector<u32> portable_code(walker_func, walker_func + "
+                    "walker_func_size / sizeof(u32));\n"
+                    "        srt.Write(portable_code.data(), walker_func_size);",
+                    "serialize portable SRT code")
+    require_replace(serialized,
+                    "        walker_func = RegisterWalkerCode(ar.CurrPtr(), walker_func_size);\n"
+                    "        ar.Advance(walker_func_size);",
+                    "        walker_func = RegisterWalkerCode(ar.CurrPtr(), walker_func_size);\n"
+                    "        if (!walker_func) {\n"
+                    "            return false; // invalidate previous x86 JIT shader cache\n"
+                    "        }\n"
+                    "        ar.Advance(walker_func_size);",
+                    "deserialization of incompatible x86 pipeline cache")
+    result["portedInterfaces"].append(
+        "Full portable ARM64 SRT resource flattening and VMM-validated reads; "
+        "legacy x86 pipeline cache rejected")
+
     return result
