@@ -35,6 +35,9 @@ deps_ok() {
                 libswscale/swscale.h libswresample/swresample.h; do
     test -s "$prefix/include/$header" || return 1
   done
+  # SDL3 headers and linker .so are equally needed by shadPS4 CMake.
+  test -s "$prefix/lib/libSDL3.so" || return 1
+  test -s "$prefix/include/SDL3/SDL.h" || return 1
 }
 stage_ok() {
   local lib
