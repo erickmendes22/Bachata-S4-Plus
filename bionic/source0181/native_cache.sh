@@ -23,6 +23,19 @@ fex_ok() {
   test -s "$WORK/fex-android/FEXCore/Source/libFEXCore.a" || return 1
   [[ "$(git -C "$WORK/fex" rev-parse HEAD 2>/dev/null || true)" == "$FEX_REV" ]] || return 1
 }
+deps_ok() {
+  # Native CMake needs development libs+headers; the APK stage contains
+  # only runtime copies and is insufficient to configure shadPS4.
+  local prefix="$WORK/deps/prefix" lib header
+  for lib in avformat avcodec avutil avfilter swscale swresample; do
+    test -s "$prefix/lib/lib${lib}.so" || return 1
+  done
+  for header in libavformat/avformat.h libavcodec/avcodec.h \
+                libavutil/avutil.h libavfilter/avfilter.h \
+                libswscale/swscale.h libswresample/swresample.h; do
+    test -s "$prefix/include/$header" || return 1
+  done
+}
 stage_ok() {
   local lib
   for lib in libbbgpu.so libmain.so libbbprepare.so libSDL3.so \
@@ -41,6 +54,7 @@ restage_ok() {
   [[ "$(git -C "$WORK/libadrenotools" rev-parse HEAD 2>/dev/null || true)" == "$ADT_REV" ]] || return 1
   test -s "$WORK/adrenotools-android/libadrenotools.a" || return 1
   fex_ok || return 1
+  deps_ok || return 1
   for lib in libbbgpu.so libmain.so libbbprepare.so bb-probe; do
     test -s "$WORK/gpu-build/$lib" || return 1
   done
@@ -53,7 +67,7 @@ restage_ok() {
 }
 case "${1:-}" in
   check)
-    if stage_ok && fex_ok; then
+    if stage_ok && fex_ok && deps_ok; then
       if [[ -s "$MARKER" && "$(cat "$MARKER")" == "$FINGERPRINT" ]]; then
         echo ready
       elif restage_ok; then
@@ -63,6 +77,8 @@ case "${1:-}" in
       fi
     elif stage_ok && ! fex_ok && [[ "$(git -C "$PORT" rev-parse HEAD 2>/dev/null || true)" == "$LEGACY_PORT_REV" ]]; then
       echo repair_fex
+    elif stage_ok && fex_ok && ! deps_ok; then
+      echo repair_ffmpeg
     elif restage_ok; then
       echo restage
     else
@@ -71,6 +87,7 @@ case "${1:-}" in
   stamp)
     stage_ok || { echo "::error::Native stage incomplete, refusing to cache" >&2; exit 2; }
     fex_ok || { echo "::error::FEXCore libFEXCore.a missing: cannot cache invalid prerequisites" >&2; exit 2; }
+    deps_ok || { echo "::error::FFmpeg development headers/shared libraries missing: refuse cache stamp" >&2; exit 2; }
     printf '%s\n' "$FINGERPRINT" > "$MARKER"
     echo "BIONIC_NATIVE_PREREQS_VERIFIED=$FINGERPRINT" >&2 ;;
   *) echo "Usage: $0 check|stamp" >&2; exit 2 ;;
