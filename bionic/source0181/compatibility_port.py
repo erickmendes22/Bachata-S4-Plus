@@ -673,7 +673,7 @@ void GameController::PollState() {
     ).strip()
     if len(source_revision) != 40 or any(ch not in "0123456789abcdef" for ch in source_revision):
         raise RuntimeError("Invalid Bionic native core source Git revision")
-    parity_marker = "BACHATA_CORE_PARITY=20261123-SRT2-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1"
+    parity_marker = "BACHATA_CORE_PARITY=20261123-SRT2-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1-PSARC1-ALIAS1"
     revision_marker = "BACHATA_CORE_REVISION=" + source_revision
     emulator = root / "src/emulator.cpp"
     before = '    LOG_INFO(Loader, "Revision {}", Common::g_scm_rev);\n'
