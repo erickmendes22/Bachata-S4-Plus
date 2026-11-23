@@ -690,4 +690,14 @@ void GameController::PollState() {
         "Release 0.2.6 metadata: CMask/FMask/HTile live owner UID "
         "validation, address reuse and clear-mask preservation")
 
+    # Generic PSARC support is required by CUSA05170 (Dragon Quest Builders).
+    # Previous FEX FIOS2 returned fake success and mounted /app0 in place of
+    # /app0/build.psarc. Real archive bytes must be opened through the guest
+    # filesystem, including SAF, and presented as an IBackend.
+    from port_psarc_fios import apply as apply_psarc_fios
+    result["realFios2PsarcBackend"] = apply_psarc_fios(root)
+    result["portedInterfaces"].append(
+        "PSARC zlib read-only IBackend: actual archive TOC, lazy block reads, "
+        "valid mount/unmount lifecycle, SAF-backed source, no fake /app0 mount")
+
     return result

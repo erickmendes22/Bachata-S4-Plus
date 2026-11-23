@@ -56,6 +56,8 @@ jobs:
           # Exercise x86 guest register/RSP/RET fiber transitions on a host mock
           # BEFORE building Android/FEX, to catch missing assembly semantics.
           python3 bionic/source0181/test_fex_fiber.py
+          # Read a synthetic, multi-block zlib PSARC using the actual C++ IBackend.
+          python3 bionic/source0181/test_psarc_reader.py
           bash -n bionic/generic/build-generic.sh
           bash -n bionic/source0181/build_host_protoc.sh
           bash -n bionic/source0181/native_cache.sh
