@@ -134,6 +134,7 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == "1" ]]; then
     src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp
     src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
     src/video_core/renderer_vulkan/vk_instance.cpp
+    src/video_core/texture_cache/texture_cache.cpp
     src/video_core/renderer_vulkan/vk_platform.cpp
     src/core/libraries/gnmdriver/gnmdriver.cpp
     src/core/libraries/fios2/fios2.cpp
