@@ -65,6 +65,66 @@ restage_ok() {
   readelf -h "$WORK/gpu-build/libmain.so" | grep -q AArch64 || return 1
   readelf -d "$WORK/gpu-build/libmain.so" | grep -Fq 'Shared library: [libc.so]' || return 1
 }
+# The APK stage cache and the compiler dependency prefix use different
+# directories. A valid staged FFmpeg .so does NOT satisfy the CMake linker
+# check at deps/prefix/lib. Recover it from the pinned Android binaries.
+deps_prefix_ok() {
+  local name
+  for name in libavformat libavcodec libavutil libavfilter libswscale libswresample; do
+    test -s "$WORK/deps/prefix/lib/$name.so" || return 1
+  done
+  for name in avformat avcodec avutil avfilter swscale swresample; do
+    test -s "$WORK/deps/prefix/include/lib$name/$name.h" || return 1
+  done
+  test -s "$WORK/deps/prefix/lib/libSDL3.so" || return 1
+  test -s "$WORK/deps/prefix/include/SDL3/SDL.h" || return 1
+}
+restore_deps_prefix() {
+  local prefix="$WORK/deps/prefix" name lib from soname
+  mkdir -p "$prefix/lib"
+  for name in libavformat libavcodec libavutil libavfilter libswscale libswresample libSDL3; do
+    lib="$prefix/lib/$name.so"
+    if [[ ! -s "$lib" ]]; then
+      from="$STAGE/lib/arm64-v8a/$name.so"
+      test -s "$from" || {
+        echo "::error::Missing $name in both compiler prefix and native stage" >&2
+        return 4
+      }
+      rm -f "$lib"
+      cp -L "$from" "$lib"
+      soname="$(readelf -d "$from" | awk '/\(SONAME\)/ {sub(/.*\[/, ""); sub(/\].*/, ""); print; exit}')"
+      if [[ -n "$soname" && "$soname" != "$name.so" ]]; then
+        cp -L "$from" "$prefix/lib/$soname"
+      fi
+      echo "BIONIC_FFMPEG_PREFIX_REHYDRATED=$name"
+    fi
+  done
+  # The runtime .so contains no FFmpeg/SDL headers. Rebuild ONLY a missing
+  # dependency when the previous cache did not preserve its SDK headers.
+  if [[ ! -s "$prefix/include/libavformat/avformat.h" ||
+        ! -s "$prefix/include/libavcodec/avcodec.h" ||
+        ! -s "$prefix/include/libavutil/avutil.h" ||
+        ! -s "$prefix/include/libavfilter/avfilter.h" ||
+        ! -s "$prefix/include/libswscale/swscale.h" ||
+        ! -s "$prefix/include/libswresample/swresample.h" ]]; then
+    echo "BIONIC_FFMPEG_HEADERS_MISSING: selectively rebuild pinned FFmpeg SDK"
+    rm -f "$WORK/deps/build/ffmpeg.done"
+    sed -i 's/^J=$(nproc)$/J=${BACHATA_JOBS:-2}/' "$PORT/android/scripts/port-arm64/android_deps.sh"
+    DEPS="$WORK/deps" NDK="$NDK" bash "$PORT/android/scripts/port-arm64/android_deps.sh" ffmpeg
+  fi
+  if [[ ! -s "$prefix/include/SDL3/SDL.h" ]]; then
+    echo "BIONIC_SDL3_HEADERS_MISSING: selectively rebuild pinned SDL3 SDK"
+    rm -f "$WORK/deps/build/sdl3.done"
+    sed -i 's/^J=$(nproc)$/J=${BACHATA_JOBS:-2}/' "$PORT/android/scripts/port-arm64/android_deps.sh"
+    DEPS="$WORK/deps" NDK="$NDK" bash "$PORT/android/scripts/port-arm64/android_deps.sh" sdl3
+  fi
+  deps_prefix_ok || {
+    echo "::error::Native compiler prefix still lacks FFmpeg/SDL libs or headers" >&2
+    return 4
+  }
+  echo BIONIC_NATIVE_COMPILER_PREFIX_READY
+}
+
 case "${1:-}" in
   check)
     if stage_ok && fex_ok && deps_ok; then
@@ -84,11 +144,15 @@ case "${1:-}" in
     else
       echo rebuild
     fi ;;
+  restore_deps)
+    stage_ok || { echo "::error::Cannot restore compiler prefix from incomplete native stage" >&2; exit 2; }
+    restore_deps_prefix ;;
   stamp)
+    deps_prefix_ok || { echo "::error::Compiler prefix missing; run native_cache.sh restore_deps" >&2; exit 2; }
     stage_ok || { echo "::error::Native stage incomplete, refusing to cache" >&2; exit 2; }
     fex_ok || { echo "::error::FEXCore libFEXCore.a missing: cannot cache invalid prerequisites" >&2; exit 2; }
     deps_ok || { echo "::error::FFmpeg development headers/shared libraries missing: refuse cache stamp" >&2; exit 2; }
     printf '%s\n' "$FINGERPRINT" > "$MARKER"
     echo "BIONIC_NATIVE_PREREQS_VERIFIED=$FINGERPRINT" >&2 ;;
-  *) echo "Usage: $0 check|stamp" >&2; exit 2 ;;
+  *) echo "Usage: $0 check|restore_deps|stamp" >&2; exit 2 ;;
 esac
