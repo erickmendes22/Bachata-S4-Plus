@@ -19,6 +19,7 @@
 #include "core/libraries/libs.h"
 #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
 #include "common/va_ctx.h"
+#include "common/logging/log.h"
 #include "core/guest_cpu/guest_callback.h"
 #include "core/libraries/libc_internal/printf.h"
 #include "core/libraries/libc_internal/libc_internal_io.h"
