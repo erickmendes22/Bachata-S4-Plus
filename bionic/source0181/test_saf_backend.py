@@ -112,7 +112,7 @@ assert(a->Map(page.data(),page.size(),4096,123,ctx));
 assert(protected_with==123);
 assert(page[0]=='A'+4096%26&&page[4095]=='A'+8191%26);
 assert(!a->Map(page.data(),2,8191,0,ctx));
-assert(!a->Write(page.data(),100));
+assert(a->Write(page.data(),100)==-1);
 assert(!OpenSafGuestFile("/app0/absent.bin"));
 std::cout<<"BACHATA_SAF_DIRECT_FD_INDEPENDENT_READ_PASS\n";
 }
