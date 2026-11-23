@@ -141,8 +141,8 @@ def audit(root: Path) -> None:
     # The frequently called PS4 libc _Sin NID requires Dinkumware quadrant ABI.
     libc_overlay = Path(__file__).resolve().parent.parent / "generic/android_libc_compat.cpp"
     libc_text = libc_overlay.read_text()
-    if ('ALIAS("cCXjU72Z0Ow", Fex_DinkumSin)' not in libc_text or
-        'double PS4_SYSV_ABI Fex_DinkumSin(double x, unsigned qoff)' not in libc_text):
+    if ('ALIAS("cCXjU72Z0Ow", Fex__Sin)' not in libc_text or
+        'double PS4_SYSV_ABI Fex__Sin(double x, unsigned qoff)' not in libc_text):
         issues.append("PS4 _Sin quadrant HLE alias absent from Android FEX")
     # Catch CMake duplicate definitions *before* initializing NDK/FEX/cache.
     cmake = (root / "CMakeLists.txt").read_text()
