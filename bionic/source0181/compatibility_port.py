@@ -707,6 +707,11 @@ void GameController::PollState() {
     # Track actual GPU-written guest descriptor pages before creating Vulkan bindings.
     from port_release026_srt_page_readback import apply as apply_srt_gpu_pages
     result["release026GpuWrittenSrtPageReadback"] = apply_srt_gpu_pages(root)
+    # The Order 1886 can carry an invalid texture channel selector after a
+    # nonuniform SRT read. Reject that descriptor before image-view creation;
+    # never substitute identity swizzles or abort the whole emulator.
+    from port_release026_image_swizzle import apply as apply_image_swizzle
+    result["release026BadImageSwizzleGuard"] = apply_image_swizzle(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")

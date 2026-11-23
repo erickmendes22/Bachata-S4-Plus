@@ -101,6 +101,8 @@ def audit(root: Path) -> None:
                                                           "BACHATA_RELEASE026_GPU_LIVE_BUDGET",
                                                           "vmaGetHeapBudgets("),
         "src/video_core/renderer_vulkan/vk_rasterizer.cpp": (
+            "BACHATA_RELEASE026_IMAGE_SWIZZLE_GUARD",
+            "!swizzle_selector_valid",
             "BACHATA_RELEASE026_SRT_GPU_PAGE_READBACK",
             "ReadBackGpuWrittenSrtSources(*stage)",
             "buffer_cache.IsRangeGpuWritten(source,sizeof(u32))",
