@@ -86,9 +86,19 @@ def audit(root: Path) -> None:
         "src/video_core/renderer_vulkan/vk_instance.cpp": ("BIONIC_VULKAN_DEVICE",
                                                           "BACHATA_RELEASE026_GPU_LIVE_BUDGET",
                                                           "vmaGetHeapBudgets("),
+        "src/video_core/buffer_cache/buffer_cache.h": (
+            "bool IsRangeGpuWritten(VAddr addr, size_t size);",
+            "void TrackSrtSourcePage(VAddr page);",
+            "RangeSet srt_source_pages;"),
+        "src/video_core/buffer_cache/buffer_cache.cpp": (
+            "BACHATA_RELEASE026_SRT_GPU_RANGE_TRACKING",
+            "gpu_modified_ranges.Intersects(addr,size)",
+            "srt_source_pages.Add(page & ~u64{4095},4096)"),
         "src/video_core/renderer_vulkan/vk_rasterizer.cpp": (
             "BACHATA_RELEASE026_SRT_GPU_PAGE_READBACK",
             "ReadBackGpuWrittenSrtSources(*stage)",
+            "buffer_cache.IsRangeGpuWritten(source,sizeof(u32))",
+            "buffer_cache.TrackSrtSourcePage(page)",
             "buffer_cache.ReadMemory(page,PageSize,false,true);",
             "writable.RefreshFlatBuf();",
             "BACHATA_RELEASE026_READCONST_SNAPSHOT",
