@@ -148,3 +148,54 @@ The runtimeVersion and core marker remain automatically computed
 from actual ELF/commit by the previous verified packaging pipeline.
 This build requires repeat full ARM64 compile and P36 signature;
 successful static CI is not proof of gameplay.
+
+
+## Actual working Release core comparison (0.2.6 AND 0.2.7, Nov 23)
+
+Previous file \`Bachata-S4Plus-Release026-Auditoria-Binaria-20261123.md\`
+incorrectly identified a third ELF (\`3548cb4b...\`) as Release 0.2.6.
+I retrieved both official APK assets separately and verified both:
+- 0.2.6 native \`libbachata_native_runtime.so\`: SHA-256
+  \`f4ab401c9f05088d5379f466314fc74dadd37f0e7389d120e7490943e0ae7582\`;
+  85,180,416 bytes
+- 0.2.7 native \`libbachata_native_runtime.so\`: **identical SHA-256 and byte size**.
+- Latest Bionic APK before fixes: \`libbachata_bionic_core.so\`, 77,294,192 bytes
+  (SHA-256 \`ad2cd33dc3c155030d1e22eb980162bdc316515f2fa6add8ea6c00b3f462861b\`).
+
+The old parity report's claims that Release 0.2.6 exports
+\`Liverpool::ProcessCeQueue\`, \`TextureCache::ResolveCMaskOwner\`,
+\`BufferCache::AddGpuModified\`, \`BufferCache::BeginUploadBatch\` or
+\`EmitBdaLoad32\` were false for the real 0.2.6/0.2.7 ELF. These
+methods may be useful in newer code but cannot be justified by
+actual Release 0.2.6 parity.
+
+**Confirmed functional difference in actual AArch64 disassembly:**
+- Both real Releases:
+  \`Fios2::sceFiosArchiveMountSync\` calls
+  \`Core::FileSys::MntPoints::MountAlias("/app0", mount_point)\`
+  (BL at \`0x31a8228\`, after loading constant "/app0").
+  The Release \`MountAlias\` exists as a 2072-byte function at
+  \`0x2d43274\`, clones shared backend ownership and preserves
+  the overlays/SAF-backed files, not just host folder paths.
+- The Bionic 0.18.1 port had no \`MountAlias\`. It called
+  \`GetHostPath("/app0")\` and \`MntPoints::Mount(host,...)\`,
+  dropping existing guest backend layers. Then a proposed
+  PSARC-only fix changed this to fail when the archive is absent;
+  that diverged **further** from the working Release.
+
+**Corrected now:** \`port_release026_mount_alias.py\` adds the guest
+backend-clone method to 0.18.1 VFS, prioritizes
+\`MountAlias("/app0", mount_point)\` for FIOS2, and keeps the real
+PSARC reader only as a fallback when no /app0 guest backend exists.
+Alias unmount does not destroy in-use game handles, matching the
+old Release's no-op alias unmount behavior. Registered native marker:
+\`BACHATA_CORE_PARITY=20261123-SRT2-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1-PSARC1-ALIAS1\`.
+\`BACHATA_CORE_REVISION=<actual Git SHA>\` and runtimeVersion remain
+generated from the actual new ELF.
+
+**Independent still unresolved**: CUSA00785 GPU SRT Phi offsets
+and data_format=58; CUSA00552 pre-game guest null access; CUSA08809
+missing direct /app0 files, FIOS async return/callback. The true
+Release does not export some of the methods previously attributed
+to it, so do not claim these issues solved by unrelated GPU changes.
+Need device validation after this coherent VFS parity rebuild.
