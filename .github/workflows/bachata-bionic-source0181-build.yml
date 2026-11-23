@@ -371,17 +371,9 @@ jobs:
         run: |
           set -euo pipefail
           mode="$(NDK="$ANDROID_HOME/ndk/30.0.14904198" bash bionic/source0181/native_cache.sh check)"
-          case "$mode" in ready|restage|rebuild) ;; *) exit 2;; esac
+          case "$mode" in ready|restage|repair_fex|rebuild) ;; *) exit 2;; esac
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "BIONIC_NATIVE_CACHE_MODE=$mode"
-
-      - name: Build host protoc from matching pinned protobuf source and test ABI
-        run: |
-          set -euo pipefail
-          BACHATA_HOST_JOBS=6 bash bionic/source0181/build_host_protoc.sh
-          echo "$GITHUB_WORKSPACE/out/bionic/host-protoc-build" >> "$GITHUB_PATH"
-          test -s out/bionic/host-protoc-smoketest/shadnet.pb.cc
-          ! grep -Fq 'TcParser::MpUnknownFields' out/bionic/host-protoc-smoketest/shadnet.pb.cc
 
       - name: Reuse, restage or rebuild native FEXCore/Vulkan prerequisites
         shell: bash
@@ -394,6 +386,11 @@ jobs:
             NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 \
               BACHATA_REUSE_NATIVE_BUILD=1 bash bionic/build-core.sh
             NDK="$ANDROID_HOME/ndk/30.0.14904198" bash bionic/source0181/native_cache.sh stamp
+          elif [[ "$mode" == "repair_fex" ]]; then
+            echo "BACHATA_REPAIR_ONLY_MISSING_FEXCORE_NOT_ALL_DEPENDENCIES"
+            NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 \
+              BACHATA_REPAIR_FEX_ONLY=1 bash bionic/build-core.sh
+            NDK="$ANDROID_HOME/ndk/30.0.14904198" bash bionic/source0181/native_cache.sh stamp
           elif [[ "$mode" == "rebuild" ]]; then
             NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 bash bionic/build-core.sh
             NDK="$ANDROID_HOME/ndk/30.0.14904198" bash bionic/source0181/native_cache.sh stamp
@@ -401,6 +398,14 @@ jobs:
             echo "::error::Unrecognized prerequisite cache mode"
             exit 2
           fi
+
+      - name: Build host protoc from matching pinned protobuf source and test ABI
+        run: |
+          set -euo pipefail
+          BACHATA_HOST_JOBS=6 bash bionic/source0181/build_host_protoc.sh
+          echo "$GITHUB_WORKSPACE/out/bionic/host-protoc-build" >> "$GITHUB_PATH"
+          test -s out/bionic/host-protoc-smoketest/shadnet.pb.cc
+          ! grep -Fq 'TcParser::MpUnknownFields' out/bionic/host-protoc-smoketest/shadnet.pb.cc
 
       - name: Cache native prerequisites immediately before full C++ compilation
         uses: actions/cache/save@v4
