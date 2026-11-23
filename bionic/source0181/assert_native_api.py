@@ -34,9 +34,12 @@ def audit(root: Path) -> None:
         "src/core/libraries/kernel/threads/semaphore.cpp": (
             ".Insert(", ".IsAllocated(", ".Erase(",
             "orbis_sems.ResizeDestructive(0xFFFFu);"),
-        "src/core/libraries/libs.cpp": ("ForceRegisterLib(sym);",
-                                        "BIONIC_BOOT_STAGE=LIBC_HLE_END",
-                                        "libSceNpCommerce.sprx"),
+        "src/core/libraries/libs.cpp": (
+            "ForceRegisterLib(sym);",
+            "BIONIC_BOOT_STAGE=LIBC_HLE_END",
+            "libSceNpCommerce.sprx",
+            '"libSceFiber.sprx", Libraries::Fiber::RegisterFexFiberBridge',
+            "#elif defined(SHADPS4_ENABLE_FEX_GUEST_CPU)"),
         "src/core/file_sys/fs.h": ("std::unique_ptr<IFile> handle;", "GetHostFile() const"),
         "src/core/memory.cpp": ("file->GetHostFile()", "file->GetSize()"),
         "src/core/libraries/videoout/driver.cpp": ("BIONIC_PRESENT_IDLE_SKIP",
@@ -176,8 +179,29 @@ def audit(root: Path) -> None:
     if ('ALIAS("cCXjU72Z0Ow", Fex__Sin)' not in libc_text or
         'double PS4_SYSV_ABI Fex__Sin(double x, unsigned qoff)' not in libc_text):
         issues.append("PS4 _Sin quadrant HLE alias absent from Android FEX")
+    # Fiber functions were previously all ENOSYS because x86-only
+    # shadPS4 fibers were deliberately omitted on Android ARM64.
+    fiber = Path(__file__).resolve().parent.parent / "generic/android_fex_fiber.cpp"
+    if not fiber.is_file():
+        issues.append("Android native FEX guest fiber state bridge missing")
+    else:
+        fiber_source = fiber.read_text()
+        required_nids = (
+            "hVYD7Ou2pCQ", "asjUJJ+aa8s", "a0LLrZWac0M",
+            "uq2Y5BFz0PE", "JzyT91ucGDc", "PFT2S-tJ7Uk",
+            "B0ZX2hx9DMw", "avfGJ94g36Q", "ZqhZFuzKT6U",
+        )
+        for nid in required_nids:
+            if nid not in fiber_source:
+                issues.append("FEX fiber NID missing: " + nid)
+        for marker in ("RegisterFexFiberBridge", "f.gpr[RSP]=r.rsp",
+                       "std::make_shared<FiberBridge>", "Start(f,next,*incoming)"):
+            if marker not in fiber_source:
+                issues.append("FEX fiber true guest state logic missing: " + marker)
     # Catch CMake duplicate definitions *before* initializing NDK/FEX/cache.
     cmake = (root / "CMakeLists.txt").read_text()
+    if "android_fex_fiber.cpp" not in cmake:
+        issues.append("FEX native fiber HLE absent from native core link")
     if re.search(r"(?m)^\\s*src/sdl_window\\.cpp\\s*$", cmake):
         issues.append("CMakeLists.txt: desktop SDL source conflicts with android_window.cpp")
     if cmake.count("${BACHATA_ANDROID_WINDOW_SOURCE}") < 2:
