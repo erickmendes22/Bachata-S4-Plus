@@ -123,6 +123,9 @@ def apply(root: Path) -> dict:
         ReadBackGpuWrittenSrtSources(*stage);
         set_writes.resize(set_writes.size() + stage->buffers.size()""",
            "readback SRT source pages BEFORE binding any GPU descriptors")
+    rc=sub(rc, '#include "common/debug.h"\n',
+           '#include <unordered_set>\n#include "common/debug.h"\n',
+           "deduplicate GPU-modified SRT source pages")
     rc=sub(rc,
            "bool Rasterizer::BindResources(const Pipeline* pipeline) {",
            r"""// BACHATA_RELEASE026_SRT_GPU_PAGE_READBACK
@@ -141,7 +144,7 @@ void Rasterizer::ReadBackGpuWrittenSrtSources(const Shader::Info& stage) {
             const VAddr page=source&PageMask;
             if(!visited.insert(page).second)continue;
             if(!buffer_cache.IsRegionGpuModified(page,PageSize))continue;
-            if(!memory->IsValidMapping(page))continue;
+            if(!IsMapped(page,PageSize))continue;
             // Called on the Liverpool GPU command thread. ReadMemory's
             // assume_locks=true calls DownloadMemory directly, avoiding
             // a recursive SendCommand<true> and waiting for the actual GPU
