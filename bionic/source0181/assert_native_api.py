@@ -94,7 +94,9 @@ def audit(root: Path) -> None:
             "VideoOut::sceVideoOutSubmitEopFlip(vo_handle, buf_idx, flip_mode,",),
         "src/video_core/renderer_vulkan/vk_presenter.cpp": (
             "#include <png.h>", "png_write_image(",
-            "GetSplashPath()", "DecodePngFile(splash_path)"),
+            "GetSplashPath()", "DecodePngFile(splash_path)",
+            "BACHATA_GUEST_SIZED_INTERMEDIATE", "BACHATA_IDENTITY_DISPLAY",
+            "BACHATA_DISPLAY_PATH", "opaque_sampled_view"),
         "src/core/libraries/sysmodule/sysmodule_internal.h": (
             "g_need_scelibc", "g_need_fios2"),
         "src/core/libraries/sysmodule/sysmodule_internal.cpp": (

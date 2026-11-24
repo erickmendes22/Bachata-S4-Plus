@@ -762,6 +762,8 @@ void GameController::PollState() {
     result["bionicRuntimeParity"] = apply_bionic_runtime_parity(root)
     from port_bionic_hotpaths import apply as apply_bionic_hotpaths
     result["bionicHotpaths"] = apply_bionic_hotpaths(root)
+    from port_bionic_present_cache import apply as apply_present_cache
+    result["bionicPresentCache"] = apply_present_cache(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")

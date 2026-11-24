@@ -1,0 +1,5 @@
+# Bionic display/cache parity
+GoW3 239b7df8145e validated driver-cache envelope; The Order c063ff15dfc5 and 639d7d024aa7 identity presentation.
+0.18.1 uses Android native-window Vulkan WSI with ImGui composition, not the ports' AHB external memory/socket release fence protocol. Without FSR, the original intermediate follows screen size; this change retains guest size and scales only in final composition. The identity fast path requires actual single-sample 8-bit backing and matching size/unit gamma/SDR; compatible RGB bytes copy directly or nearest UNORM blit swaps channels. ImGui uses separate opaque sampled view, not a nonidentity attachment view. FSR/HDR/gamma path remains intact. Existing screenshots and dialogs retain ImGui.
+Driver cache initialized before WarmUp (the upstream code dereferences it when reconstructing pipelines); persistent donor envelope validates driver/GPU/UUID/header/checksum. Clean destruction saves it. No background checkpoints yet.
+Remaining: real AHB/SurfaceControl integration, render-size native surface buffers, SRT native JIT, donor draw/transfer pipeline. Device timing not established; no claim of a measured FPS improvement.
