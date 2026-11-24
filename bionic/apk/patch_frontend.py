@@ -56,9 +56,10 @@ def main() -> None:
     body = file.read_text(encoding="utf-8")
     if body.count(OLD) != 1:
         raise SystemExit("Refusing wrong dex: NativeRuntimeBridge.<clinit> anchor mismatch")
-    body = body.replace(OLD, NEW, 1)
-    if "loadCoreAndSetupJNI(" in body:
+    # Check the original smali declarations, not the explanatory comment in NEW.
+    if any(line.lstrip().startswith(".method ") and "loadCoreAndSetupJNI(" in line for line in body.splitlines()):
         raise SystemExit("Core boot helper already present: refuse double patch")
+    body = body.replace(OLD, NEW, 1)
     body += CORE_HELPER
     file.write_text(body, encoding="utf-8")
     print("BIONIC_FRONTEND_DEFERRED_CORE_LOAD_READY: adapter first; core and SDL initialized after service setup")
