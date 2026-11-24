@@ -1773,7 +1773,10 @@ static int decode_unit(Voice *v) {
         if (s->at9_ok && s->at9_sf_fill == sf) {
             int16_t pcm[UNIT_FRAMES * MAX_CH];
             int bytes = 0;
-            if (s->at9_sf_pos >= sf || Atrac9Decode(s->at9, s->at9_sf + s->at9_sf_pos, pcm, &bytes) || bytes <= 0) {
+            /* The pinned shadPS4 LibAtrac9 API has a fifth nointerleave argument.
+             * Zero preserves the donor's frame-major PCM layout (pcm[i * c_in + c]). */
+            if (s->at9_sf_pos >= sf ||
+                Atrac9Decode(s->at9, s->at9_sf + s->at9_sf_pos, pcm, &bytes, 0) || bytes <= 0) {
                 ++stat_errors;
                 note("ATRAC9 decode error in frame %u of a %u-byte superframe", s->at9_frame_in_superframe, sf);
                 s->at9_sf_fill = 0;   /* the rest of the superframe is dropped */

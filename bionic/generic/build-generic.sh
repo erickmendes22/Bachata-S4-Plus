@@ -134,6 +134,11 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == "1" ]]; then
     src/core/module.cpp
     src/video_core/renderer_vulkan/vk_presenter.cpp
     src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp
+    src/shader_recompiler/ir/passes/resource_patching_pass.cpp
+    src/shader_recompiler/backend/spirv/spirv_emit_context.cpp
+    src/shader_recompiler/recompiler.cpp
+    src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+    src/video_core/renderer_vulkan/vk_rasterizer.cpp
     src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
     src/video_core/renderer_vulkan/vk_instance.cpp
     src/video_core/texture_cache/texture_cache.cpp
@@ -178,7 +183,18 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == "1" ]]; then
     fi
     priority_objects+=("$object")
   done
-  echo "BIONIC_CPP_FAIL_FAST_START: ${#priority_objects[@]} critical units before bulk build"
+  # CMake places external overlay objects under an absolute-path-derived
+  # Ninja target. Resolve the actual graph and require BOTH NGS2 donor files.
+  # Compile them with the real pinned LibAtrac9/NDK ABI before the bulk target.
+  for source in sotc_ngs2_mixer.c donor_parity_bridge.cpp android_libc_compat.cpp android_libc_boot.cpp android_fex_fiber.cpp; do
+    mapfile -t overlay_matches < <(awk -v suffix="/${source}.o:" 'index($1,suffix) && substr($1,length($1)-length(suffix)+1)==suffix && $1 ~ /^CMakeFiles\/shadps4\.dir\// {sub(/:$/,"",$1);print $1}' "$WORK/ndk-ninja-targets.txt")
+    if (( ${#overlay_matches[@]} != 1 )); then
+      echo "::error::Early native ABI gate expected one object for $source, found ${#overlay_matches[@]}" >&2
+      exit 3
+    fi
+    priority_objects+=("${overlay_matches[0]}")
+  done
+  echo "BIONIC_CPP_FAIL_FAST_START: ${#priority_objects[@]} critical C/C++ units before bulk build"
   set +e
   ninja -C "$BUILD" -j "$JOBS" -k 1 "${priority_objects[@]}" 2>&1 | tee "$WORK/ndk-cxx-early.log"
   early_status=${PIPESTATUS[0]}
@@ -189,14 +205,7 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == "1" ]]; then
     echo "::error::Early C++ ABI gate failed; bulk build cancelled."
     exit "$early_status"
   fi
-  # The Bionic libc jump registration is an overlay source outside the
-  # shadPS4 checkout and must be validated before the 400-object build.
-  bionic_jump_object="$(grep -F 'android_libc_compat.cpp.o:' "$WORK/ndk-ninja-targets.txt" | head -n1 | cut -d':' -f1)"
-  if [[ -z "$bionic_jump_object" ]]; then
-    echo "::error::FEX libc jump adapter is not in the Ninja graph" >&2
-    exit 3
-  fi
-  ninja -C "$BUILD" -j "$JOBS" -k 1 "$bionic_jump_object"
+  # The FEX libc jump overlay was compiled in the same gate above.
   echo "BIONIC_GUEST_LIBC_JUMP_COMPILER_PASS"
   echo "BIONIC_CPP_FAIL_FAST_PASS: ${#priority_objects[@]} reusable compiled objects"
   # A source-level declaration check is insufficient: ensure the actual
