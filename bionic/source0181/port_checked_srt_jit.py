@@ -16,6 +16,12 @@ def apply(root:Path):
 r'''std::deque<std::unique_ptr<u32[]>> g_walkers;
 using CheckedNative=Shader::CheckedArm64Srt::Native;
 std::deque<std::unique_ptr<CheckedNative>> g_native_walkers;
+// Byte-identical programs share their portable representation and generated
+// RX mapping. Shader metadata remains distinct, with no cached guest values.
+struct InternedWalker { const u32* code; size_t words; };
+std::unordered_multimap<u64,InternedWalker> g_interned_walkers;
+size_t g_native_mapping_bytes{};
+constexpr size_t NativeMappingBudget=32_MB;
 static_assert(static_cast<u32>(SrtOp::End)==Shader::CheckedArm64Srt::End &&
               static_cast<u32>(SrtOp::PopPtr)==Shader::CheckedArm64Srt::PopPtr &&
               static_cast<u32>(SrtOp::Bfe)==Shader::CheckedArm64Srt::Bfe);
@@ -28,15 +34,32 @@ constexpr size_t NativePrefix=(sizeof(CheckedNative*)+sizeof(u32)-1)/sizeof(u32)
     std::scoped_lock lock{g_walker_mutex};
     return g_walkers.emplace_back(std::move(copy)).get();''',
 r'''    // Runtime-only prefix; persisted data still starts with SRT1.
+    const bool legacy=BachataCompat::Sotc608();
+    std::scoped_lock lock{g_walker_mutex};
+    u64 hash=1469598103934665603ULL;
+    if(!legacy) {
+        for(size_t i=0;i<words;++i)hash=(hash^code[i])*1099511628211ULL;
+        const auto [begin,end]=g_interned_walkers.equal_range(hash);
+        for(auto it=begin;it!=end;++it) {
+            if(it->second.words==words &&
+               std::memcmp(it->second.code,code,words*sizeof(u32))==0)
+                return it->second.code;
+        }
+    }
     auto copy=std::make_unique<u32[]>(words+NativePrefix);
-    auto native=BachataCompat::Sotc608()?nullptr:
-        CheckedNative::Create({code,words},CheckedPush,CheckedCopy);
+    auto native=(!legacy&&g_native_mapping_bytes<NativeMappingBudget)?
+        CheckedNative::Create({code,words},CheckedPush,CheckedCopy):nullptr;
+    if(native&&native->bytes>NativeMappingBudget-g_native_mapping_bytes)native.reset();
     const CheckedNative* entry=native.get();
     std::memcpy(copy.get(),&entry,sizeof(entry));
     std::memcpy(copy.get()+NativePrefix,code,words*sizeof(u32));
-    std::scoped_lock lock{g_walker_mutex};
-    if(native)g_native_walkers.emplace_back(std::move(native));
-    return g_walkers.emplace_back(std::move(copy)).get()+NativePrefix;''')
+    if(native) {
+        g_native_mapping_bytes+=native->bytes;
+        g_native_walkers.emplace_back(std::move(native));
+    }
+    const u32* stored=g_walkers.emplace_back(std::move(copy)).get()+NativePrefix;
+    if(!legacy)g_interned_walkers.emplace(hash,InternedWalker{stored,words});
+    return stored;''')
     edit('void DumpSrtProgram(const Shader::Info& info, const u32* code, size_t words) {',
 r'''u64 CheckedPush(void* opaque,u64 cur,u32 off,u32 zero,u32 opcode) {
     auto& ctx=*static_cast<NativeContext*>(opaque);

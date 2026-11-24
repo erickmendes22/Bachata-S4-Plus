@@ -781,6 +781,8 @@ void GameController::PollState() {
     result["parallelPhysicalUpload"] = apply_parallel_upload(root)
     from port_ahb_present import apply as apply_ahb_present
     result["ahbPresent"] = apply_ahb_present(root)
+    from port_vertex_unused_rates import apply as apply_vertex_rates
+    result["unusedVertexRateSpecialization"] = apply_vertex_rates(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
