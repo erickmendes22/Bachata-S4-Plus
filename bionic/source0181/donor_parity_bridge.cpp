@@ -8,6 +8,8 @@
 #include "core/linker.h"
 #include "core/libraries/libs.h"
 #include "core/memory.h"
+#include "common/elf_info.h"
+#include "shader_recompiler/info.h"
 
 extern "C" {
 int32_t BachataNgs2SystemCreateWithAllocator(const void* option, const void* allocator, uintptr_t* out);
@@ -56,5 +58,29 @@ bool IsBachataMappedImageBase(u64 address) {
     if (!address || address >= 0x10000000000ULL) return false;
     auto* memory = Core::Memory::Instance();
     return memory->IsValidGpuMapping(address, 0) && memory->ClampGpuRangeSize(address, 1) == 1;
+}
+}
+
+namespace Shader {
+u32 DynamicTsharpArraySize() {
+    return Common::ElfInfo::Instance().GameSerial()=="CUSA08809" ? MAX_TSHARP_ARRAY_SIZE : 0;
+}
+void Info::RefreshSharpTables() {
+    auto* memory=Core::Memory::Instance();
+    for (const auto& table:sharp_tables) {
+        const u64 words=table.NumDwords();
+        if (table.ptr_lo>=flattened_ud_buf.size() || table.ptr_hi>=flattened_ud_buf.size() ||
+            u64(table.flatbuf_off)+words>flattened_ud_buf.size()) continue;
+        auto* dst=flattened_ud_buf.data()+table.flatbuf_off;
+        const VAddr base=(VAddr(flattened_ud_buf[table.ptr_lo]) |
+                         (VAddr(flattened_ud_buf[table.ptr_hi])<<32)) & 0xffffffffffULL;
+        const VAddr src=base+u64(table.offset_dw)*4;
+        if (!base || src>=0x10000000000ULL || words*4>0x10000000000ULL-src ||
+            !memory->TryReadBacking(src,dst,words*4)) {
+            std::memset(dst,0,words*4);
+            continue;
+        }
+        for (u64 j=0;j<words;++j) srt_guest_sources[table.flatbuf_off+j]=src+j*4;
+    }
 }
 }

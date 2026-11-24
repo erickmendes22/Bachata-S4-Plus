@@ -750,6 +750,8 @@ void GameController::PollState() {
     result["donorUploadTransaction"] = apply_upload_transaction(root)
     from port_backing_and_uma import apply as apply_backing_uma
     result["backingAndUmaParity"] = apply_backing_uma(root)
+    from port_sotc_tsharp_arrays import apply as apply_sotc_tsharp_arrays
+    result["sotcTsharpArrays"] = apply_sotc_tsharp_arrays(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")

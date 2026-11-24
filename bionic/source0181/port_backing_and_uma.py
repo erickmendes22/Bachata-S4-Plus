@@ -280,11 +280,11 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
         // Keep existing data and all non-eligible spans in the old staging path.
         // This reduces the working set without truncating raw GCN buffers.
         u64 saved=0;
-        std::erase_if(copies,[&](const vk::BufferCopy& copy) {
+        copies.erase(std::remove_if(copies.begin(),copies.end(),[&](const vk::BufferCopy& copy) {
             if (!UploadFreshBacking(copy.dstOffset,copy.size)) return false;
             saved+=copy.size;
             return true;
-        });
+        }),copies.end());
         if (saved) {
             total_size_bytes=0;
             for (auto& copy:copies) {

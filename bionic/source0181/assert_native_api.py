@@ -74,7 +74,9 @@ def audit(root: Path) -> None:
             "if (out_handle != nullptr) *out_handle = -1;"),
         "src/core/memory.cpp": ("file->GetHostFile()", "file->GetSize()",
                                  "BACHATA_RELEASE026_GPU_RANGE_CLAMP",
-                                 "ClampGpuRangeSize(VAddr address, u64 requested)"),
+                                 "ClampGpuRangeSize(VAddr address, u64 requested)",
+                                 "BACHATA_PHYSICAL_BACKING_ALIAS", "VisitPhysicalSpans",
+                                 "bool MemoryManager::TryReadBacking"),
         "src/core/libraries/videoout/driver.cpp": ("BIONIC_PRESENT_IDLE_SKIP",
                                                     "PrepareBlankFrame(true)"),
         "src/core/libraries/videoout/driver.h": ("bool SubmitFlip(VideoOutPort*",),
@@ -173,9 +175,6 @@ def audit(root: Path) -> None:
             "bool IsRangeGpuWritten(VAddr addr, size_t size);",
             "void TrackSrtSourcePage(VAddr page);",
             "RangeSet srt_source_pages;"),
-        "src/core/memory.cpp": (
-            "BACHATA_PHYSICAL_BACKING_ALIAS", "VisitPhysicalSpans",
-            "bool MemoryManager::TryReadBacking"),
         "src/video_core/page_manager.cpp": (
             "EnsurePages((base_page+page_start)<<PM_PAGE_BITS,", "page_reservation_mutex"),
         "src/video_core/buffer_cache/buffer_cache.cpp": (
@@ -187,7 +186,7 @@ def audit(root: Path) -> None:
             "texture_cache.ResolveCMaskOwner(device_addr)"),
         "src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp": (
             "std::vector<u32> portable_code(", "if (!walker_func) {",
-            "ShaderMetaVersion = 15u;", "return info.Deserialize(ar) && effective_info.Deserialize(ar);"),
+            "ShaderMetaVersion = 16u;", "return info.Deserialize(ar) && effective_info.Deserialize(ar);"),
         "src/core/guest_cpu/hle_call_adapter.cpp": (
             "BIONIC_GUEST_X86_NONLOCAL_JUMP", "gNQ1V2vfXDE",
             "lKEN2IebgJ0", "guest_setjmp[]", "guest_longjmp[]",
