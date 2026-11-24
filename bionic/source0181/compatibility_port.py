@@ -744,6 +744,8 @@ void GameController::PollState() {
     result["release026BadImageSwizzleGuard"] = apply_image_swizzle(root)
     from port_donor_parity import apply as apply_donor_parity
     result["shadowOrderDonorParity"] = apply_donor_parity(root)
+    from port_historical_donor_fixes import apply as apply_historical_donor_fixes
+    result["shadowOrderHistoricalParity"] = apply_historical_donor_fixes(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")

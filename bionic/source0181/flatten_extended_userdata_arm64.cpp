@@ -368,7 +368,8 @@ struct PassInfo {
     u16 dst_off_dw;
 
     PtrUserList* GetUsesAsPointer(IR::Inst* inst) {
-        auto it = pointer_uses.find(inst);
+        // The Order historical fdb3fc06: lookup must match the canonical GVN insertion key.
+        auto it = pointer_uses.find(DeduplicateInstruction(inst));
         if (it != pointer_uses.end()) {
             return &it->second;
         }
@@ -612,7 +613,8 @@ static bool EmitOffset(Code& c, PassInfo& pass_info, const IR::Value& off_dw) {
 // An offset may depend on a read that is assigned later in the same subtree
 // or a different SGPR root. Do not replace genuinely divergent lanes with zero.
 static void VisitPointer(const IR::Value& off_dw, IR::Inst* subtree,
-                         PassInfo& pass_info, Code& c) {
+                         PassInfo& pass_info, Code& c,
+                         std::unordered_set<IR::Inst*>& active) {
     if ((subtree->GetOpcode() == IR::Opcode::ReadConst &&
          subtree->Flags<u16>() == 0) ||
         (subtree->GetOpcode() == IR::Opcode::ReadConstBuffer &&
@@ -627,6 +629,8 @@ static void VisitPointer(const IR::Value& off_dw, IR::Inst* subtree,
     }
     const auto* uses = pass_info.GetUsesAsPointer(subtree);
     if (!uses) return;
+    auto* canonical_root = pass_info.DeduplicateInstruction(subtree);
+    if (!active.insert(canonical_root).second) return;
     c.insert(c.end(), prefix.begin(), prefix.end());
     using Pending = std::pair<IR::Value, IR::Inst*>;
     std::vector<Pending> pending;
@@ -647,6 +651,13 @@ static void VisitPointer(const IR::Value& off_dw, IR::Inst* subtree,
         bool progress = false;
         for (size_t i = 0; i < pending.size();) {
             const auto [offset, use] = pending[i];
+            // Two pending duplicate uses may resolve in the same dependency wave.
+            if (const u16 slot = GetFlatbufOffset(pass_info.DeduplicateInstruction(use)); slot) {
+                SetFlatbufOffset(use, slot);
+                pending.erase(pending.begin() + i);
+                progress = true;
+                continue;
+            }
             Code expr;
             if (!offset.IsImmediate() && !EmitOffset(expr, pass_info, offset)) {
                 ++i; // The flatbuf slot is not available yet.
@@ -669,9 +680,10 @@ static void VisitPointer(const IR::Value& off_dw, IR::Inst* subtree,
     }
     for (const auto& [offset, use] : *uses) {
         if (GetFlatbufOffset(use) && pass_info.GetUsesAsPointer(use))
-            VisitPointer(offset, use, pass_info, c);
+            VisitPointer(offset, use, pass_info, c, active);
     }
     Emit(c, SrtOp::PopPtr);
+    active.erase(canonical_root);
 }
 
 static void GenerateSrtProgram(Info& info, PassInfo& pass_info) {
@@ -683,8 +695,10 @@ static void GenerateSrtProgram(Info& info, PassInfo& pass_info) {
     const size_t limit = pass_info.pointer_uses.size() + 1;
     for (size_t round = 0; round < limit; ++round) {
         const u16 before = pass_info.dst_off_dw;
-        for (const auto& [sgpr, root] : pass_info.srt_roots)
-            VisitPointer(IR::Value(static_cast<u32>(sgpr)), root, pass_info, code);
+        for (const auto& [sgpr, root] : pass_info.srt_roots) {
+            std::unordered_set<IR::Inst*> active;
+            VisitPointer(IR::Value(static_cast<u32>(sgpr)), root, pass_info, code, active);
+        }
         if (pass_info.dst_off_dw == before) break;
     }
     size_t unresolved = 0;
