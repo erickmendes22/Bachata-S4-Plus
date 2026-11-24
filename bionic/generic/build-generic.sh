@@ -135,6 +135,7 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == "1" ]]; then
     src/video_core/renderer_vulkan/vk_presenter.cpp
     src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp
     src/shader_recompiler/ir/passes/resource_patching_pass.cpp
+    src/shader_recompiler/ir/passes/lower_wave64_pass.cpp
     src/shader_recompiler/backend/spirv/spirv_emit_context.cpp
     src/shader_recompiler/recompiler.cpp
     src/video_core/renderer_vulkan/vk_pipeline_cache.cpp

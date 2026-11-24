@@ -56,9 +56,12 @@ u64 MemoryManager::ClampGpuRangeSize(VAddr address, u64 requested) {
         if (it == vma_map.end() || it->second.base != position) break;
     }
     if (result != requested) {
-        LOG_WARNING(Kernel_Vmm,
-                    "BACHATA_RELEASE026_GPU_RANGE_CLAMP addr={:#x} request={:#x} valid={:#x}",
-                    address, requested, result);
+        static std::atomic<u64> clamp_reports{0};
+        const u64 n=clamp_reports.fetch_add(1,std::memory_order_relaxed)+1;
+        if (n<=16 || n%1024==0)
+            LOG_WARNING(Kernel_Vmm,
+                        "BACHATA_RELEASE026_GPU_RANGE_CLAMP addr={:#x} request={:#x} valid={:#x} count={}",
+                        address,requested,result,n);
     }
     return result;
 }
@@ -72,6 +75,8 @@ u64 MemoryManager::ClampRangeSize(VAddr virtual_addr, u64 size) {
 }
 """
     c=c[:start]+replacement+c[finish:]
+    if "#include <atomic>" not in c:
+        c='#include <atomic>\n'+c
     if "BACHATA_RELEASE026_GPU_RANGE_CLAMP" not in c:
         raise RuntimeError("GPU range implementation missing")
     header.write_text(h)

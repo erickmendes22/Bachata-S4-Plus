@@ -107,7 +107,7 @@ def audit(root: Path) -> None:
             "!swizzle_selector_valid",
             "BACHATA_RELEASE026_SRT_GPU_PAGE_READBACK",
             "SRT was synchronized before this exact permutation was selected.",
-            "buffer_cache.IsRangeGpuWritten(source,sizeof(u32))",
+            "buffer_cache.IsRangeGpuWritten(source,sizeof(u32))", "buffer_cache.DownloadSrtSourcePages(pages)",
             "buffer_cache.TrackSrtSourcePage(page)",
             "buffer_cache.ReadMemory(page,PageSize,false,true);",
             "writable.RefreshFlatBuf();",
