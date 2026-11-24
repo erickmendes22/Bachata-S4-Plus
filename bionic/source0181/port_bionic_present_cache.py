@@ -202,7 +202,7 @@ def apply(root: Path):
     shutil.copyfile(Path(__file__).with_name("driver_cache_file.h"),
                     root/(base+"driver_cache_file.h"))
     edit(root, cache, "#include <ranges>",
-         '#include <ranges>\n#include "common/elf_info.h"\n#include "video_core/renderer_vulkan/driver_cache_file.h"')
+         '#include <ranges>\n#include <chrono>\n#include "common/thread.h"\n#include "common/elf_info.h"\n#include "video_core/renderer_vulkan/driver_cache_file.h"')
     edit(root, cache, """    WarmUp();
 
     auto [cache_result, cache] = instance.GetDevice().createPipelineCacheUnique({});
@@ -244,16 +244,37 @@ PipelineCache::~PipelineCache() = default;""",
     pipeline_cache=std::move(cache_create.value);
     LOG_INFO(Render_Vulkan,"BACHATA_DRIVER_CACHE loaded_bytes={}",bytes.size());
     WarmUp();
+#ifdef __ANDROID__
+    if (!driver_cache_path.empty()) {
+        driver_cache_worker=std::jthread([this](std::stop_token stop) {
+            Common::SetCurrentThreadName("Bachata:DriverCache");
+            Common::SetCurrentThreadPriority(Common::ThreadPriority::Low);
+            std::mutex sleep_mutex;
+            std::unique_lock sleep_lock{sleep_mutex};
+            while (!stop.stop_requested()) {
+                driver_cache_wake.wait_for(sleep_lock,stop,std::chrono::seconds(30),[] { return false; });
+                if (!stop.stop_requested()) SaveDriverCache();
+            }
+        });
+    }
+#endif
 }
 
 PipelineCache::~PipelineCache() {
+    if (driver_cache_worker.joinable()) {
+        driver_cache_worker.request_stop();
+        driver_cache_wake.notify_all();
+        driver_cache_worker.join();
+    }
     SaveDriverCache();
 }
 
 void PipelineCache::SaveDriverCache() {
 #ifdef __ANDROID__
-    // Called during normal renderer destruction after producer shutdown.
-    // No driver cache read/write contention or extra per-draw workers.
+    // BACHATA_DRIVER_CACHE_CHECKPOINT: donor GoW3 239b7df8145e.
+    // Only a changed generation is snapshotted; Vulkan cache access is
+    // serialized against actual pipeline creation, never against draws.
+    // Filesystem writes happen outside the Vulkan lock.
     if (driver_cache_path.empty() || !pipeline_cache) return;
     try {
         DriverCacheFile::Identity id{instance.GetVendorID(),instance.GetDeviceID(),
@@ -262,23 +283,68 @@ void PipelineCache::SaveDriverCache() {
         std::copy(uuid.begin(),uuid.end(),id.uuid.begin());
         const auto& api=VULKAN_HPP_DEFAULT_DISPATCHER;
         const auto device=instance.GetDevice();
-        size_t size=0;
-        if (api.vkGetPipelineCacheData(device,*pipeline_cache,&size,nullptr)!=VK_SUCCESS ||
-            size<32 || size>DriverCacheFile::MaxBytes) return;
-        std::vector<u8> bytes(size);
-        if (api.vkGetPipelineCacheData(device,*pipeline_cache,&size,bytes.data())!=VK_SUCCESS ||
-            size>bytes.size()) return;
-        bytes.resize(size);
-        if (DriverCacheFile::Save(driver_cache_path,bytes,id))
-            LOG_INFO(Render_Vulkan,"BACHATA_DRIVER_CACHE saved_bytes={}",size);
+        std::vector<u8> bytes;
+        u64 generation=0;
+        {
+            std::scoped_lock lock{driver_cache_vulkan_mutex};
+            generation=driver_cache_generation;
+            if (generation==driver_cache_saved_generation) return;
+            size_t size=0;
+            if (api.vkGetPipelineCacheData(device,*pipeline_cache,&size,nullptr)!=VK_SUCCESS ||
+                size<32 || size>DriverCacheFile::MaxBytes) return;
+            bytes.resize(size);
+            if (api.vkGetPipelineCacheData(device,*pipeline_cache,&size,bytes.data())!=VK_SUCCESS ||
+                size>bytes.size()) return;
+            bytes.resize(size);
+        }
+        const u64 hash=DriverCacheFile::Checksum(bytes);
+        if (hash==driver_cache_saved_hash && driver_cache_saved_generation!=0) {
+            driver_cache_saved_generation=generation;
+            return;
+        }
+        if (DriverCacheFile::Save(driver_cache_path,bytes,id)) {
+            driver_cache_saved_generation=generation;
+            driver_cache_saved_hash=hash;
+            LOG_INFO(Render_Vulkan,"BACHATA_DRIVER_CACHE saved_bytes={}",bytes.size());
+        }
     } catch (...) {
         LOG_WARNING(Render_Vulkan,"BACHATA_DRIVER_CACHE save skipped");
     }
 #endif
 }""")
-    edit(root, header, "#include <variant>", "#include <variant>\n#include <filesystem>")
+    edit(root, header, "#include <variant>",
+         "#include <variant>\n#include <filesystem>\n#include <mutex>\n#include <thread>\n#include <condition_variable>")
     edit(root, header, "    vk::UniquePipelineCache pipeline_cache;",
-         "    vk::UniquePipelineCache pipeline_cache;\n    std::filesystem::path driver_cache_path;\n    void SaveDriverCache();")
+         """    vk::UniquePipelineCache pipeline_cache;
+    std::filesystem::path driver_cache_path;
+    std::mutex driver_cache_vulkan_mutex;
+    std::condition_variable_any driver_cache_wake;
+    std::jthread driver_cache_worker;
+    u64 driver_cache_generation{1};
+    u64 driver_cache_saved_generation{};
+    u64 driver_cache_saved_hash{};
+    void SaveDriverCache();""")
+    # Only creation uses the driver cache object after WarmUp. Existing
+    # pipeline hits never contend with the checkpoint worker.
+    p=root/cache
+    t=p.read_text()
+    for first,last in (
+        ("        it.value() = std::make_unique<GraphicsPipeline>(",
+         "        RegisterPipelineData(graphics_key, pipeline_hash, sdata);"),
+        ("        it.value() = std::make_unique<ComputePipeline>(",
+         "        RegisterPipelineData(compute_key, sdata);"),
+    ):
+        start=t.index(first)
+        end=t.index(last,start)
+        body=t[start:end].rstrip()
+        t=t[:start]+"""        {
+            std::scoped_lock cache_lock{driver_cache_vulkan_mutex};
+"""+ "\n".join("    "+line for line in body.splitlines())+"""
+            ++driver_cache_generation;
+        }
+
+"""+t[end:]
+    p.write_text(t)
     return {"display":"guest-sized intermediate without FSR, format-checked identity copy/blit, opaque sampling",
-            "driverCache":"validated GoW3 cache file, initialize before warmup, save on orderly shutdown",
+            "driverCache":"validated GoW3 cache file, initialize before warmup, periodic checkpoint and orderly shutdown",
             "notPorted":"AHardwareBuffer/SurfaceControl external semaphore protocol; native WSI retained"}

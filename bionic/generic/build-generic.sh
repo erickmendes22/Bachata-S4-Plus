@@ -155,6 +155,7 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == "1" ]]; then
     src/core/libraries/fios2/fios2.cpp
     src/core/libraries/sysmodule/sysmodule_internal.cpp
     src/core/guest_cpu/hle_call_adapter.cpp
+    src/core/libraries/kernel/threads/pthread.cpp
     src/core/aerolib/stubs.cpp
     src/core/libraries/kernel/file_system.cpp
     src/core/libraries/kernel/threads/semaphore.cpp

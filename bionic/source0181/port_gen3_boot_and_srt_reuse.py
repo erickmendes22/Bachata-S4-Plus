@@ -101,8 +101,13 @@ int PS4_SYSV_ABI fex_pthread_create(PthreadT* thread, const PthreadAttrT* attr,
             if (srt_sync) srt_sync(effective);
         }
         previous_srt=&effective;''')
-    # Prevent continuing to scan irrelevant per-draw pipelines on malformed
-    # descriptor arrays: existing exact candidate comparison remains intact.
+    # CompileModule previously created/stat'ed a patch directory for
+    # every permutation even with shader patching switched off.
+    edit(root,pc,'    auto patch = GetShaderPatch(info.pgm_hash, info.hw_stage, perm_idx, "spv");',
+         """    std::optional<std::vector<u32>> patch;
+    if (BachataCompat::Sotc608() || EmulatorSettings.IsPatchShaders() ||
+        EmulatorSettings.IsShaderCollect())
+        patch=GetShaderPatch(info.pgm_hash,info.hw_stage,perm_idx,"spv");""")
     return {"pthread":"opaque 64-bit start argument, preserve native create and Orbis error",
             "srt":"single lookup reuse of byte-identical layouts, preserve candidate-specific descriptors",
             "fios":"CUSA05170 selects existing guest FIOS2 before archive HLE"}
