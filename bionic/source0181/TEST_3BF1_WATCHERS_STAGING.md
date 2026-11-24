@@ -1,0 +1,5 @@
+# Test 3bf1f449 follow-up
+
+BD70207C: Order 42 flip calls; 0 invalid T# warnings; 38.54 seconds then page_manager.cpp:75 read-watcher underflow. Immediately before, a texture tracking range 0x2563d8000..0x2d47c8000 was not fully GPU mapped; subsequently 2.035 GiB of sparse allocations recorded in total. The donor uses complete PageState storage, device image layer validation, and denies CPU access on pending GPU readbacks. Keep sparse mobile tables but reserve leaves before both tracking APIs, serialize map reservations, reject unmapped full texture extents before allocation, and preserve all assertions. This is a source-grounded correction, not proof of the exact producer of the malformed descriptor.
+
+DB610FD9: Shadow 56.33s, user cancelled, 0 flips, 118 arena releases, 2619.6 MiB cumulative sparse residency requests, 713 range clamps. Previous large GPU upload path allocated equally large staging copies. Stream >64MiB uploads through fence-completed 16MiB ring staging without truncating the shader range. No RSS/LMK proof, no claim of a full zero-copy port. Remaining issue: no actual present and SRT unresolved. Previous MSAA and permutation fixes retained.

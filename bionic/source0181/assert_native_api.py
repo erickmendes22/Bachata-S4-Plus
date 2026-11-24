@@ -331,7 +331,13 @@ def audit(root: Path) -> None:
     order_source = (root / "src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp").read_text()
     order_resource = (root / "src/shader_recompiler/resource.h").read_text()
     order_recompiler = (root / "src/shader_recompiler/recompiler.cpp").read_text()
+    page_manager = (root / "src/video_core/page_manager.cpp").read_text()
+    buffer_cache = (root / "src/video_core/buffer_cache/buffer_cache.cpp").read_text()
+    if "BACHATA_PAGE_WATCHER_PAIRING" not in page_manager or "BACHATA_CHUNKED_LARGE_BUFFER_UPLOAD" not in buffer_cache:
+        raise RuntimeError("missing watcher/staging fixes")
     order_rasterizer = (root / "src/video_core/renderer_vulkan/vk_rasterizer.cpp").read_text()
+    if "BACHATA_IMAGE_SPAN_REJECT" not in order_rasterizer:
+        raise RuntimeError("missing full image footprint validation")
     order_spv = (root / "src/shader_recompiler/backend/spirv/spirv_emit_context.cpp").read_text()
     for needle, source in (
         ("ORDER1886_GPU_DYNAMIC_READCONST", order_source),
