@@ -78,7 +78,15 @@ def audit(root: Path) -> None:
                                  "BACHATA_PHYSICAL_BACKING_ALIAS", "VisitPhysicalSpans",
                                  "bool MemoryManager::TryReadBacking", "BACHATA_SPARSE_READBACK"),
         "src/core/libraries/videoout/driver.cpp": ("BIONIC_PRESENT_IDLE_SKIP",
-                                                    "PrepareBlankFrame(true)"),
+                                                    "PrepareBlankFrame(true)",
+                                                    "Platform::Bachata::ReportPresentedFrame();"),
+        "src/imgui/renderer/imgui_impl_sdl3.cpp": (
+            "controllers[0]->ReadState()", "pressed(Button::Cross)",
+            "pressed(Button::Circle)", "ImGuiBackendFlags_HasGamepad"),
+        "src/video_core/renderer_vulkan/vk_scheduler.cpp": (
+            "BACHATA_VK_POLL_EACH_SUBMIT", "MaxAndroidInFlightSubmissions = 8",
+            "PopPendingOperations(!bounded_submit)", "PopPendingOperations(false)",
+            "work_semaphore.Wait(signal_value - MaxAndroidInFlightSubmissions)"),
         "src/core/libraries/videoout/driver.h": ("bool SubmitFlip(VideoOutPort*",),
         "src/core/libraries/videoout/video_out.cpp": (
             "driver->SubmitFlip(port, buf_id, flip_arg, true);",),

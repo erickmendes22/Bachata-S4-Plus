@@ -27,9 +27,6 @@ static void FoldAbsentReductionLanes(IR::Program& program,u32 lanes) {
                 LOG_INFO(Render_Recompiler,"BACHATA_ABSENT_REDUCTION_LANE shader={:#x} lane={} identity={:#x}",
                          program.info.pgm_hash,inst.Arg(1).U32(),*identity);
                 inst.ReplaceUsesWithAndRemove(IR::Value{*identity});
-            } else {
-                // Match the dedicated port's valid lane fold.
-                inst.SetArg(1,IR::Value{inst.Arg(1).U32()%lanes});
             }
         }
     }
@@ -48,11 +45,14 @@ void LowerWave64BallotPass(IR::Program& program, const RuntimeInfo& runtime_info
         '''    if (program.info.hw_stage != HwStage::Compute) return;
     const auto [size_x,size_y,size_z]=runtime_info.hw.cs.workgroup_size;
     const u32 num_threads=size_x*size_y*size_z;
-    if (profile.subgroup_size==64 || num_threads<=32) {
-        const u32 lanes=std::min(num_threads,profile.subgroup_size);
-        if (lanes<64) FoldAbsentReductionLanes(program,lanes);
+    if (profile.subgroup_size==64) {
+        // Only the actual donor shader and workgroup are established.
+        // Preserve the previously working upstream behavior everywhere else.
+        if (program.info.pgm_hash==0x87cf9b8aULL && num_threads==32)
+            FoldAbsentReductionLanes(program,32);
         return;
-    }''','fold absent lanes on both 32 and 64 wide hosts')
+    }
+    if (num_threads<=32) return;''','scope absent-lane identity to verified donor shader')
     p.write_text(s)
 
     # Exact dedicated Order 16-light guard (de566ea0a46e).
@@ -215,9 +215,9 @@ void BufferCache::TrackSrtSourcePage(VAddr page) {''','one staging copy/fence pe
     p.write_text(s)
     p=root/'src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp'
     s=p.read_text()
-    s,n=re.subn(r'ShaderBinaryVersion = (\d+)u;',lambda m:f'ShaderBinaryVersion = {int(m.group(1))+1}u;',s)
+    s,n=re.subn(r'ShaderBinaryVersion = (\d+)u;',lambda m:f'ShaderBinaryVersion = {int(m.group(1))+2}u;',s)
     if n!=1: raise RuntimeError('shader binary version drift')
     p.write_text(s)
-    return {"color":"SotC donor absent-lane reduction identity on 32/64 wide",
+    return {"color":"SotC donor 0x87cf9b8a 32-thread reduction identity on wave64 only",
             "order":"exact donor 0x804aeead inactive light table guard",
             "performance":"precise SRT provenance, batch GPU download, last-used permutation, sampled logging"}

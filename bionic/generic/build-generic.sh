@@ -160,6 +160,8 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == "1" ]]; then
     src/core/libraries/kernel/threads/semaphore.cpp
     src/core/libraries/videoout/video_out.cpp
     src/core/libraries/videoout/driver.cpp
+    src/imgui/renderer/imgui_impl_sdl3.cpp
+    src/video_core/renderer_vulkan/vk_scheduler.cpp
     src/core/memory.cpp
     src/core/libraries/libs.cpp
     src/input/controller.cpp
