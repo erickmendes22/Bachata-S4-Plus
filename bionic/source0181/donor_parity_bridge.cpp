@@ -54,7 +54,7 @@ void RegisterBachataSotcNgs2(Core::Loader::SymbolsResolver* sym) {
 namespace Shader {
 bool IsBachataMappedImageBase(u64 address) {
     if (!address || address >= 0x10000000000ULL) return false;
-    auto* memory = Core::MemoryManager::Instance();
+    auto* memory = Core::Memory::Instance();
     return memory->IsValidGpuMapping(address, 0) && memory->ClampGpuRangeSize(address, 1) == 1;
 }
 }
