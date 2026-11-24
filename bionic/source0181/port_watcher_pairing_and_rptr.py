@@ -175,16 +175,11 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {'
 // pointer is CPU-owned even when its page participates in GPU tracking.
 void Liverpool::AdvanceReadPointer(u32* read_addr,u32 dwords,u32 ring_size_dw) {
     if (!ring_size_dw) return;
-    auto* memory=Core::Memory::Instance();
-    const VAddr address=reinterpret_cast<VAddr>(read_addr);
-    u32 value{};
-    if (!memory->TryReadBacking(address,&value,sizeof(value))) {
-        *read_addr=(*read_addr+dwords)%ring_size_dw;
-        return;
-    }
-    value=(value+dwords)%ring_size_dw;
-    if (rasterizer) rasterizer->InvalidateMemory(address,sizeof(value),true);
-    if (!memory->TryWriteBacking(read_addr,&value,sizeof(value))) *read_addr=value;
+    // Restore the pre-f293ee7 read-pointer behavior. The donor's blanket
+    // cache invalidation on every packet was not justified by this log.
+    // Do not repeat the regression-inducing path on the current core.
+    *read_addr=(*read_addr+dwords)%ring_size_dw;
+    return;
 }
 
 template <bool is_indirect>

@@ -58,14 +58,18 @@ void MemoryManager::CopySparseMemory(VAddr address, u8* dest, u64 size) {
         const auto& vma=it->second;
         const u64 bytes=std::min<u64>(size,vma.base+vma.size-address);
         if (HasPhysicalBacking(vma)) {
-            u8* out=dest;
-            if (!VisitPhysicalSpans(vma,address,bytes,[&](PAddr phys,u64 n) {
-                std::memcpy(out,impl.BackingBase()+phys,n);
-                out+=n;
-            })) {
-                // Unbacked PRT holes are zero. Never dereference the protected
-                // guest VA as a fallback for a missing physical page.
-                std::memset(out,0,bytes-u64(out-dest));
+            // A hole inside a VMA does not invalidate later physical areas.
+            // Match the donor sparse read: zero only the missing bytes.
+            std::memset(dest,0,bytes);
+            const u64 begin=address-vma.base;
+            const u64 end=begin+bytes;
+            auto part=vma.phys_areas.upper_bound(begin);
+            if (part!=vma.phys_areas.begin()) --part;
+            for (;part!=vma.phys_areas.end() && part->first<end;++part) {
+                const u64 lo=std::max<u64>(begin,part->first);
+                const u64 hi=std::min<u64>(end,part->first+part->second.size);
+                if (hi>lo) std::memcpy(dest+lo-begin,
+                    impl.BackingBase()+part->second.base+lo-part->first,hi-lo);
             }
         } else if (vma.IsMapped()) {
             // Non-physical file mappings retain their original copy behavior.

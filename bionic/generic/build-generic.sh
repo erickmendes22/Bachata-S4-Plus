@@ -138,6 +138,7 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == "1" ]]; then
     src/shader_recompiler/backend/spirv/spirv_emit_context.cpp
     src/shader_recompiler/recompiler.cpp
     src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+    src/video_core/renderer_vulkan/vk_compute_pipeline.cpp
     src/video_core/renderer_vulkan/vk_rasterizer.cpp
     src/video_core/buffer_cache/buffer_cache.cpp
     src/video_core/page_manager.cpp

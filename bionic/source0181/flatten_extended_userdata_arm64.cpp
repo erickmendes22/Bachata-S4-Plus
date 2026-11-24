@@ -154,6 +154,9 @@ bool TryReadGuest(u64 address, const u32* flat, T& value) {
     void* map_end{};
     u32 prot{};
     auto* memory = Core::Memory::Instance();
+    // Prefer the actual unprotected physical backing; SRT synchronization
+    // publishes GPU writes explicitly before the selected variant is used.
+    if (memory->TryReadBacking(begin,&value,sizeof(T))) return true;
     if (memory->QueryProtection(begin, &map_begin, &map_end, &prot) != 0 ||
         (prot & static_cast<u32>(Core::MemoryProt::CpuRead)) == 0 ||
         begin < reinterpret_cast<std::uintptr_t>(map_begin) ||

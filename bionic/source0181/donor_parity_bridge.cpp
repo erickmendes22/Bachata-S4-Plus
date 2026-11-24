@@ -75,12 +75,13 @@ void Info::RefreshSharpTables() {
         const VAddr base=(VAddr(flattened_ud_buf[table.ptr_lo]) |
                          (VAddr(flattened_ud_buf[table.ptr_hi])<<32)) & 0xffffffffffULL;
         const VAddr src=base+u64(table.offset_dw)*4;
-        if (!base || src>=0x10000000000ULL || words*4>0x10000000000ULL-src ||
-            !memory->TryReadBacking(src,dst,words*4)) {
-            std::memset(dst,0,words*4);
-            continue;
+        std::memset(dst,0,words*4);
+        if (!base || src>=0x10000000000ULL || words*4>0x10000000000ULL-src) continue;
+        // Preserve valid entries even if another entry crosses an unmapped PRT hole.
+        for (u64 j=0;j<words;++j) {
+            if (memory->TryReadBacking(src+j*4,dst+j,4))
+                srt_guest_sources[table.flatbuf_off+j]=src+j*4;
         }
-        for (u64 j=0;j<words;++j) srt_guest_sources[table.flatbuf_off+j]=src+j*4;
     }
 }
 }

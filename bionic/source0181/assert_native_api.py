@@ -106,7 +106,7 @@ def audit(root: Path) -> None:
             "BACHATA_RELEASE026_IMAGE_SWIZZLE_GUARD",
             "!swizzle_selector_valid",
             "BACHATA_RELEASE026_SRT_GPU_PAGE_READBACK",
-            "ReadBackGpuWrittenSrtSources(*stage)",
+            "SRT was synchronized before this exact permutation was selected.",
             "buffer_cache.IsRangeGpuWritten(source,sizeof(u32))",
             "buffer_cache.TrackSrtSourcePage(page)",
             "buffer_cache.ReadMemory(page,PageSize,false,true);",
@@ -188,7 +188,7 @@ def audit(root: Path) -> None:
             "texture_cache.ResolveCMaskOwner(device_addr)"),
         "src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp": (
             "std::vector<u32> portable_code(", "if (!walker_func) {",
-            "ShaderMetaVersion = 16u;", "return info.Deserialize(ar) && effective_info.Deserialize(ar);"),
+            "ShaderMetaVersion = 17u;", "return info.Deserialize(ar) && effective_info.Deserialize(ar);"),
         "src/core/guest_cpu/hle_call_adapter.cpp": (
             "BIONIC_GUEST_X86_NONLOCAL_JUMP", "gNQ1V2vfXDE",
             "lKEN2IebgJ0", "guest_setjmp[]", "guest_longjmp[]",
