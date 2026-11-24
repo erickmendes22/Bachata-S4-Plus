@@ -779,6 +779,8 @@ void GameController::PollState() {
     result["checkedArm64SrtJit"] = apply_checked_srt_jit(root)
     from port_parallel_physical_upload import apply as apply_parallel_upload
     result["parallelPhysicalUpload"] = apply_parallel_upload(root)
+    from port_ahb_present import apply as apply_ahb_present
+    result["ahbPresent"] = apply_ahb_present(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
