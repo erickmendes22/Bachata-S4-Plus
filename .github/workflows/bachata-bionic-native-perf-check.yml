@@ -1,0 +1,30 @@
+name: Bionic native performance validation (isolated branch)
+on:
+  push:
+    branches: [work/bionic-native-perf-20261124]
+    paths:
+      - 'bionic/source0181/**'
+      - '.github/workflows/bachata-bionic-native-perf-check.yml'
+  workflow_dispatch:
+concurrency:
+  group: bionic-native-perf-check
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  checked-srt:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile native emitter and validate ARM64 execution
+        run: |
+          set -euo pipefail
+          c++ -std=c++20 -O2 -Wall -Wextra -Werror bionic/source0181/test_checked_srt_jit.cpp -o /tmp/srt-host
+          /tmp/srt-host
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq g++-aarch64-linux-gnu qemu-user
+          aarch64-linux-gnu-g++ -std=c++20 -O2 -Wall -Wextra -Werror -static bionic/source0181/test_checked_srt_jit.cpp -o /tmp/srt-arm64
+          qemu-aarch64 /tmp/srt-arm64
+      - name: Validate Python overlay
+        run: python3 -m py_compile bionic/source0181/*.py

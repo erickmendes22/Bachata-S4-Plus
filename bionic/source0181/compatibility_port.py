@@ -775,6 +775,8 @@ void GameController::PollState() {
     result["bionicPresentCache"] = apply_present_cache(root)
     from port_gen3_boot_and_srt_reuse import apply as apply_gen3_boot_and_srt
     result["gen3BootAndSrtReuse"] = apply_gen3_boot_and_srt(root)
+    from port_checked_srt_jit import apply as apply_checked_srt_jit
+    result["checkedArm64SrtJit"] = apply_checked_srt_jit(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
