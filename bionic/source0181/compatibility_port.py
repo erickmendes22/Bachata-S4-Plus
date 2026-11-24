@@ -777,6 +777,8 @@ void GameController::PollState() {
     result["gen3BootAndSrtReuse"] = apply_gen3_boot_and_srt(root)
     from port_checked_srt_jit import apply as apply_checked_srt_jit
     result["checkedArm64SrtJit"] = apply_checked_srt_jit(root)
+    from port_parallel_physical_upload import apply as apply_parallel_upload
+    result["parallelPhysicalUpload"] = apply_parallel_upload(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
