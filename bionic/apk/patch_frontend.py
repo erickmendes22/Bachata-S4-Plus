@@ -28,11 +28,15 @@ NEW = """    const-string v0, "bachata_native_runtime"
     # The JNI adapter loads the core via loadCoreAndSetupJNI() after setup.
     .line 14"""
 CORE_HELPER = """
-.method public static final loadCoreAndSetupJNI()V
+.method public static final loadCoreAndSetupJNI(Z)V
     .locals 1
 
+    if-eqz p0, :main_core
+    const-string v0, "bachata_sotc_608a1ac"
+    goto :load_core
+    :main_core
     const-string v0, "bachata_bionic_core"
-
+    :load_core
     invoke-static {v0}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V
 
     invoke-static {}, Lorg/libsdl/app/SDL;->setupJNI()V
@@ -53,7 +57,7 @@ def main() -> None:
     if body.count(OLD) != 1:
         raise SystemExit("Refusing wrong dex: NativeRuntimeBridge.<clinit> anchor mismatch")
     body = body.replace(OLD, NEW, 1)
-    if "loadCoreAndSetupJNI()V" in body:
+    if "loadCoreAndSetupJNI(" in body:
         raise SystemExit("Core boot helper already present: refuse double patch")
     body += CORE_HELPER
     file.write_text(body, encoding="utf-8")

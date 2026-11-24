@@ -53,6 +53,8 @@ jobs:
           # Verify runtimeVersion changes with core SHA, extracted guest marker
           # tracks core SHA, and extraction manifest hashes match updated files.
           python3 bionic/apk/test_runtime_identity.py
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror bionic/jni/test_core_title_selector.cpp -o /tmp/bachata-title-selector
+          /tmp/bachata-title-selector
           # Exercise x86 guest register/RSP/RET fiber transitions on a host mock
           # BEFORE building Android/FEX, to catch missing assembly semantics.
           python3 bionic/source0181/test_fex_fiber.py
@@ -546,6 +548,14 @@ jobs:
           run-id: ${{ inputs.core_run_id || github.run_id }}
           github-token: ${{ github.token }}
 
+      - name: Retrieve exact previously tested SotC APK (608a1ac)
+        uses: actions/download-artifact@v4
+        with:
+          name: Bachata-S4Plus-REAL-shadPS4-0181-FEX-Bionic-P36-APK
+          path: out/sotc608
+          run-id: 45428055233
+          github-token: ${{ github.token }}
+
       - name: Android build tools and ELF patching
         uses: android-actions/setup-android@v3
         with:
@@ -629,6 +639,15 @@ jobs:
           python3 bionic/apk/prepare_slim_native.py out/bionic/stage \
             --strip "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
           echo "BIONIC_NATIVE_DEBUG_STRIPPED; GLIBC_025_COMPACTED_DURING_ASSEMBLY"
+
+      - name: Import unchanged verified SotC core and check shared dependencies
+        run: |
+          set -euo pipefail
+          old=out/sotc608/Bachata-S4Plus-v0.2.7-shadPS4-0.18.1-SOURCE-Bionic-P36.apk
+          test -s "$old"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$old" > out/sotc608/signer.txt
+          grep -Fq 'd04ef2a865f8ed5ab8f98321be93ed2881eaa64f844fbaf480e18a8336620a72' out/sotc608/signer.txt
+          python3 bionic/apk/import_sotc_core.py "$old" out/bionic/stage/lib/arm64-v8a
 
       - name: Integrate newly compiled native runtime into 0.2.7 APK
         run: |

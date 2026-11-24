@@ -15,6 +15,8 @@
 #include <cerrno>
 #include <cstring>
 #include <string>
+#include <vector>
+#include "core_title_selector.h"
 
 namespace {
 constexpr const char* kTag = "BachataBionic";
@@ -25,7 +27,7 @@ constexpr const char* kStopSymbol =
 // Do not load libmain.so from the Uncharted port here: it uses SDLActivity
 // and a BBPROBE5 guest image, not this exact JNI+ANativeWindow contract.
 constexpr const char* kCore = "libbachata_bionic_core.so";
-constexpr const char* kLegacy = "libbachata_release_legacy.so";
+constexpr const char* kSotcCore = "libbachata_sotc_608a1ac.so";
 
 using Run = jint (*)(JNIEnv*, jobject, jobject, jboolean,
                      jobjectArray, jobjectArray, jstring, jint);
@@ -159,16 +161,16 @@ bool apply_service_environment(JNIEnv* env, jobjectArray environment) {
 // Java's System.loadLibrary registers core JNI_OnLoad in this application's
 // ClassLoader. A raw dlopen alone does not do that, and manually calling
 // JNI_OnLoad from our adapter would create an inconsistent SDL runtime.
-bool load_core_from_service_classloader(JNIEnv* env) {
+bool load_core_from_service_classloader(JNIEnv* env, bool sotc) {
     jclass bridge = env->FindClass(
         "com/bachatas4/android/runtime/process/NativeRuntimeBridge");
     if (!bridge || env->ExceptionCheck()) return false;
-    jmethodID init = env->GetStaticMethodID(bridge, "loadCoreAndSetupJNI", "()V");
+    jmethodID init = env->GetStaticMethodID(bridge, "loadCoreAndSetupJNI", "(Z)V");
     if (!init || env->ExceptionCheck()) {
         env->DeleteLocalRef(bridge);
         return false;
     }
-    env->CallStaticVoidMethod(bridge, init);
+    env->CallStaticVoidMethod(bridge, init, static_cast<jboolean>(sotc));
     env->DeleteLocalRef(bridge);
     if (env->ExceptionCheck()) {
         __android_log_print(ANDROID_LOG_ERROR, kTag,
@@ -218,14 +220,42 @@ bool try_engine(const char* name) {
     return true;
 }
 
-Engine choose_engine() {
-    std::lock_guard<std::mutex> guard(engine_lock);
-    if (!engine.run) {
-        // Native full shadPS4/FEX implementation takes priority.
-        // Legacy v0.2.5 is a known-good Bionic compatibility baseline.
-        if (!try_engine(kCore) && !try_engine(kLegacy))
-            return {};
+bool select_sotc(JNIEnv* env,jobjectArray arguments) {
+    if(!arguments)return false;
+    std::vector<std::string> strings;
+    const auto n=env->GetArrayLength(arguments);
+    strings.reserve(n);
+    for(jsize i=0;i<n;++i) {
+        auto item=static_cast<jstring>(env->GetObjectArrayElement(arguments,i));
+        if(env->ExceptionCheck())return false;
+        if(!item){strings.emplace_back();continue;}
+        const char* raw=env->GetStringUTFChars(item,nullptr);
+        if(!raw){env->DeleteLocalRef(item);return false;}
+        strings.emplace_back(raw);
+        env->ReleaseStringUTFChars(item,raw);
+        env->DeleteLocalRef(item);
     }
+    std::vector<std::string_view> views;
+    views.reserve(strings.size());
+    for(const auto& value:strings)views.emplace_back(value);
+    return BachataDispatch::SotcArgs(views);
+}
+Engine choose_engine(JNIEnv* env,bool sotc) {
+    std::lock_guard<std::mutex> guard(engine_lock);
+    const char* selected=sotc?kSotcCore:kCore;
+    // A service process owns exactly one FEX/SDL core for its lifetime.
+    // Never load both cores, never silently fall back to the other.
+    if(engine.run) {
+        if(std::strcmp(engine.name,selected)!=0) {
+            throw_java(env,"Bachata: restart runtime service before changing core");
+            return {};
+        }
+        return engine;
+    }
+    if(!load_core_from_service_classloader(env,sotc)||!try_engine(selected))
+        return {};
+    std::fprintf(stderr,"BACHATA_CORE_DISPATCH profile=%s library=%s\n",
+                 sotc?"SotC-608a1ac":"main",selected);
     return engine;
 }
 } // namespace
@@ -239,13 +269,11 @@ Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run(
     ScopedServiceProcessIO process_io(env, root, flags);
     if (!process_io.ok) return -1;
     if (!apply_service_environment(env, environment)) return -1;
-    if (!load_core_from_service_classloader(env)) return -1;
-    const Engine selected = choose_engine();
-    if (!selected.run) {
-        throw_java(env,
-            "No compatible native Bionic core. libmain.so is not a drop-in "
-            "replacement for Bachata NativeRuntimeBridge.run; the legacy "
-            "Bionic runtime or a full native core must be bundled.");
+    const bool sotc=select_sotc(env,arguments);
+    if(env->ExceptionCheck())return -1;
+    const Engine selected=choose_engine(env,sotc);
+    if(!selected.run) {
+        if(!env->ExceptionCheck())throw_java(env,"Bachata: selected Bionic core could not load");
         return -1;
     }
     // The service is the owner of surface, arrays, strings, and process life.

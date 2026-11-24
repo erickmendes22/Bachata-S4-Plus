@@ -79,7 +79,10 @@ int PS4_SYSV_ABI fex_pthread_create(PthreadT* thread, const PthreadAttrT* attr,
     // Only the just-refreshed flattened values of an identical SRT program
     // are reusable within this single GetProgram invocation.
     const Shader::Info* previous_srt=nullptr;
-    const bool reuse_srt=!BachataCompat::Sotc608() && params.user_data.size()==16;""")
+    // 5c28eed regressed The Order: revert this newly introduced candidate
+    // snapshot reuse for that title. Keep the proven per-permutation refresh.
+    const bool reuse_srt=!BachataCompat::Sotc608() && !BachataCompat::Order1886() &&
+                         params.user_data.size()==16;""")
     edit(root,pc,'''        effective.RefreshFlatBuf();
         if (srt_sync) srt_sync(effective);''',
          '''        const auto& code=effective.srt_info;
@@ -105,7 +108,7 @@ int PS4_SYSV_ABI fex_pthread_create(PthreadT* thread, const PthreadAttrT* attr,
     # every permutation even with shader patching switched off.
     edit(root,pc,'    auto patch = GetShaderPatch(info.pgm_hash, info.hw_stage, perm_idx, "spv");',
          """    std::optional<std::vector<u32>> patch;
-    if (BachataCompat::Sotc608() || EmulatorSettings.IsPatchShaders() ||
+    if (BachataCompat::Sotc608() || BachataCompat::Order1886() || EmulatorSettings.IsPatchShaders() ||
         EmulatorSettings.IsShaderCollect())
         patch=GetShaderPatch(info.pgm_hash,info.hw_stage,perm_idx,"spv");""")
     return {"pthread":"opaque 64-bit start argument, preserve native create and Orbis error",

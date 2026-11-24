@@ -207,9 +207,18 @@ bool MemoryManager::TryWriteBacking(void* address, const void* data, u64 size) {
             const VideoCore::TextureCache::ImageDesc probe{tsharp,image_desc};
             const auto& info=probe.info;
             if (!info.guest_size || !IsMapped(info.guest_address,info.guest_size)) {
-                LOG_WARNING(Render_Vulkan,
-                    "BACHATA_ORDER_IMAGE_SPAN_REJECT shader={:#x} addr={:#x} size={:#x}",
-                    stage.pgm_hash,info.guest_address,info.guest_size);
+                // The new logs contain only address/size, which cannot
+                // distinguish invalid raw descriptors from an ImageInfo overflow.
+                static std::atomic<u64> rejects{0};
+                const u64 n=rejects.fetch_add(1,std::memory_order_relaxed)+1;
+                if(n<=32||n%512==0) {
+                    std::array<u32,8> raw{};
+                    std::memcpy(raw.data(),&tsharp,sizeof(tsharp));
+                    LOG_WARNING(Render_Vulkan,
+                        "BACHATA_ORDER_IMAGE_SPAN_REJECT shader={:#x} addr={:#x} size={:#x} raw={:08x},{:08x},{:08x},{:08x},{:08x},{:08x},{:08x},{:08x} count={}",
+                        stage.pgm_hash,info.guest_address,info.guest_size,
+                        raw[0],raw[1],raw[2],raw[3],raw[4],raw[5],raw[6],raw[7],n);
+                }
                 for (u32 i=0;i<num_bindings;++i) {
                     auto& [unused_id,null_desc]=image_bindings.emplace_back(
                         std::piecewise_construct,std::tuple{},std::tuple{});

@@ -245,7 +245,7 @@ PipelineCache::~PipelineCache() = default;""",
     LOG_INFO(Render_Vulkan,"BACHATA_DRIVER_CACHE loaded_bytes={}",bytes.size());
     WarmUp();
 #ifdef __ANDROID__
-    if (!driver_cache_path.empty()) {
+    if (!driver_cache_path.empty() && !BachataCompat::Order1886()) {
         driver_cache_worker=std::jthread([this](std::stop_token stop) {
             Common::SetCurrentThreadName("Bachata:DriverCache");
             Common::SetCurrentThreadPriority(Common::ThreadPriority::Low);
