@@ -77,31 +77,18 @@ def apply(root: Path):
             """void Scheduler::PopPendingOperations(bool refresh) {
     std::unique_lock lk(pending_ops_mutex);
     if (refresh) work_semaphore.Refresh();""")
-    replace(scheduler, "    const u64 signal_value = work_semaphore.NextTick();",
-            """    const u64 signal_value = work_semaphore.NextTick();
-#ifdef __ANDROID__
-    // GoW3/Bachata ARM64 donor: bound GPU work without querying the driver
-    // twice on every submit. Wait on an already submitted tick only.
-    static const bool bounded_submit = [] {
-        const char* opt_out = std::getenv("BACHATA_VK_POLL_EACH_SUBMIT");
-        return !(opt_out && opt_out[0] == '1');
-    }();
-#else
-    constexpr bool bounded_submit = false;
-#endif
-    constexpr u64 MaxAndroidInFlightSubmissions = 8;
-    if (bounded_submit && signal_value > MaxAndroidInFlightSubmissions)
-        work_semaphore.Wait(signal_value - MaxAndroidInFlightSubmissions);""")
     replace(scheduler, """    work_semaphore.Refresh();
     BeginSession();
 
     // Apply pending operations
     PopPendingOperations();""",
-            """    if (!bounded_submit) work_semaphore.Refresh();
+            """    // BACHATA_SINGLE_SUBMIT_POLL: preserve the 0.18.1 submit ordering,
+    // but do not query the same timeline twice on a single submission.
+    work_semaphore.Refresh();
     BeginSession();
 
-    // Retire only operations whose completion has actually been observed.
-    PopPendingOperations(!bounded_submit);""")
+    // The immediately preceding query already published a completed tick.
+    PopPendingOperations(false);""")
     return {"fps": "original native Frame event at guest flip",
             "saveDialogInput": "remote pad snapshot when SDL gamepad absent",
-            "scheduler": "bounded eight in-flight submits, no unconditional poll; explicit waits retained"}
+            "scheduler": "single completion poll; restore unbounded 0.18.1 submission ordering; explicit waits retained"}

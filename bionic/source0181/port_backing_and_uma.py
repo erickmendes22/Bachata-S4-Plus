@@ -58,19 +58,24 @@ void MemoryManager::CopySparseMemory(VAddr address, u8* dest, u64 size) {
         const auto& vma=it->second;
         const u64 bytes=std::min<u64>(size,vma.base+vma.size-address);
         if (HasPhysicalBacking(vma)) {
-            // A hole inside a VMA does not invalidate later physical areas.
-            // Match the donor sparse read: zero only the missing bytes.
-            std::memset(dest,0,bytes);
+            // BACHATA_SPARSE_COPY_ONCE: write each destination byte once.
+            // Previously every physical byte was first memset then memcpy.
+            // PRT holes are still zeroed, including interior and trailing holes.
             const u64 begin=address-vma.base;
             const u64 end=begin+bytes;
+            u64 cursor=begin;
             auto part=vma.phys_areas.upper_bound(begin);
             if (part!=vma.phys_areas.begin()) --part;
             for (;part!=vma.phys_areas.end() && part->first<end;++part) {
-                const u64 lo=std::max<u64>(begin,part->first);
+                const u64 lo=std::max<u64>(cursor,part->first);
                 const u64 hi=std::min<u64>(end,part->first+part->second.size);
-                if (hi>lo) std::memcpy(dest+lo-begin,
+                if (hi<=lo) continue;
+                if (lo>cursor) std::memset(dest+cursor-begin,0,lo-cursor);
+                std::memcpy(dest+lo-begin,
                     impl.BackingBase()+part->second.base+lo-part->first,hi-lo);
+                cursor=hi;
             }
+            if (cursor<end) std::memset(dest+cursor-begin,0,end-cursor);
         } else if (vma.IsMapped()) {
             // Non-physical file mappings retain their original copy behavior.
             std::memcpy(dest,std::bit_cast<const u8*>(address),bytes);
@@ -102,7 +107,26 @@ bool MemoryManager::TryReadBacking(VAddr address, void* data, u64 size) {
         }
         return true;
     };
-    if (size>UINT64_MAX-address || !visit([](PAddr,u64){})) return false;
+    if (size>UINT64_MAX-address) return false;
+    // Typical SRT reads are a DWORD or a contiguous descriptor/table.
+    // Validate and copy a single physical area without two VMA walks.
+    if (IsValidMapping(address)) {
+        const auto& vma=FindVMA(address)->second;
+        if (HasPhysicalBacking(vma) && address>=vma.base &&
+            size<=vma.base+vma.size-address) {
+            const u64 offset=address-vma.base;
+            auto part=vma.phys_areas.upper_bound(offset);
+            if (part!=vma.phys_areas.begin()) {
+                --part;
+                const u64 in_area=offset-part->first;
+                if (in_area<part->second.size && size<=part->second.size-in_area) {
+                    std::memcpy(data,impl.BackingBase()+part->second.base+in_area,size);
+                    return true;
+                }
+            }
+        }
+    }
+    if (!visit([](PAddr,u64){})) return false;
     auto* out=static_cast<u8*>(data);
     return visit([&](PAddr phys,u64 n) {
         std::memcpy(out,impl.BackingBase()+phys,n); out+=n;

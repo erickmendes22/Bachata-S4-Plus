@@ -27,7 +27,7 @@ def audit(root: Path) -> None:
         "src/common/ring_buffer_queue.h": ("void Clear()",),
         "src/core/debug_state.h": ("void IncDrawCall()", "void IncDispatch()",
                                    "GetDrawCallsAvg()", "GetDispatchesAvg()"),
-        "src/core/libraries/kernel/file_system.cpp": ("deci_tty_device.h",),
+        "src/core/libraries/kernel/file_system.cpp": ("deci_tty_device.h", "NLq2b1jOaN0", "sceKernelFutimes", "::futimes(native_fd"),
         "src/core/libraries/kernel/file_system.h": (
             "s64 PS4_SYSV_ABI posix_read(", "s32 PS4_SYSV_ABI posix_unlink(",
             "s32 PS4_SYSV_ABI posix_rename(", "s64 PS4_SYSV_ABI sceKernelLseek(",
@@ -75,7 +75,7 @@ def audit(root: Path) -> None:
         "src/core/memory.cpp": ("file->GetHostFile()", "file->GetSize()",
                                  "BACHATA_RELEASE026_GPU_RANGE_CLAMP",
                                  "ClampGpuRangeSize(VAddr address, u64 requested)",
-                                 "BACHATA_PHYSICAL_BACKING_ALIAS", "VisitPhysicalSpans",
+                                 "BACHATA_PHYSICAL_BACKING_ALIAS", "BACHATA_SPARSE_COPY_ONCE", "VisitPhysicalSpans",
                                  "bool MemoryManager::TryReadBacking", "BACHATA_SPARSE_READBACK"),
         "src/core/libraries/videoout/driver.cpp": ("BIONIC_PRESENT_IDLE_SKIP",
                                                     "PrepareBlankFrame(true)",
@@ -84,9 +84,8 @@ def audit(root: Path) -> None:
             "controllers[0]->ReadState()", "pressed(Button::Cross)",
             "pressed(Button::Circle)", "ImGuiBackendFlags_HasGamepad"),
         "src/video_core/renderer_vulkan/vk_scheduler.cpp": (
-            "BACHATA_VK_POLL_EACH_SUBMIT", "MaxAndroidInFlightSubmissions = 8",
-            "PopPendingOperations(!bounded_submit)", "PopPendingOperations(false)",
-            "work_semaphore.Wait(signal_value - MaxAndroidInFlightSubmissions)"),
+            "BACHATA_SINGLE_SUBMIT_POLL", "PopPendingOperations(false)",
+            "work_semaphore.Refresh();"),
         "src/core/libraries/videoout/driver.h": ("bool SubmitFlip(VideoOutPort*",),
         "src/core/libraries/videoout/video_out.cpp": (
             "driver->SubmitFlip(port, buf_id, flip_arg, true);",),
@@ -142,13 +141,14 @@ def audit(root: Path) -> None:
             "IR::Opcode::Phi", "IR::Opcode::ReadLane",
             "BIONIC_PORTABLE_SRT_GUEST_VMM", "BIONIC_PORTABLE_SRT_BAD_POINTER",
             "BIONIC_PORTABLE_SRT_BAD_READ", "TryReadGuest(",
-            "if (source_addresses && guest_read_ok)",
+            "if (guest_read_ok)", "BACHATA_SRT_POINTER_PROVENANCE",
+            "BACHATA_SRT_CONTIGUOUS_READ",
             "GenerateSrtProgram(program.info, pass_info);",
             "SrtOp::CopyExpr", "SrtOp::PushPtrExpr",
             "BACHATA_SRT_RUNTIME_ARRAY_5624", "PrepareSrtReadArrays",
             "IR::Opcode::ReadConstArray"),
         "src/shader_recompiler/ir/passes/srt.h": ("SrtWalkerCode", "RunSrtWalker(",
-                                                  "VAddr* source_addresses"),
+                                                  "std::vector<VAddr>& source_addresses"),
         "src/shader_recompiler/resource.h": ("bool used_as_readconst{};",),
         "src/shader_recompiler/ir/passes/resource_patching_pass.cpp": (
             "buffer.used_as_readconst |= desc.used_as_readconst;",
@@ -159,7 +159,7 @@ def audit(root: Path) -> None:
         "src/shader_recompiler/backend/spirv/emit_spirv_context_get_set.cpp":
             ("EmitReadConstArray(",),
         "src/shader_recompiler/info.h": ("RunSrtWalker(srt_info.walker_func,",
-                                       "srt_guest_sources.assign(", "srt_guest_sources.data()"),
+                                       "srt_guest_sources.assign(", "srt_guest_sources);"),
         "src/video_core/amdgpu/liverpool.h": (
             "using CmdBuffer = std::pair<std::vector<u32>, std::vector<u32>>;",
             "std::shared_ptr<CmdBuffer> owned_buffers = {}",

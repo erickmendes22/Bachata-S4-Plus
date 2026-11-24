@@ -215,7 +215,7 @@ void BufferCache::TrackSrtSourcePage(VAddr page) {''','one staging copy/fence pe
     p.write_text(s)
     p=root/'src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp'
     s=p.read_text()
-    s,n=re.subn(r'ShaderBinaryVersion = (\d+)u;',lambda m:f'ShaderBinaryVersion = {int(m.group(1))+2}u;',s)
+    s,n=re.subn(r'ShaderBinaryVersion = (\d+)u;',lambda m:f'ShaderBinaryVersion = {int(m.group(1))+3}u;',s)
     if n!=1: raise RuntimeError('shader binary version drift')
     p.write_text(s)
     return {"color":"SotC donor 0x87cf9b8a 32-thread reduction identity on wave64 only",
