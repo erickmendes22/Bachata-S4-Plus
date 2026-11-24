@@ -172,8 +172,9 @@ void BufferCache::TrackSrtSourcePage(VAddr page) {''','one staging copy/fence pe
             if (source<0x10000 || source>=0x10000000000ULL) continue;
             const VAddr page=source&PageMask;
             // Do not mark a page visited on an unrelated, CPU-owned DWORD.
-            if (!buffer_cache.IsRangeGpuWritten(source,sizeof(u32)) ||
-                visited.contains(page) || !IsMapped(page,PageSize)) continue;
+            if (visited.contains(page) ||
+                !buffer_cache.IsRangeGpuWritten(source,sizeof(u32)) ||
+                !IsMapped(page,PageSize)) continue;
             visited.insert(page);
             buffer_cache.TrackSrtSourcePage(page);
             pages.push_back(page);

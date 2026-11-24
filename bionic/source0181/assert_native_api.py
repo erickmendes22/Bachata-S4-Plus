@@ -336,6 +336,12 @@ def audit(root: Path) -> None:
     actual_libs = (root / "src/core/libraries/libs.cpp").read_text()
     if "BACHATA_SHADOW_PREFER_GUEST_FIOS2" not in actual_libs:
         issues.append("Early HLE still hijacks Shadow PSARC archive loader")
+    if 'game_specific_modules_path.filename() == "CUSA05170"' not in actual_libs:
+        issues.append("Dragon Quest guest FIOS2 archive preference missing")
+    if "BACHATA_PTHREAD_OPAQUE_ARGUMENT" not in (root / "src/core/libraries/kernel/threads/pthread.cpp").read_text():
+        issues.append("FEX pthread start argument ABI missing")
+    if "BACHATA_SRT_LOOKUP_REUSE" not in (root / "src/video_core/renderer_vulkan/vk_pipeline_cache.cpp").read_text():
+        issues.append("SRT exact-layout lookup reuse missing")
     actual_raster = (root / "src/video_core/renderer_vulkan/vk_rasterizer.cpp").read_text()
     if "BACHATA_SURFACE_FORMAT_TABLE_CHECK" not in actual_raster:
         issues.append("Unsupported AMD SurfaceFormat combinations still assert")
