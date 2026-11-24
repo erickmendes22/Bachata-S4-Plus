@@ -656,14 +656,14 @@ void GameController::PollState() {
     # pipeline cache loader. Otherwise a rejected walker silently looks valid.
     require_replace(serialized,
                     "static constexpr u32 ShaderMetaVersion = 6u;",
-                    "static constexpr u32 ShaderMetaVersion = 12u;",
+                    "static constexpr u32 ShaderMetaVersion = 13u;",
                     "portable SRT shader metadata cache generation")
     require_replace(serialized,
                     "    info.Deserialize(ar);\n    return true;\n",
                     "    return info.Deserialize(ar);\n",
                     "propagate incompatible SRT cache deserialization")
     result["portedInterfaces"].append(
-        "ShaderMetaVersion 12; invalidate old ReadConst SRT dependency order")
+        "ShaderMetaVersion 13; invalidate old shaders without dynamic GPU ReadConst storage resources")
 
     # The 0.2.6 release ELF owns each copied DCB/CCB pair; upstream 0.18.1
     # instead aborts when the shared 2-MiB queue staging space is exhausted.
@@ -735,6 +735,8 @@ void GameController::PollState() {
     # Port the missing pre-resource-patching callback from the actual The Order Android source.
     from port_order1886_srt_pipeline_sync import apply as apply_order_srt_sync
     result["order1886PreResourceSrtSync"] = apply_order_srt_sync(root)
+    from port_order1886_gpu_dynamic_readconst import apply as apply_order_gpu
+    result["order1886DynamicGpuReadConst"] = apply_order_gpu(root)
     # The Order 1886 can carry an invalid texture channel selector after a
     # nonuniform SRT read. Reject that descriptor before image-view creation;
     # never substitute identity swizzles or abort the whole emulator.

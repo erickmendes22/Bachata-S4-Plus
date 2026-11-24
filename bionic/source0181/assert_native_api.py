@@ -182,7 +182,7 @@ def audit(root: Path) -> None:
             "texture_cache.ResolveCMaskOwner(device_addr)"),
         "src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp": (
             "std::vector<u32> portable_code(", "if (!walker_func) {",
-            "ShaderMetaVersion = 12u;", "return info.Deserialize(ar);"),
+            "ShaderMetaVersion = 13u;", "return info.Deserialize(ar);"),
         "src/core/guest_cpu/hle_call_adapter.cpp": (
             "BIONIC_GUEST_X86_NONLOCAL_JUMP", "gNQ1V2vfXDE",
             "lKEN2IebgJ0", "guest_setjmp[]", "guest_longjmp[]",
@@ -325,6 +325,21 @@ def audit(root: Path) -> None:
     if ('BACHATA_SOTC_SHAREUTILITY_HLE_FROM_PORT' not in libc_boot or
         'LIB_FUNCTION("j7DlalBzHh8", "libSceShareUtility", 1,' not in libc_boot):
         issues.append("Shadow sceShareUtilityInitializeEx2 source-verified HLE missing")
+    # The Order source-ported nonuniform shader data path must be fully linked.
+    order_source = (root / "src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp").read_text()
+    order_resource = (root / "src/shader_recompiler/resource.h").read_text()
+    order_recompiler = (root / "src/shader_recompiler/recompiler.cpp").read_text()
+    order_rasterizer = (root / "src/video_core/renderer_vulkan/vk_rasterizer.cpp").read_text()
+    for needle, source in (
+        ("ORDER1886_GPU_DYNAMIC_READCONST", order_source),
+        ("LowerDynamicReadConstPass(IR::Program& program)", order_source),
+        ("BufferType::ReadConst", order_resource),
+        ("readconst_size_bytes", order_resource),
+        ("LowerDynamicReadConstPass(program)", order_recompiler),
+        ("const bool readconst = desc.buffer_type == Shader::BufferType::ReadConst", order_rasterizer),
+    ):
+        if needle not in source:
+            issues.append("The Order divergent GPU ReadConst incomplete: " + needle)
     # The frequently called PS4 libc _Sin NID requires Dinkumware quadrant ABI.
     libc_overlay = Path(__file__).resolve().parent.parent / "generic/android_libc_compat.cpp"
     libc_text = libc_overlay.read_text()

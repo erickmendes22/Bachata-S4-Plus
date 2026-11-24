@@ -45,6 +45,21 @@ cmake -S "$PROTOSRC" -B "$BUILD" -G Ninja \
   -Dprotobuf_BUILD_TESTS=OFF -Dprotobuf_BUILD_EXAMPLES=OFF \
   -Dprotobuf_BUILD_CONFORMANCE=OFF -Dprotobuf_BUILD_SHARED_LIBS=OFF \
   -Dprotobuf_WITH_ZLIB=OFF
+# The pinned C++ compiler generators are implemented together in
+# field_generators/message_field.cc. A restored stale libprotoc.a omitted this
+# translation unit, leaving 3 undefined symbols at the very last link step.
+# Recompile just this object and rebuild libprotoc before linking protoc.
+rm -f "$BUILD/libprotoc.a" \
+  "$BUILD/CMakeFiles/libprotoc.dir/src/google/protobuf/compiler/cpp/field_generators/message_field.cc.o"
+cmake --build "$BUILD" --target libprotoc -j "$JOBS"
+nm -C "$BUILD/libprotoc.a" > "$OUT/host-protoc-symbols.txt"
+for name in MakeRepeatedMessageGenerator MakeSinguarMessageGenerator MakeOneofMessageGenerator; do
+  if ! grep -Fq "$name(" "$OUT/host-protoc-symbols.txt"; then
+    echo "::error::Pinned protobuf libprotoc archive lacks $name" >&2
+    exit 2
+  fi
+done
+echo "BIONIC_PROTOC_CPP_GENERATOR_ABI_READY"
 cmake --build "$BUILD" --target protoc -j "$JOBS"
 fi
 test -x "$BUILD/protoc"
