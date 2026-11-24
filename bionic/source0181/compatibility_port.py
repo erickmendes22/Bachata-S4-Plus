@@ -234,7 +234,8 @@ def apply(root: Path) -> dict:
         '        // before early FIOS2 HLE was added. ArchiveMountSync only aliases\n'
         '        // /app0; it does not provide the contents of any PSARC archive.\n'
         '        const bool shadow_guest_archive =\n'
-        '            game_specific_modules_path.filename() == "CUSA08809";\n'
+        '            game_specific_modules_path.filename() == "CUSA08809" ||\n'
+        '            game_specific_modules_path.filename() == "CUSA05170";\n'
         '        const bool fios_lle_staged =\n'
         '            std::filesystem::exists(game_specific_modules_path / "libSceFios2.sprx") &&\n'
         '            !std::filesystem::exists(game_specific_modules_path / "libSceFios2.use-hle");\n'
@@ -756,6 +757,17 @@ void GameController::PollState() {
     result["watcherPairingAndRptr"] = apply_watcher_rptr(root)
     from port_compiled_descriptor_contract import apply as apply_compiled_descriptor_contract
     result["compiledDescriptorContract"] = apply_compiled_descriptor_contract(root)
+    # One renderer, based on the last device-tested source revision 608a1ac.
+    # Apply only isolated ABI/save/frontend fixes; do not replay the global
+    # SRT, scheduler, memory, cache or presentation rewrites as a batch.
+    from port_single_core_pthread import apply as apply_pthread
+    result["singleCorePthread"] = apply_pthread(root)
+    from port_single_core_futimes import apply as apply_futimes
+    result["singleCoreFutimes"] = apply_futimes(root)
+    from port_single_core_frontend import apply as apply_frontend
+    result["singleCoreFrontend"] = apply_frontend(root)
+    from port_single_core_order_light import apply as apply_light
+    result["singleCoreOrderLight"] = apply_light(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")

@@ -1,0 +1,46 @@
+name: Bionic single-core reference validation
+on:
+  push:
+    branches: [work/bionic-single-core-recovery-20261124]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  generated-reference:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Generate reference and candidate independently
+        run: |
+          set -euo pipefail
+          git worktree add --detach /tmp/bachata-ref 608a1ac652ce47e9081cf7b886cd0a382ef7fca4
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/zenithblue-oss/shadps4-arm64.git /tmp/native-ref
+          git -C /tmp/native-ref checkout --quiet be6bc2e9c60799e071dd2fafa6216e8d80ec619c
+          git -C /tmp/native-ref config user.name 'Bachata Source Port CI'
+          git -C /tmp/native-ref config user.email 'source-port@users.noreply.github.com'
+          git -C /tmp/native-ref remote add shadps4 https://github.com/shadps4-emu/shadPS4.git
+          git -C /tmp/native-ref fetch --quiet --filter=blob:none shadps4 3912336fdfffbd5c99b59d92e997ea6ebd62216c
+          cp -a /tmp/native-ref /tmp/native-candidate
+          (
+            cd /tmp/bachata-ref
+            python3 bionic/source0181/rebase_arm64.py --source /tmp/native-ref --output /tmp/reference-report
+            python3 bionic/source0181/port_0181.py --source /tmp/native-ref --report /tmp/reference-report/parity.json
+          )
+          python3 bionic/source0181/rebase_arm64.py --source /tmp/native-candidate --output /tmp/candidate-report
+          python3 bionic/source0181/port_0181.py --source /tmp/native-candidate --report /tmp/candidate-report/parity.json
+          python3 bionic/source0181/audit_single_core_reference.py /tmp/native-ref /tmp/native-candidate
+          python3 bionic/source0181/assert_native_api.py --source /tmp/native-candidate
+          git -C /tmp/native-candidate diff --check
+      - name: Validate preserved ABI and packaging contracts
+        run: |
+          set -euo pipefail
+          python3 -m py_compile bionic/source0181/*.py
+          python3 bionic/source0181/guest_jump_abi.py selftest
+          c++ -std=c++20 -O2 -Wall -Wextra -Werror -I /tmp/native-candidate/src bionic/source0181/test_pthread_opaque_abi.cpp -o /tmp/pthread-test
+          /tmp/pthread-test
+          python3 bionic/apk/test_runtime_identity.py
+          python3 bionic/source0181/test_fex_fiber.py
+          ! grep -q 'bachata_sotc_608a1ac' bionic/jni/bachata_native_bridge.cpp bionic/apk/patch_frontend.py
