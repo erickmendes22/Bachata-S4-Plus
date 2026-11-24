@@ -752,6 +752,8 @@ void GameController::PollState() {
     result["backingAndUmaParity"] = apply_backing_uma(root)
     from port_sotc_tsharp_arrays import apply as apply_sotc_tsharp_arrays
     result["sotcTsharpArrays"] = apply_sotc_tsharp_arrays(root)
+    from port_watcher_pairing_and_rptr import apply as apply_watcher_rptr
+    result["watcherPairingAndRptr"] = apply_watcher_rptr(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")

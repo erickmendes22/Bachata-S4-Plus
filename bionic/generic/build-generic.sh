@@ -141,6 +141,7 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == "1" ]]; then
     src/video_core/renderer_vulkan/vk_rasterizer.cpp
     src/video_core/buffer_cache/buffer_cache.cpp
     src/video_core/page_manager.cpp
+    src/video_core/amdgpu/liverpool.cpp
     src/core/memory.cpp
     src/video_core/texture_cache/image_info.cpp
     src/video_core/texture_cache/blit_helper.cpp
