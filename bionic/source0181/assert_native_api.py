@@ -321,6 +321,10 @@ def audit(root: Path) -> None:
     actual_raster = (root / "src/video_core/renderer_vulkan/vk_rasterizer.cpp").read_text()
     if "BACHATA_SURFACE_FORMAT_TABLE_CHECK" not in actual_raster:
         issues.append("Unsupported AMD SurfaceFormat combinations still assert")
+    # Confirm the actual CUSA08809 ShareUtility import is served, not ENOSYS.
+    if ('BACHATA_SOTC_SHAREUTILITY_HLE_FROM_PORT' not in libc_boot or
+        'LIB_FUNCTION("j7DlalBzHh8", "libSceShareUtility", 1,' not in libc_boot):
+        issues.append("Shadow sceShareUtilityInitializeEx2 source-verified HLE missing")
     # The frequently called PS4 libc _Sin NID requires Dinkumware quadrant ABI.
     libc_overlay = Path(__file__).resolve().parent.parent / "generic/android_libc_compat.cpp"
     libc_text = libc_overlay.read_text()

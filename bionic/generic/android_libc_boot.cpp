@@ -230,6 +230,17 @@ int PS4_SYSV_ABI GuestInternalVprintf(const char* format, Common::VaList* ap) {
     GuestFree(out);
     return count;
 }
+// BACHATA_SOTC_SHAREUTILITY_HLE_FROM_PORT: CUSA08809 imports
+// sceShareUtilityInitializeEx2 via libSceShareUtility. The working
+// SotC native port's handler accepts four 64-bit guest arguments and
+// returns success; retaining ENOSYS causes the game to skip setup.
+s32 PS4_SYSV_ABI GuestSotcShareUtilityInitializeEx2(u64 a, u64 b, u64 c, u64 d) {
+    static_cast<void>(a);
+    static_cast<void>(b);
+    static_cast<void>(c);
+    static_cast<void>(d);
+    return 0;
+}
 } // namespace
 
 void* FexLibcGuestAllocate(std::size_t bytes) { return GuestCalloc(1, bytes); }
@@ -240,6 +251,11 @@ void RegisterFexLibcGuestObjects(Core::Loader::SymbolsResolver* sym);
 void RegisterFexLibcBootAliases(Core::Loader::SymbolsResolver* sym) {
     // Pure HLE registration: never map guest VMM pages from this call.
     RegisterFexLibcCompatAliases(sym);
+    // From ShadowOfTheColossus-Android-Aot/src/runtime_sotc.c:
+    // sceShareUtilityInitializeEx2 is a successful no-op for this title.
+    // Real import identity from uploaded CUSA08809 log, not guessed NID.
+    LIB_FUNCTION("j7DlalBzHh8", "libSceShareUtility", 1,
+                 "libSceShareUtility", GuestSotcShareUtilityInitializeEx2);
     // BACHATA_RELEASE026_LIBCINTERNAL_REAL_NIDS: these imports arrive through
     // libSceLibcInternal, not through the previously registered libc aliases.
     LIB_FUNCTION("8zTFvBIAIN8", "libSceLibcInternal", 1,
