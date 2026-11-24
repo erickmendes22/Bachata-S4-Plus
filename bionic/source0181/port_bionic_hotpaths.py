@@ -94,7 +94,7 @@ s32 PS4_SYSV_ABI sceKernelFsync(s32 fd) {""")
          """                // BACHATA_SRT_POINTER_PROVENANCE: both DWORDs of the
                 // pointer are dependencies even if no Copy opcode reads them.
                 const u64 local = reinterpret_cast<u64>(flat);
-                if (address >= 0x10000 && address < 0x10000000000ULL-7 &&
+                if (!BachataCompat::Sotc608() && address >= 0x10000 && address < 0x10000000000ULL-7 &&
                     !(address >= local && address < local+16*sizeof(u32))) {
                     source_addresses.push_back(address);
                     source_addresses.push_back(address+sizeof(u32));
@@ -106,7 +106,8 @@ s32 PS4_SYSV_ABI sceKernelFsync(s32 fd) {""")
     edit(root, sc, "            const bool null = cur < 0x10000ULL;\n            if (zeroed || null) {\n                flat[b] = 0;",
          """            const bool null = cur < 0x10000ULL;
             // BACHATA_SRT_CONTIGUOUS_READ: preserve each source address.
-            if (op == SrtOp::CopyImm && !zeroed && !null && a < 0x3fffffe0u) {
+            if (!BachataCompat::Sotc608() && op == SrtOp::CopyImm &&
+                !zeroed && !null && a < 0x3fffffe0u) {
                 u32 count=1;
                 for (; count<32; ++count) {
                     const u32 j=i+count*3;
@@ -134,12 +135,14 @@ s32 PS4_SYSV_ABI sceKernelFsync(s32 fd) {""")
     edit(root, pc, "        auto& effective=*candidate.effective_info;",
          """        auto& effective=*candidate.effective_info;
         const auto& stored=candidate.spec;
-        if ((!stored.buffers.empty() || !stored.images.empty() || !stored.samplers.empty()) &&
-            stored.start!=start_binding) continue;
-        // StageSpecialization only mutates runtime_info for tessellation.
-        if (effective.sw_stage!=SwStage::TessellationControl &&
-            effective.sw_stage!=SwStage::TessellationEval &&
-            stored.runtime_info!=runtime_info) continue;""")
+        if (!BachataCompat::Sotc608()) {
+            if ((!stored.buffers.empty() || !stored.images.empty() || !stored.samplers.empty()) &&
+                stored.start!=start_binding) continue;
+            // StageSpecialization only mutates runtime_info for tessellation.
+            if (effective.sw_stage!=SwStage::TessellationControl &&
+                effective.sw_stage!=SwStage::TessellationEval &&
+                stored.runtime_info!=runtime_info) continue;
+        }""")
     return {"save": "sceKernelFutimes actual timestamp HLE",
             "srt": "tracked parent pointer dwords; coalesced contiguous physical reads",
             "permutations": "reject provably incompatible bindings/runtime before SRT refresh"}

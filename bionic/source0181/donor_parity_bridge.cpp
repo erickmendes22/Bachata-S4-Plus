@@ -78,7 +78,9 @@ void Info::RefreshSharpTables() {
         std::memset(dst,0,words*4);
         if (!base || src>=0x10000000000ULL || words*4>0x10000000000ULL-src) continue;
         // Read a contiguous table once (rather than one VMM lock per DWORD).
-        if (memory->TryReadBacking(src,dst,words*4)) {
+        if (Common::ElfInfo::Instance().GameSerial()!="CUSA08809" &&
+            Common::ElfInfo::Instance().GameSerial()!="CUSA08034" &&
+            memory->TryReadBacking(src,dst,words*4)) {
             for (u64 j=0;j<words;++j) srt_guest_sources[table.flatbuf_off+j]=src+j*4;
             continue;
         }

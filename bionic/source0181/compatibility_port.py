@@ -756,6 +756,10 @@ void GameController::PollState() {
     result["watcherPairingAndRptr"] = apply_watcher_rptr(root)
     from port_compiled_descriptor_contract import apply as apply_compiled_descriptor_contract
     result["compiledDescriptorContract"] = apply_compiled_descriptor_contract(root)
+    # Restore the independently tested 608a1ac SotC behavior without
+    # undoing The Order fixes for every other title.
+    from port_sotc_608_profile import install as install_sotc_profile
+    install_sotc_profile(root)
     from port_sotc_render_and_common_performance import apply as apply_sotc_render_perf
     result["sotcRenderAndCommonPerformance"] = apply_sotc_render_perf(root)
     from port_bionic_runtime_parity import apply as apply_bionic_runtime_parity
