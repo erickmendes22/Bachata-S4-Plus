@@ -746,6 +746,8 @@ void GameController::PollState() {
     result["shadowOrderDonorParity"] = apply_donor_parity(root)
     from port_historical_donor_fixes import apply as apply_historical_donor_fixes
     result["shadowOrderHistoricalParity"] = apply_historical_donor_fixes(root)
+    from port_donor_upload_transaction import apply as apply_upload_transaction
+    result["donorUploadTransaction"] = apply_upload_transaction(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")

@@ -173,6 +173,11 @@ def audit(root: Path) -> None:
             "bool IsRangeGpuWritten(VAddr addr, size_t size);",
             "void TrackSrtSourcePage(VAddr page);",
             "RangeSet srt_source_pages;"),
+        "src/video_core/buffer_cache/memory_tracker.h": (
+            "BACHATA_UPLOAD_BEFORE_GPU_READ_PROTECT", "on_upload();",
+            "ChangeRegionState<StateOp::None,StateOp::Set,false>"),
+        "src/video_core/page_manager.cpp": (
+            "EnsurePages((base_page+page_start)<<PM_PAGE_BITS,", "page_reservation_mutex"),
         "src/video_core/buffer_cache/buffer_cache.cpp": (
             "BACHATA_RELEASE026_SRT_GPU_RANGE_TRACKING",
             "gpu_modified_ranges.Intersects(addr,size)",
