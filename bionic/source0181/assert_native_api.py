@@ -109,7 +109,7 @@ def audit(root: Path) -> None:
             "SRT was synchronized before this exact permutation was selected.",
             "buffer_cache.IsRangeGpuWritten(source,sizeof(u32))", "buffer_cache.DownloadSrtSourcePages(pages)",
             "buffer_cache.TrackSrtSourcePage(page)",
-            "buffer_cache.ReadMemory(page,PageSize,false,true);",
+            "buffer_cache.DownloadSrtSourcePages(pages)",
             "writable.RefreshFlatBuf();",
             "BACHATA_RELEASE026_READCONST_SNAPSHOT",
             "MakeReadConstSnapshot(", "desc.used_as_readconst",
