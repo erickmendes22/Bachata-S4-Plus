@@ -124,6 +124,7 @@ def apply(root: Path) -> dict:
           'passes': 'src/shader_recompiler/ir/passes/ir_passes.h',
           'recompiler': 'src/shader_recompiler/recompiler.cpp',
           'raster': 'src/video_core/renderer_vulkan/vk_rasterizer.cpp',
+          'spv': 'src/shader_recompiler/backend/spirv/spirv_emit_context.cpp',
         }.items()
     }
     code = {k:p.read_text() for k,p in files.items()}
@@ -189,6 +190,14 @@ def apply(root: Path) -> dict:
        '                    memory->ClampRangeSize(vsharp.base_address, vsharp.GetSize());',
        'bind GPU-written bytes at valid DWORD extent')
     code['raster']=s
+    # The donor explicitly carries push-constant byte offsets into ReadConst
+    # storage loads. Without this, the shader indexes the aligned Vulkan
+    # region origin rather than the actual 4-byte-aligned guest pointer.
+    code['spv']=sub(code['spv'],
+        'if (buffer.buffer_type != BufferType::Guest) {',
+        'if (buffer.buffer_type != BufferType::Guest &&\n'
+        '            buffer.buffer_type != BufferType::ReadConst) {',
+        'Order ReadConst Vulkan shader dynamic buffer byte offset')
     for k,p in files.items(): p.write_text(code[k])
     return {
         'ported': 'Order ARM64 bounded GPU ReadConst: IR, descriptors, Vulkan bindings',

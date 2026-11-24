@@ -330,6 +330,7 @@ def audit(root: Path) -> None:
     order_resource = (root / "src/shader_recompiler/resource.h").read_text()
     order_recompiler = (root / "src/shader_recompiler/recompiler.cpp").read_text()
     order_rasterizer = (root / "src/video_core/renderer_vulkan/vk_rasterizer.cpp").read_text()
+    order_spv = (root / "src/shader_recompiler/backend/spirv/spirv_emit_context.cpp").read_text()
     for needle, source in (
         ("ORDER1886_GPU_DYNAMIC_READCONST", order_source),
         ("LowerDynamicReadConstPass(IR::Program& program)", order_source),
@@ -337,6 +338,7 @@ def audit(root: Path) -> None:
         ("readconst_size_bytes", order_resource),
         ("LowerDynamicReadConstPass(program)", order_recompiler),
         ("const bool readconst = desc.buffer_type == Shader::BufferType::ReadConst", order_rasterizer),
+        ("buffer.buffer_type != BufferType::ReadConst", order_spv),
     ):
         if needle not in source:
             issues.append("The Order divergent GPU ReadConst incomplete: " + needle)
