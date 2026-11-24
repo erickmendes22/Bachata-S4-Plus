@@ -180,7 +180,8 @@ def apply(root: Path) -> dict:
     s=sub(s,'            if (vsharp.base_address == 0 || vsharp.GetSize() == 0) {',
         '''            const bool readconst = desc.buffer_type == Shader::BufferType::ReadConst;
             const u64 mapped = vsharp.base_address
-                ? memory->ClampRangeSize(vsharp.base_address, vsharp.GetSize()) : 0;
+                ? (readconst ? memory->ClampGpuRangeSize(vsharp.base_address, vsharp.GetSize())
+                             : memory->ClampRangeSize(vsharp.base_address, vsharp.GetSize())) : 0;
             if (vsharp.base_address == 0 || vsharp.GetSize() == 0 ||
                 (readconst && ((vsharp.base_address & 3) != 0 || mapped < 4))) {''',
         'validate ReadConst mapping before Vulkan binds')

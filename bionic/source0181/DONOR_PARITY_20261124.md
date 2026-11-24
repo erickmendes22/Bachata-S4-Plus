@@ -1,0 +1,7 @@
+# Log-correlated donor parity 2026-11-24
+
+BS4-20261124-7DDFF065: CUSA08809, runtime 2f62e01, archive resource shadow.cwks loaded, no video flip, last module transition libSceNgs2 absent and fallback relocation. Eleven actual NGS2 NIDs match ShadowOfTheColossus-Android-Aot@6556a9f. Upstream rack creation/voice handles are stubs, allocator callback direct call is not x86-on-ARM-safe. Integrate donor software mixer and FEX callback path; staged LLE preserved. Logs do not prove NGS2 is the sole stall cause.
+
+BS4-20261124-E7222B03: CUSA00785, runtime 2f62e01; 51 flips, 16 SRT-unresolved reports, 16 invalid texture descriptor reports, Turnip SIGSEGV read 0x70. Dedicated Order@524e74a3 BindTextures creates null descriptors with correct storage type and array count, whereas 0.18.1 default ImageDesc is Texture. Its ImageResource::GetSharp checks mapped image base before specialization; our earlier guard only checked later. Correct both. Use existing release-derived ClampGpuRangeSize for bounded ReadConst even below 1GiB (ClampRangeSize fast path otherwise bypasses VMA validation).
+
+Reference ELF identity per RELEASE026_PARITY_TRACKER: f4ab401c9f05088d5379f466314fc74dadd37f0e7389d120e7490943e0ae7582. This change relies on recorded release audit, not a fresh disassembly. Full Arm64SrtEmitter, BindImageTable and merged write tracking remain unverified. No claim of gameplay success until device test. No blanket shader-hash null override.

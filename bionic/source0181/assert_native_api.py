@@ -344,6 +344,15 @@ def audit(root: Path) -> None:
     ):
         if needle not in source:
             issues.append("The Order divergent GPU ReadConst incomplete: " + needle)
+    # Both donor paths must be connected, not merely copied into the repository.
+    if "RegisterBachataSotcNgs2(sym)" not in actual_libs:
+        issues.append("Shadow donor NGS2 mixer not registered before ELF relocation")
+    if "IsBachataMappedImageBase(image.Address())" not in order_resource:
+        issues.append("Order pre-specialization mapped image validation missing")
+    if "null_desc.type = image_desc.is_written" not in order_rasterizer:
+        issues.append("Order null image storage/sample binding contract missing")
+    if "memory->ClampGpuRangeSize(vsharp.base_address, vsharp.GetSize())" not in order_rasterizer:
+        issues.append("Order bounded GPU ReadConst lacks exact VMA clamp")
     # The frequently called PS4 libc _Sin NID requires Dinkumware quadrant ABI.
     libc_overlay = Path(__file__).resolve().parent.parent / "generic/android_libc_compat.cpp"
     libc_text = libc_overlay.read_text()

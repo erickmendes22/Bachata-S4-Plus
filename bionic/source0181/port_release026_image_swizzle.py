@@ -54,6 +54,25 @@ def apply(root: Path) -> dict:
     text=text.replace(old,new,1)
     if "liverpool_to_vk.cpp" in text and "vk::ComponentSwizzle::eR" in text:
         raise RuntimeError("Unexpected swallowed renderer source")
+    # Donor Order BindTextures constructs a null descriptor with the same
+    # storage/sample type and array count as the pipeline. The old default
+    # ImageDesc is Texture, even for storage images: invalid push descriptors.
+    old_null = """            image_bindings.emplace_back(std::piecewise_construct, std::tuple{}, std::tuple{});
+            image_descriptor_array_sizes.push_back(1);
+            continue;"""
+    new_null = """            const u32 null_count = image_desc.NumBindings(stage);
+            for (u32 i = 0; i < null_count; ++i) {
+                auto& [unused_id, null_desc] = image_bindings.emplace_back(
+                    std::piecewise_construct, std::tuple{}, std::tuple{});
+                null_desc.type = image_desc.is_written
+                    ? VideoCore::TextureCache::BindingType::Storage
+                    : VideoCore::TextureCache::BindingType::Texture;
+            }
+            image_descriptor_array_sizes.push_back(null_count);
+            continue;"""
+    if text.count(old_null) != 2:
+        raise RuntimeError("Order null image contract drift")
+    text=text.replace(old_null,new_null)
     file.write_text(text)
     return {"scope":"all texture descriptors with reserved AMD channel selector 2/3",
             "effect":"GPU null binding instead of abort in ComponentSwizzle",

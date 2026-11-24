@@ -656,14 +656,14 @@ void GameController::PollState() {
     # pipeline cache loader. Otherwise a rejected walker silently looks valid.
     require_replace(serialized,
                     "static constexpr u32 ShaderMetaVersion = 6u;",
-                    "static constexpr u32 ShaderMetaVersion = 13u;",
+                    "static constexpr u32 ShaderMetaVersion = 14u;",
                     "portable SRT shader metadata cache generation")
     require_replace(serialized,
                     "    info.Deserialize(ar);\n    return true;\n",
                     "    return info.Deserialize(ar);\n",
                     "propagate incompatible SRT cache deserialization")
     result["portedInterfaces"].append(
-        "ShaderMetaVersion 13; invalidate old shaders without dynamic GPU ReadConst storage resources")
+        "ShaderMetaVersion 14; invalidate old shaders without dynamic GPU ReadConst storage resources")
 
     # The 0.2.6 release ELF owns each copied DCB/CCB pair; upstream 0.18.1
     # instead aborts when the shared 2-MiB queue staging space is exhausted.
@@ -742,6 +742,8 @@ void GameController::PollState() {
     # never substitute identity swizzles or abort the whole emulator.
     from port_release026_image_swizzle import apply as apply_image_swizzle
     result["release026BadImageSwizzleGuard"] = apply_image_swizzle(root)
+    from port_donor_parity import apply as apply_donor_parity
+    result["shadowOrderDonorParity"] = apply_donor_parity(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
