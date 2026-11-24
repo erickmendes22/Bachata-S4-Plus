@@ -21,71 +21,88 @@ test "$actual" = "5917ee224a7e47383a78acc129628511fe210dff" || {
   exit 2
 }
 
-# The source revisions are pinned. Reuse the already built matching host
-# protoc AND installed Abseil headers when restored from the compilation cache.
-# Every invocation still runs the real generated-protobuf syntax test below.
-if [[ -x "$BUILD/protoc" ]] &&
-   [[ "$("$BUILD/protoc" --version)" == "libprotoc 36.0-dev" ]] &&
-   [[ -s "$PREFIX/include/absl/base/config.h" ]]; then
-  echo "BIONIC_HOST_PROTOC_CACHED_MATCHING_FORK"
-else
-# Build matching host Abseil without fetching other versions from the network.
-cmake -S "$ABSL" -B "$OUT/host-absl-build" -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-  -DCMAKE_CXX_STANDARD=17 -DABSL_ENABLE_INSTALL=ON \
-  -DABSL_BUILD_TESTING=OFF -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-cmake --build "$OUT/host-absl-build" --target install -j "$JOBS"
-
-cmake -S "$PROTOSRC" -B "$BUILD" -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17 \
-  -DCMAKE_PREFIX_PATH="$PREFIX" \
-  -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-  -Dprotobuf_LOCAL_DEPENDENCIES_ONLY=ON \
-  -Dprotobuf_FORCE_FETCH_DEPENDENCIES=OFF \
-  -Dprotobuf_BUILD_TESTS=OFF -Dprotobuf_BUILD_EXAMPLES=OFF \
-  -Dprotobuf_BUILD_CONFORMANCE=OFF -Dprotobuf_BUILD_SHARED_LIBS=OFF \
-  -Dprotobuf_WITH_ZLIB=OFF
-# The pinned C++ compiler generators are implemented together in
-# field_generators/message_field.cc. A restored stale libprotoc.a omitted this
-# translation unit, leaving 3 undefined symbols at the very last link step.
-# Recompile just this object and rebuild libprotoc before linking protoc.
-rm -f "$BUILD/libprotoc.a" \
-  "$BUILD/CMakeFiles/libprotoc.dir/src/google/protobuf/compiler/cpp/field_generators/message_field.cc.o"
-cmake --build "$BUILD" --target libprotoc -j "$JOBS"
-nm -C "$BUILD/libprotoc.a" > "$OUT/host-protoc-symbols.txt"
-for name in MakeRepeatedMessageGenerator MakeSinguarMessageGenerator MakeOneofMessageGenerator; do
-  if ! grep -Fq "$name(" "$OUT/host-protoc-symbols.txt"; then
-    echo "::error::Pinned protobuf libprotoc archive lacks $name" >&2
-    exit 2
-  fi
-done
-echo "BIONIC_PROTOC_CPP_GENERATOR_ABI_READY"
-cmake --build "$BUILD" --target protoc -j "$JOBS"
+# Inspect restored host objects and archives, not just one C++ generator.
+cache_report="$(python3 "$ROOT/bionic/source0181/repair_host_cache.py" \
+  "$BUILD" "$OUT/host-absl-build" "$PREFIX")"
+printf '%s\n' "$cache_report"
+removed="$(printf '%s\n' "$cache_report" | sed -n 's/^BIONIC_HOST_CACHE_REMOVED=//p')"
+[[ "$removed" =~ ^[0-9]+$ ]]
+if (( removed > 0 )); then
+  rm -f "$BUILD/protoc" "$BUILD/protoc-36.0.0" "$BUILD/libprotoc.a"
+  export CCACHE_RECACHE=1
 fi
-test -x "$BUILD/protoc"
-PROTOC_VERSION="$("$BUILD/protoc" --version)"
-echo "BIONIC_HOST_PROTOC_VERSION=$PROTOC_VERSION"
-case "$PROTOC_VERSION" in
-  "libprotoc 36.0-dev") ;;
-  *) echo "::error::Pinned host protoc has unexpected version: $PROTOC_VERSION" >&2; exit 2 ;;
-esac
 
-# Reject ABI-incompatible generated code BEFORE launching 2200 NDK tasks.
-mkdir -p "$OUT/host-protoc-smoketest"
-"$BUILD/protoc" "--proto_path=$SRC/src/shadnet" \
-  "--cpp_out=$OUT/host-protoc-smoketest" \
-  "$SRC/src/shadnet/shadnet.proto"
-test -s "$OUT/host-protoc-smoketest/shadnet.pb.cc"
-test -s "$OUT/host-protoc-smoketest/shadnet.pb.h"
-# Compile the real generated translation unit against the exact headers
-# used by the shadPS4 fork. A matching --version is NOT an ABI guarantee.
-"${HOST_CXX:-c++}" -std=c++23 -fsyntax-only \
-  -I "$OUT/host-protoc-smoketest" -I "$PROTOSRC/src" \
-  -I "$PROTOSRC/third_party/utf8_range" -I "$PREFIX/include" \
-  "$OUT/host-protoc-smoketest/shadnet.pb.cc"
-echo "BIONIC_SHADNET_GENERATED_CPP_HEADER_ABI_PASS"
-if grep -Fq 'TcParser::MpUnknownFields' "$OUT/host-protoc-smoketest/shadnet.pb.cc"; then
-  echo "::error::Pinned host protoc generated an unsupported protobuf parser ABI" >&2
-  exit 3
+build_host() {
+  cmake -S "$ABSL" -B "$OUT/host-absl-build" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+    -DCMAKE_CXX_STANDARD=17 -DABSL_ENABLE_INSTALL=ON \
+    -DABSL_BUILD_TESTING=OFF -DCMAKE_CXX_COMPILER_LAUNCHER=ccache || return
+  cmake --build "$OUT/host-absl-build" --target install -j "$JOBS" || return
+  cmake -S "$PROTOSRC" -B "$BUILD" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17 \
+    -DCMAKE_PREFIX_PATH="$PREFIX" \
+    -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+    -Dprotobuf_LOCAL_DEPENDENCIES_ONLY=ON \
+    -Dprotobuf_FORCE_FETCH_DEPENDENCIES=OFF \
+    -Dprotobuf_BUILD_TESTS=OFF -Dprotobuf_BUILD_EXAMPLES=OFF \
+    -Dprotobuf_BUILD_CONFORMANCE=OFF -Dprotobuf_BUILD_SHARED_LIBS=OFF \
+    -Dprotobuf_WITH_ZLIB=OFF || return
+  cmake --build "$BUILD" --target libprotoc -j "$JOBS" || return
+  # GNU nm can exit 0 despite invalid archive members. Reject stderr too.
+  nm -C --defined-only "$BUILD/libprotoc.a" > "$OUT/host-protoc-symbols.txt" \
+    2> "$OUT/host-protoc-nm-errors.txt" || return
+  if grep -v ': no symbols$' "$OUT/host-protoc-nm-errors.txt" | grep -q .; then
+    cat "$OUT/host-protoc-nm-errors.txt" >&2
+    return 2
+  fi
+  for name in MakeRepeatedMessageGenerator MakeSinguarMessageGenerator MakeOneofMessageGenerator; do
+    if ! grep -Fq "$name(" "$OUT/host-protoc-symbols.txt"; then
+      echo "::error::Pinned protobuf libprotoc archive lacks definition $name" >&2
+      return 2
+    fi
+  done
+  echo "BIONIC_PROTOC_CPP_GENERATOR_ABI_READY"
+  cmake --build "$BUILD" --target protoc -j "$JOBS" || return
+}
+
+verify_host() {
+  test -x "$BUILD/protoc" || return
+  test -s "$PREFIX/include/absl/base/config.h" || return
+  PROTOC_VERSION="$("$BUILD/protoc" --version)" || return
+  echo "BIONIC_HOST_PROTOC_VERSION=$PROTOC_VERSION"
+  [[ "$PROTOC_VERSION" == "libprotoc 36.0-dev" ]] || return 2
+  mkdir -p "$OUT/host-protoc-smoketest" || return
+  rm -f "$OUT/host-protoc-smoketest/shadnet.pb."{cc,h} || return
+  "$BUILD/protoc" "--proto_path=$SRC/src/shadnet" \
+    "--cpp_out=$OUT/host-protoc-smoketest" "$SRC/src/shadnet/shadnet.proto" || return
+  test -s "$OUT/host-protoc-smoketest/shadnet.pb.cc" || return
+  test -s "$OUT/host-protoc-smoketest/shadnet.pb.h" || return
+  "${HOST_CXX:-c++}" -std=c++23 -fsyntax-only \
+    -I "$OUT/host-protoc-smoketest" -I "$PROTOSRC/src" \
+    -I "$PROTOSRC/third_party/utf8_range" -I "$PREFIX/include" \
+    "$OUT/host-protoc-smoketest/shadnet.pb.cc" || return
+  if grep -Fq 'TcParser::MpUnknownFields' "$OUT/host-protoc-smoketest/shadnet.pb.cc"; then
+    echo "::error::Pinned host protoc generated an unsupported protobuf parser ABI" >&2
+    return 3
+  fi
+  echo "BIONIC_SHADNET_GENERATED_CPP_HEADER_ABI_PASS"
+}
+
+had_cache=0
+[[ -f "$BUILD/CMakeCache.txt" ]] && had_cache=1
+if (( removed == 0 )) && verify_host; then
+  echo "BIONIC_HOST_PROTOC_CACHED_MATCHING_FORK"
+elif build_host && verify_host; then
+  echo "BIONIC_HOST_PROTOC_INCREMENTAL_REPAIRED"
+elif (( had_cache )); then
+  # Recovery is restricted to host prerequisites, not Android/NDK/FEX.
+  echo "BIONIC_HOST_PROTOC_CACHE_RECOVERY: rebuild host-only prerequisites"
+  rm -rf "$BUILD" "$OUT/host-absl-build" "$PREFIX"
+  export CCACHE_RECACHE=1
+  build_host
+  verify_host
+else
+  echo "::error::Host protoc build/ABI failed without restored cache" >&2
+  exit 2
 fi
 echo "BIONIC_HOST_PROTOC_PINNED_SOURCE_5917EE_VERIFIED=$BUILD/protoc"

@@ -73,6 +73,7 @@ jobs:
             /tmp/bachata-saf-alias-root
           bash -n bionic/generic/build-generic.sh
           bash -n bionic/source0181/build_host_protoc.sh
+          python3 bionic/source0181/repair_host_cache.py --selftest
           bash -n bionic/source0181/native_cache.sh
           grep -Fq "BIONIC_NATIVE_COMPILER_PREFIX_READY" bionic/source0181/native_cache.sh
           python3 -m py_compile bionic/source0181/incremental_inputs.py
@@ -408,6 +409,7 @@ jobs:
             bash bionic/source0181/native_cache.sh stamp
 
       - name: Build host protoc from matching pinned protobuf source and test ABI
+        id: host_protoc
         run: |
           set -euo pipefail
           BACHATA_HOST_JOBS=6 bash bionic/source0181/build_host_protoc.sh
@@ -493,7 +495,7 @@ jobs:
           python3 bionic/source0181/incremental_inputs.py snapshot
 
       - name: Cache successfully compiled objects even after an unrelated link error
-        if: always()
+        if: ${{ !cancelled() && steps.host_protoc.outcome == 'success' }}
         uses: actions/cache/save@v4
         with:
           path: |
