@@ -310,6 +310,8 @@ def audit(root: Path) -> None:
     srt_impl = (root / "src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp").read_text()
     if "flat_multimap<IR::Value" not in srt_impl:
         issues.append("The Order duplicate-offset ReadConst chains still lost by flat_map")
+    if "user_list.emplace(inst->Arg(1), inst);" not in srt_impl or "user_list[" in srt_impl:
+        issues.append("The Order SRT multimap must preserve duplicates with emplace, not operator[]")
 
     for need in ("ORDER1886_SRT_DEPENDENCY_WORKLIST", "ORDER1886_SRT_GVN_SLOT_PARITY",
                  "ORDER1886_SRT_UNRESOLVED", "const size_t limit = pass_info.pointer_uses.size() + 1"):
