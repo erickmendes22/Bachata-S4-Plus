@@ -3,7 +3,7 @@ on:
   # The user requested an actual Android APK to test the fixed launch.
   # New commits supersede earlier builds; only the latest complete core runs.
   push:
-    branches: [work/bionic-sotc-color-20261125]
+    branches: [work/bionic-sotc-async-preflight-20261125]
     paths:
       - '.github/workflows/bachata-bionic-generic-source.yml'
       - 'bionic/generic/**'
