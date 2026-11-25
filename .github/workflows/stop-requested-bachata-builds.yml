@@ -1,0 +1,36 @@
+name: Stop requested Bachata builds
+on:
+  push:
+    branches: [work/bionic-fps-baseline-20261125]
+    paths: ['.github/workflows/stop-requested-bachata-builds.yml']
+permissions:
+  actions: write
+  contents: read
+jobs:
+  cancel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Cancel only the two requested build runs
+        run: |
+          set -euo pipefail
+          for id in 45534377894 45534170092; do
+            endpoint="repos/$GITHUB_REPOSITORY/actions/runs/$id"
+            status="$(gh api "$endpoint" --jq .status)"
+            if [[ "$status" != completed ]]; then
+              gh api --method POST "$endpoint/cancel" || gh api --method POST "$endpoint/force-cancel"
+            fi
+          done
+          for attempt in $(seq 1 20); do
+            remaining=0
+            for id in 45534377894 45534170092; do
+              status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq .status)"
+              echo "$id $status"
+              if [[ "$status" != completed ]]; then remaining=1; fi
+            done
+            if [[ "$remaining" == 0 ]]; then exit 0; fi
+            sleep 5
+          done
+          exit 1
