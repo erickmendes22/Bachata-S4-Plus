@@ -769,6 +769,8 @@ void GameController::PollState() {
     result["ahbPresent"] = apply_ahb_present(root)
     from port_sotc_dynamic_memo import apply as apply_sotc_dynamic_memo
     result["sotcDynamicMemo"] = apply_sotc_dynamic_memo(root)
+    from port_target_batched_readback import apply as apply_target_batched_readback
+    result["targetBatchedReadback"] = apply_target_batched_readback(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
