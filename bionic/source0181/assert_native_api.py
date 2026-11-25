@@ -93,7 +93,7 @@ def audit(root: Path) -> None:
             "VideoOut::sceVideoOutSubmitEopFlip(vo_handle, buf_idx, flip_mode,",),
         "src/video_core/renderer_vulkan/vk_presenter.cpp": (
             "#include <png.h>", "png_write_image(",
-            "if(presented&&!is_reusing_frame&&is_game_frame) Platform::Bachata::ReportPresentedFrame();",
+            "BACHATA_FIRST_GAME_PRESENT_OK",
             "draw_scheduler.WaitSubmitted(frame->ready_tick,false);",
             "GetSplashPath()", "DecodePngFile(splash_path)",
             "BACHATA_GUEST_SIZED_INTERMEDIATE", "BACHATA_IDENTITY_DISPLAY",

@@ -32,7 +32,7 @@ def apply(root:Path):
 
     SetSurfaceProperties();""")
     edit(sw,"    RefreshSemaphores();\n    LOG_INFO(Render_Vulkan,\"BACHATA_PRESENT_WSI_READY",
-         "    RefreshSemaphores();\n    acquire_retire_ticks.assign(image_count,0);\n    acquire_retire_timeline={};\n    LOG_INFO(Render_Vulkan,\"BACHATA_PRESENT_WSI_READY")
+         "    RefreshSemaphores();\n    acquire_retire_ticks.assign(image_count,0);\n    acquire_retire_timeline=vk::Semaphore{};\n    LOG_INFO(Render_Vulkan,\"BACHATA_PRESENT_WSI_READY")
     edit(sw,"    Create(width_, height_);\n}",
          "    std::scoped_lock lock{Scheduler::submit_mutex};\n    Create(width_, height_);\n}")
     s=sw.read_text()

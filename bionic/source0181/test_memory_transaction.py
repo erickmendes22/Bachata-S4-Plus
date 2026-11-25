@@ -124,6 +124,24 @@ int main() {
     }
     stop.store(true,std::memory_order_release);
     reader.join();
+
+    // Exact mapped-window policy: GPU-owned and dirty pages never get
+    // reclassified; a guest write can unprotect clean neighbours only.
+    constexpr VAddr window=3*HIGHER_PAGE_SIZE;
+    auto count=[](VAddr,u64){};
+    t->ForEachUploadRange(window,4*4096,false,count,[]{});
+    t->ForEachUploadRange(window+4096,4096,true,count,[]{});
+    t->MarkWriteWindow<false>(window,4*4096);
+    assert(t->IsRegionCpuModified(window,4096));
+    assert(t->IsRegionGpuModified(window+4096,4096));
+    assert(!t->IsRegionCpuModified(window+4096,4096));
+    assert(t->IsRegionCpuModified(window+8192,4096));
+    t->ForEachUploadRange(window,4096,false,count,[]{});
+    t->ForEachUploadRange(window+8192,2*4096,false,count,[]{});
+    t->MarkWriteWindow<true>(window,4*4096);
+    assert(t->IsRegionCpuModified(window,4096));
+    assert(!t->IsRegionCpuModified(window+8192,4096));
+    std::cout<<"BACHATA_DONOR_GUEST_WRITE_WINDOW_PASS\n";
     std::cout<<"BACHATA_EFFECTIVE_DONOR_UPLOAD_TRANSACTION_PASS cross_region=2 cycles=4096\n";
 }
 ''')

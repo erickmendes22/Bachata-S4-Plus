@@ -809,6 +809,8 @@ void GameController::PollState() {
     result["presentBootOwnership"] = apply_present_boot(root)
     from port_wsi_fex_guard import apply as apply_wsi_fex_guard
     result["wsiFexGuard"] = apply_wsi_fex_guard(root)
+    from port_donor_write_faults import apply as apply_donor_write_faults
+    result["donorWriteFaults"] = apply_donor_write_faults(root, order=True)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
