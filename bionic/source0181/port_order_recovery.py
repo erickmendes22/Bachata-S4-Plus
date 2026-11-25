@@ -59,7 +59,7 @@ def apply(root:Path):
     # disagree, use the original ownership-aware readback for that page.
     bc="src/video_core/buffer_cache/buffer_cache.h"
     edit(bc,"    void TrackSrtSourcePage(VAddr page);",
-         "    bool IsSrtPageGpuOwned(VAddr page);\\n    void TrackSrtSourcePage(VAddr page);")
+         "    bool IsSrtPageGpuOwned(VAddr page);\n    void TrackSrtSourcePage(VAddr page);")
     bc="src/video_core/buffer_cache/buffer_cache.cpp"
     edit(bc,"void BufferCache::TrackSrtSourcePage(VAddr page) {",
          """bool BufferCache::IsSrtPageGpuOwned(VAddr page) {
