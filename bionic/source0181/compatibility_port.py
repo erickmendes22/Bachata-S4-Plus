@@ -777,26 +777,8 @@ void GameController::PollState() {
     result["pthreadOpaque"] = apply_pthread_opaque(root)
     from port_confirmed_order_recovery import apply as apply_order
     result["confirmedOrderRecovery"] = apply_order(root)
-    from port_order_memory_lifetime import apply as apply_order_memory_lifetime
-    result["orderMemoryLifetime"] = apply_order_memory_lifetime(root)
-    from port_order_shader_workers import apply as apply_order_shader_workers
-    result["orderShaderWorkers"] = apply_order_shader_workers(root)
-    from port_ahb_present import apply as apply_ahb_present
-    result["ahbPresent"] = apply_ahb_present(root)
-    from port_target_batched_readback import apply as apply_target_batched_readback
-    result["targetBatchedReadback"] = apply_target_batched_readback(root)
-    from port_order_deferred_image_readback import apply as apply_deferred_readback
-    result["orderDeferredImageReadback"] = apply_deferred_readback(root)
-    from port_target_async_graphics import apply as apply_async_graphics
-    result["targetAsyncGraphics"] = apply_async_graphics(root)
-    from port_target_recorder import apply as apply_recorder
-    result["targetRecorder"] = apply_recorder(root)
-    from port_target_donor_settings import apply as apply_donor_settings
-    result["targetDonorSettings"] = apply_donor_settings(root, sotc=False)
-    from port_target_cache_persistence import apply as apply_target_cache
-    result["targetCachePersistence"] = apply_target_cache(root, order=True)
-    from port_order_live_pso import apply as apply_order_live_pso
-    result["orderLivePso"] = apply_order_live_pso(root)
+    from port_inherited_gpu import apply as apply_inherited_gpu
+    result["inheritedGpu"] = apply_inherited_gpu(root, sotc=False)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")

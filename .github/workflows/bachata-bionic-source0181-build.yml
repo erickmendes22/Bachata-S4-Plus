@@ -583,8 +583,8 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 100); do
-            state="$(gh api repos/$GITHUB_REPOSITORY/actions/runs/45616445093)"
-            test "$(jq -r .head_sha <<< "$state")" = "81aa7c1ae4c9dcb16123306bf1733921d3984b4a"
+            state="$(gh api repos/$GITHUB_REPOSITORY/actions/runs/45538267422)"
+            test "$(jq -r .head_sha <<< "$state")" = "4fb12a7c96be5f28989f994fcb2281f2ff9e30f1"
             if [[ "$(jq -r .status <<< "$state")" == completed ]]; then
               test "$(jq -r .conclusion <<< "$state")" = success
               exit 0
@@ -598,7 +598,7 @@ jobs:
         with:
           name: Bachata-S4Plus-REAL-shadPS4-0181-FEX-Bionic-P36-APK
           path: out/sotc608
-          run-id: 45616445093
+          run-id: 45538267422
           github-token: ${{ github.token }}
 
       - name: Android build tools and ELF patching
@@ -686,7 +686,7 @@ jobs:
             --strip "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
           echo "BIONIC_NATIVE_DEBUG_STRIPPED; GLIBC_025_COMPACTED_DURING_ASSEMBLY"
 
-      - name: Import revised SotC core, verify P36 signature and shared dependencies
+      - name: Import exact device-confirmed SotC core and check shared dependencies
         run: |
           set -euo pipefail
           old=out/sotc608/Bachata-S4Plus-v0.2.7-shadPS4-0.18.1-SOURCE-Bionic-P36.apk

@@ -78,7 +78,8 @@ def audit(root: Path) -> None:
                                  "BACHATA_PHYSICAL_BACKING_ALIAS", "BACHATA_SPARSE_COPY_ONCE", "VisitPhysicalSpans",
                                  "bool MemoryManager::TryReadBacking", "BACHATA_SPARSE_READBACK"),
         "src/core/libraries/videoout/driver.cpp": ("BIONIC_PRESENT_IDLE_SKIP",
-                                                    "PrepareBlankFrame(true)"),
+                                                    "PrepareBlankFrame(true)",
+                                                    "Platform::Bachata::ReportPresentedFrame();"),
         "src/imgui/renderer/imgui_impl_sdl3.cpp": (
             "controllers[0]->ReadState()", "pressed(Button::Cross)",
             "pressed(Button::Circle)", "ImGuiBackendFlags_HasGamepad"),
@@ -93,8 +94,6 @@ def audit(root: Path) -> None:
             "VideoOut::sceVideoOutSubmitEopFlip(vo_handle, buf_idx, flip_mode,",),
         "src/video_core/renderer_vulkan/vk_presenter.cpp": (
             "#include <png.h>", "png_write_image(",
-            "if(presented&&!is_reusing_frame&&is_game_frame) Platform::Bachata::ReportPresentedFrame();",
-            "draw_scheduler.WaitSubmitted(frame->ready_tick,false);",
             "GetSplashPath()", "DecodePngFile(splash_path)",
             "BACHATA_GUEST_SIZED_INTERMEDIATE", "BACHATA_IDENTITY_DISPLAY",
             "BACHATA_DISPLAY_PATH", "opaque_sampled_view", "BACHATA_SOTC_608_PROFILE"),
@@ -199,7 +198,7 @@ def audit(root: Path) -> None:
             "texture_cache.ResolveCMaskOwner(device_addr)"),
         "src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp": (
             "std::vector<u32> portable_code(", "if (!walker_func) {",
-            "ShaderMetaVersion = 19u;", "return info.Deserialize(ar) && effective_info.Deserialize(ar);"),
+            "ShaderMetaVersion = 17u;", "return info.Deserialize(ar) && effective_info.Deserialize(ar);"),
         "src/core/guest_cpu/hle_call_adapter.cpp": (
             "BIONIC_GUEST_X86_NONLOCAL_JUMP", "gNQ1V2vfXDE",
             "lKEN2IebgJ0", "guest_setjmp[]", "guest_longjmp[]",

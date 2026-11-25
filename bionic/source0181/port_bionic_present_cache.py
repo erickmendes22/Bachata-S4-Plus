@@ -202,7 +202,7 @@ def apply(root: Path):
     shutil.copyfile(Path(__file__).with_name("driver_cache_file.h"),
                     root/(base+"driver_cache_file.h"))
     edit(root, cache, "#include <ranges>",
-         '#include <ranges>\n#include "common/elf_info.h"\n#include "video_core/amdgpu/regs_color.h"\n#include "video_core/renderer_vulkan/driver_cache_file.h"')
+         '#include <ranges>\n#include "common/elf_info.h"\n#include "video_core/renderer_vulkan/driver_cache_file.h"')
     edit(root, cache, """    WarmUp();
 
     auto [cache_result, cache] = instance.GetDevice().createPipelineCacheUnique({});
@@ -216,11 +216,7 @@ PipelineCache::~PipelineCache() = default;""",
     // serialized compute/graphics pipelines which dereference this handle.
     std::vector<u8> bytes;
 #ifdef __ANDROID__
-    // The current Order donor disables driver disk-cache restore in single-MSAA
-    // mode because restoring it can produce a black screen on the next boot.
-    // The in-memory VkPipelineCache and serialized shader database remain enabled.
-    if (!BachataCompat::Sotc608() && !AmdGpu::BachataOrderNoMsaa() &&
-        EmulatorSettings.IsPipelineCacheEnabled()) {
+    if (!BachataCompat::Sotc608() && EmulatorSettings.IsPipelineCacheEnabled()) {
         try {
             DriverCacheFile::Identity id{instance.GetVendorID(),instance.GetDeviceID(),
                                          instance.GetDriverVersion(),{}};

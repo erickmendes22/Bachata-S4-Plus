@@ -33,23 +33,3 @@ de acesso/ferramentas da sessão, descreva-o de maneira verificável e sem alega
 que o APK foi entregue. Não invente conclusão, resultado de build ou link; retome
 assim que a execução estiver disponível. Esta ressalva de transparência não é
 uma autorização para abandonar voluntariamente a investigação.
-
-## Equivalência funcional dos ports (The Order e SotC)
-
-O Bachata continua shadPS4 ARM64 Bionic + FEX nos dois cores. Não migrar para
-AOT ARM64, não incorporar o APK, executável, DSO, launcher ou runtime completo
-dos ports. Não substituir o core do Bachata pelo core de um port. Manter a
-UI, integração JNI, SAF, saves, controles e arquitetura de CPU do Bachata.
-
-Comparar a árvore de código que efetivamente compila nos ports com a árvore
-0.18.1 após TODOS os overlays do Bachata. Adaptar a semântica de renderização,
-compilação/cache de shaders e pipelines, sincronização, PM4, readbacks,
-texturas, memória GPU, apresentação AHB e contagem de frames à arquitetura
-FEX existente. Separar diferenças necessárias do backend CPU das divergências
-funcionais. Corrigir os grupos de diferenças completos, não apenas logs ou
-workarounds isolados. Preservar o comportamento dos demais jogos.
-
-Não aceitar equivalência por número de patches, compilação bem-sucedida ou
-presença de símbolos. Exigir comparação funcional em gameplay e estabilidade
-com o mesmo driver, resolução, patches, cenas e cache frio/quente. Não exigir
-AOT como condição de equivalência ou como solução de desempenho. 
