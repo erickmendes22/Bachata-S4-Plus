@@ -96,5 +96,34 @@ def apply(root, order):
             it=saved_modules.begin()+perm_idx;
         }""")
     p.write_text(s)
+    if order:
+        # Sample process memory and live object cardinalities on new PSOs.
+        # ru_maxrss is Linux/Android peak RSS in KiB, not GPU heap usage.
+        pc=root/"src/video_core/renderer_vulkan/vk_pipeline_cache.cpp"
+        c=pc.read_text()
+        anchor="#include <ranges>"
+        assert c.count(anchor)==1
+        c=c.replace(anchor,anchor+"\n#ifdef __ANDROID__\n#include <sys/resource.h>\n#endif")
+        anchor='        LOG_INFO(Render_Vulkan, "Compiling graphics pipeline {:#x}", pipeline_hash);'
+        assert c.count(anchor)==1
+        c=c.replace(anchor,anchor+"""
+#ifdef __ANDROID__
+        if (AmdGpu::BachataOrderNoMsaa() &&
+            (graphics_pipelines.size()==1 || graphics_pipelines.size()%64==0)) {
+            size_t shaders=0;
+            for (auto p=program_cache.begin();p!=program_cache.end();++p) {
+                if (!p.value()) continue;
+                for (const auto& m:p.value()->modules) if (m.module) ++shaders;
+            }
+            struct rusage usage{};
+            const int rss_ok=getrusage(RUSAGE_SELF,&usage);
+            LOG_INFO(Render_Vulkan,"BACHATA_ORDER_PSO_PRESSURE graphics={} compute={} programs={} modules={} peak_rss_kib={}",
+                     graphics_pipelines.size(),compute_pipelines.size(),program_cache.size(),
+                     shaders,rss_ok==0?static_cast<long long>(usage.ru_maxrss):-1LL);
+        }
+#endif
+""")
+        pc.write_text(c)
     return {"drain_cache_writes": True, "atomic_blob_publication":True,
-            "order_independent_shader_restore": order}
+            "order_independent_shader_restore": order,
+            "order_pso_pressure_samples": order}
