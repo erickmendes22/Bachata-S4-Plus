@@ -17,14 +17,14 @@ def apply(root):
     edit(h,"    /// Updates image contents if it was modified by CPU.",
          """    // Slot IDs can be recycled; registry changes invalidate all target memos.
     u64 TargetRegistryEpoch() const { return target_registry_epoch.load(std::memory_order_acquire); }
-    u64 TargetMetaEpoch() const { return target_meta_epoch; }
+    u64 TargetMetaEpoch() const { return target_meta_epoch.load(std::memory_order_acquire); }
     bool ReusePreparedTargets(std::span<const ImageId> ids, u64 epoch);
     bool ReuseAttachment(ImageId id, const ImageDesc& desc, vk::Image backing,
                          vk::ImageLayout layout, bool depth, u32 samples);
     /// Updates image contents if it was modified by CPU.""")
     edit(h,"    std::mutex samplers_mutex;",
          """    std::atomic<u64> target_registry_epoch{1};
-    u64 target_meta_epoch{1};
+    std::atomic<u64> target_meta_epoch{1};
     std::mutex samplers_mutex;""")
     edit(h,"            it.value().clear_mask = -1;",
          """            if (it.value().clear_mask != -1) ++target_meta_epoch;

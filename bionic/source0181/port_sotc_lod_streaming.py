@@ -93,7 +93,7 @@ inline void Collect(Core::MemoryManager* memory,std::array<u64,256>& entries) {
                 for(u32 half=0;half<2;++half) {
                     const u64 offset=0x40+half*sizeof(entries);
                     if(offset+sizeof(entries)>bytes||base>UINT64_MAX-offset-sizeof(entries))break;
-                    if(!memory->TryWriteBacking(base+offset,entries.data(),sizeof(entries))) {
+                    if(!memory->TryWriteBacking(reinterpret_cast<void*>(base+offset),entries.data(),sizeof(entries))) {
                         LOG_WARNING(Render_Vulkan,"SotC LOD output unmapped at {:#x}",base+offset);
                         break;
                     }
