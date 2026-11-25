@@ -206,7 +206,7 @@ jobs:
     if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[apk-only]') }}
     name: Assemble and sign Bachata S4+ 0.2.7 actual source 0.18.1 Bionic APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 180
     env:
       BACHATA_P36_PRIVATE_KEY: ${{ secrets.BACHATA_P36_PRIVATE_KEY }}
       BACHATA_P36_CERT: ${{ secrets.BACHATA_P36_CERT }}
@@ -243,6 +243,23 @@ jobs:
             echo "run=${MANUAL_CORE_RUN:-$GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Wait for completed native validation of both exact FEX revisions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for pair in "45648010652 586d20a4c3bdf36e1b8b054c3390c7365d8f5e54" "45648050809 68f4f41af02d9b9b0ceac73df5b361f2ab00c0ce"; do
+            read -r run revision <<< "$pair"
+            for attempt in $(seq 1 360); do
+              state="$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$run)"
+              test "$(jq -r .head_sha <<< "$state")" = "$revision"
+              [[ "$(jq -r .status <<< "$state")" == completed ]] && break
+              sleep 15
+            done
+            test "$(jq -r .head_sha <<< "$state")" = "$revision"
+            test "$(jq -r .status <<< "$state")" = completed
+            test "$(jq -r .conclusion <<< "$state")" = success
+          done
       - name: Retrieve successful updated Bionic core from pinned build
         uses: actions/download-artifact@v4
         with:
@@ -259,18 +276,6 @@ jobs:
           set -euo pipefail
           test "$(cat out/bionic/stage/BIONIC_SOURCE_REVISION.txt)" = "$EXPECTED_REVISION"
 
-      - name: Require completed native validation of both exact FEX revisions
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          for pair in "45648010652 586d20a4c3bdf36e1b8b054c3390c7365d8f5e54" "45648050809 68f4f41af02d9b9b0ceac73df5b361f2ab00c0ce"; do
-            read -r run revision <<< "$pair"
-            state="$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$run)"
-            test "$(jq -r .head_sha <<< "$state")" = "$revision"
-            test "$(jq -r .status <<< "$state")" = completed
-            test "$(jq -r .conclusion <<< "$state")" = success
-          done
       - name: Retrieve dedicated validated Bachata SotC FEX core (not a port APK)
         uses: actions/download-artifact@v4
         with:
