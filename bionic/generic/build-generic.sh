@@ -133,6 +133,10 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == "1" ]]; then
     src/core/loader/elf.cpp
     src/core/module.cpp
     src/video_core/renderer_vulkan/vk_presenter.cpp
+    src/video_core/renderer_vulkan/vk_swapchain.cpp
+    src/video_core/renderer_vulkan/vk_recorder.cpp
+    src/video_core/renderer_vulkan/vk_graphics_pipeline.cpp
+    src/shader_recompiler/backend/spirv/emit_spirv.cpp
     src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp
     src/shader_recompiler/ir/passes/resource_patching_pass.cpp
     src/shader_recompiler/backend/spirv/spirv_emit_context.cpp
@@ -203,7 +207,7 @@ if [[ "${BIONIC_SOURCE0181_PREPATCHED:-0}" == "1" ]]; then
   done
   echo "BIONIC_CPP_FAIL_FAST_START: ${#priority_objects[@]} critical C/C++ units before bulk build"
   set +e
-  ninja -C "$BUILD" -j "$JOBS" -k 1 "${priority_objects[@]}" 2>&1 | tee "$WORK/ndk-cxx-early.log"
+  ninja -C "$BUILD" -j "$JOBS" -k 100 "${priority_objects[@]}" 2>&1 | tee "$WORK/ndk-cxx-early.log"
   early_status=${PIPESTATUS[0]}
   set -e
   if (( early_status != 0 )); then

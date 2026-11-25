@@ -11,6 +11,11 @@ def apply(root:Path):
         s=p.read_text()
         if s.count(old)!=1: raise RuntimeError("AHB present source drift "+rel+": "+old[:100])
         p.write_text(s.replace(old,new,1))
+    # Android platform declarations must be consistent in every Vulkan-Hpp TU.
+    # Defining this only in vk_platform.cpp leaves device extensions, types and
+    # dynamic dispatcher slots absent in the rest of the core.
+    edit("vk_common.h","#define VK_ENABLE_BETA_EXTENSIONS",
+         "#if defined(__ANDROID__) && !defined(VK_USE_PLATFORM_ANDROID_KHR)\n#define VK_USE_PLATFORM_ANDROID_KHR\n#endif\n#define VK_ENABLE_BETA_EXTENSIONS")
     edit("vk_instance.h","    bool supports_memory_budget{};",
          "    bool supports_memory_budget{};\n    bool android_ahb_present{};")
     edit("vk_instance.h","    bool CanReportMemoryUsage() const {",
