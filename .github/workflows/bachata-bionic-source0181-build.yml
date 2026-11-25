@@ -104,6 +104,7 @@ jobs:
           python3 bionic/source0181/test_donor_early_depth.py --source generic-upstream
           python3 bionic/source0181/test_readconst_addr64.py --source generic-upstream
           python3 bionic/source0181/test_donor_draw_pipeline.py --source generic-upstream
+          python3 bionic/source0181/test_pending_gpu_callbacks.py --source generic-upstream
           python3 bionic/source0181/test_surface_metadata_protocol.py --source generic-upstream
           python3 bionic/source0181/test_donor_pipeline_key.py --source generic-upstream
           # Fail the cheap preflight if the host protobuf generator can again
@@ -332,6 +333,7 @@ jobs:
           python3 bionic/source0181/test_donor_early_depth.py --source generic-upstream
           python3 bionic/source0181/test_readconst_addr64.py --source generic-upstream
           python3 bionic/source0181/test_donor_draw_pipeline.py --source generic-upstream
+          python3 bionic/source0181/test_pending_gpu_callbacks.py --source generic-upstream
           python3 bionic/source0181/test_surface_metadata_protocol.py --source generic-upstream
           python3 bionic/source0181/test_donor_pipeline_key.py --source generic-upstream
           python3 - <<'PY'

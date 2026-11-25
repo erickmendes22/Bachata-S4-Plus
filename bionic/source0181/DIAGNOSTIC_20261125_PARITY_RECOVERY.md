@@ -160,6 +160,17 @@ com consumidor bloqueado, mutação dos dados originais após publicação, oper
 diretas/indiretas e milhares de voltas do buffer circular. O marcador
 `BACHATA_DRAW_PIPELINE` registra ativação e motivo, CPUs, FEX, tracking e recorder.
 
+### Callbacks e recuperação de memória
+
+O scheduler remove e move o callback atual para armazenamento local **antes** de
+executá-lo. Assim, um callback que chama `Finish()` pode liberar operações
+posteriores sem executar novamente a si próprio. A fila mantém a ordem de
+invocação; a conclusão aninhada necessária para liberar memória antes do retry
+de alocação permanece permitida. O conjunto de faixas de cada batch de faults
+passa a pertencer ao callback, evitando que uma execução aninhada invalide a
+iteração externa. O teste executa o `Finish` e os callbacks reais, incluindo
+liberação anterior ao retry e batches de faults intercalados.
+
 ## Verificação e limites da conclusão
 
 O workflow reconstrói a fonte a partir das revisões fixadas, aplica todos os

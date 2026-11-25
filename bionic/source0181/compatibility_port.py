@@ -829,6 +829,8 @@ void GameController::PollState() {
     result["readconstAddr64"] = apply_readconst_addr64(root)
     from port_donor_draw_pipeline import apply as apply_donor_draw_pipeline
     result["donorDrawPipeline"] = apply_donor_draw_pipeline(root)
+    from port_pending_gpu_callbacks import apply as apply_pending_gpu_callbacks
+    result["pendingGpuCallbacks"] = apply_pending_gpu_callbacks(root)
     from port_runtime_cache_generation import apply as apply_runtime_cache_generation
     result["finalShaderCacheGeneration"] = apply_runtime_cache_generation(root)
     result["portedInterfaces"].append(

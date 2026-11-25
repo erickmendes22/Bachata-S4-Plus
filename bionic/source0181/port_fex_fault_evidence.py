@@ -98,7 +98,8 @@ void WriteFexFaultEvidence(const char* event, int signal, siginfo_t* info,
   }
   buffer[used++] = '\n';
   const int saved_errno = errno;
-  (void)::write(STDERR_FILENO, buffer, used);
+  const auto written = ::write(STDERR_FILENO, buffer, used);
+  (void)written; // Best effort in a signal handler; consume fortified libc's result.
   errno = saved_errno;
 }
 #endif

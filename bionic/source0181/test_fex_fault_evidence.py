@@ -152,8 +152,11 @@ with tempfile.TemporaryDirectory() as folder:
     cpp = folder / "test.cpp"
     exe = folder / "test"
     cpp.write_text(prefix + engine[start:end] + suffix)
+    # Ubuntu's fortified libc marks write() warn_unused_result. Keep that
+    # contract enabled on every host, including development containers.
     subprocess.run(
-        ["c++", "-std=c++23", "-O2", "-Wall", "-Wextra", "-Werror",
+        ["c++", "-std=c++23", "-O2", "-U_FORTIFY_SOURCE", "-D_FORTIFY_SOURCE=2",
+         "-Wall", "-Wextra", "-Werror",
          "-I", str(src), str(cpp), "-o", str(exe)], check=True,
     )
     result = subprocess.run([str(exe)], check=True, capture_output=True, text=True, timeout=10)
