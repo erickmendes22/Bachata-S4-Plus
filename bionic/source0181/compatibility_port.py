@@ -777,6 +777,8 @@ void GameController::PollState() {
     result["pthreadOpaque"] = apply_pthread_opaque(root)
     from port_confirmed_order_recovery import apply as apply_order
     result["confirmedOrderRecovery"] = apply_order(root)
+    from port_inherited_gpu import apply as apply_inherited_gpu
+    result["inheritedGpu"] = apply_inherited_gpu(root, sotc=False)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
