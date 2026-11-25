@@ -3,7 +3,7 @@ on:
   # The user requested an actual Android APK to test the fixed launch.
   # New commits supersede earlier builds; only the latest complete core runs.
   push:
-    branches: [work/bionic-sotc-color-20261125]
+    branches: [work/bionic-sotc-inherited-20261125]
     paths:
       - '.github/workflows/bachata-bionic-generic-source.yml'
       - 'bionic/generic/**'
@@ -200,7 +200,7 @@ jobs:
     # Do not spend ~20 minutes compiling for each speculative source change.
     # Full core and P36 APK build only on explicit workflow_dispatch or
     # an intentional commit message carrying [build-apk].
-    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.core_run_id == '') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build-apk]')) }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.core_run_id == '') || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[build-apk]') || contains(github.event.head_commit.message, '[validate-native]'))) }}
     needs: [bionic-source-preflight]
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -515,7 +515,7 @@ jobs:
 
   assemble-bionic-apk:
     needs: [full-ps4-bionic]
-    if: ${{ always() && (needs.full-ps4-bionic.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.core_run_id != '')) }}
+    if: ${{ always() && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[validate-native]')) && (needs.full-ps4-bionic.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.core_run_id != '')) }}
     name: Assemble and sign Bachata S4+ 0.2.7 actual source 0.18.1 Bionic APK
     runs-on: ubuntu-24.04
     timeout-minutes: 25
