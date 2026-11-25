@@ -763,8 +763,6 @@ void GameController::PollState() {
     result["compiledDescriptorContract"] = apply_compiled_descriptor_contract(root)
     from port_sotc_color_only import apply as apply_color_only
     result["sotcColorOnly"] = apply_color_only(root)
-    from port_cache_integrity import apply as apply_cache_integrity
-    result["cacheIntegrity"] = apply_cache_integrity(root,"sotc-color-cache-v1")
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")

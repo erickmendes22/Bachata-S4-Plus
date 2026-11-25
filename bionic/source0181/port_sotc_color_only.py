@@ -43,31 +43,30 @@ void LowerWave64BallotPass(IR::Program& program, const RuntimeInfo& runtime_info
         '''    if (program.info.hw_stage != HwStage::Compute) return;
     const auto [size_x,size_y,size_z]=runtime_info.hw.cs.workgroup_size;
     const u32 num_threads=size_x*size_y*size_z;
-    if (profile.subgroup_size==64) {
+    if (program.info.pgm_hash==0x87cf9b8aULL && num_threads==32 && profile.subgroup_size>=32)\n        FoldAbsentReductionLanes(program,32);\n    if (profile.subgroup_size==64) {
         // Only the actual donor shader and workgroup are established.
         // Preserve the previously working upstream behavior everywhere else.
-        if (num_threads>0 && num_threads<64)
-            FoldAbsentReductionLanes(program,num_threads);
         return;
     }
-    if (num_threads<=32) return;''','match actual donor reduction shape, not fixed shader hash')
+    if (num_threads<=32) return;''','scope absent-lane identity to verified donor shader')
     p.write_text(s)
 
+    # Preserve all unrelated binary/meta versions from 608a1ac, including
+    # the 1332 working pipelines in 66F3F9ED. Only the affected shader
+    # receives a new per-shader generation; no global cache invalidation.
     p=root/'src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp'
     s=p.read_text()
-    s,n=re.subn(r'ShaderBinaryVersion = (\d+)u;',lambda m:f'ShaderBinaryVersion = {int(m.group(1))+101}u;',s)
-    if n!=1: raise RuntimeError("shader binary cache version drift")
+    key='Serialization::ShaderBinaryVersion + (AmdGpu::BachataOrderNoMsaa() ? 64u : 0u)'
+    s=one(s,'meta.Write('+key+');',
+        'meta.Write('+key+' + (info.pgm_hash==0x87cf9b8aULL ? 101u : 0u));','targeted writer')
+    s=one(s,'    if (binary_version != '+key+') {',
+        '    if (binary_version != '+key+' && binary_version != '+key+' + 101u) {','accept both version generations')
+    s=one(s,'    return info.Deserialize(ar) && effective_info.Deserialize(ar);',
+        '''    if (!info.Deserialize(ar) || !effective_info.Deserialize(ar)) return false;
+    return binary_version == Serialization::ShaderBinaryVersion +
+        (AmdGpu::BachataOrderNoMsaa() ? 64u : 0u) +
+        (info.pgm_hash==0x87cf9b8aULL ? 101u : 0u);''','reject only old affected shader')
+    s=one(s,'            bool result{};\n            if (is_compute) {',
+        '            infos.fill(nullptr);\n            modules.fill(nullptr);\n            runtime_infos.fill({});\n            fetch_shader=nullptr;\n            bool result{};\n            if (is_compute) {','reset partially loaded stages')
     p.write_text(s)
-    # Warmup must not dereference an uninitialized Vulkan cache handle.
-    p=root/'src/video_core/renderer_vulkan/vk_pipeline_cache.cpp'
-    s=p.read_text()
-    s=one(s,'    WarmUp();\n\n    auto [cache_result, cache]', '    auto [cache_result, cache]', 'initialize before warmup')
-    s=one(s,'    pipeline_cache = std::move(cache);\n}', '    pipeline_cache = std::move(cache);\n    WarmUp();\n}', 'warmup after cache exists')
-    p.write_text(s)
-    # Restore only the actual guest flip event, not the later scheduler policy.
-    p=root/'src/core/libraries/videoout/driver.cpp'
-    s=p.read_text()
-    s=one(s,'#include "imgui/renderer/imgui_core.h"', '#include "imgui/renderer/imgui_core.h"\n#ifdef ENABLE_BACHATA_RUNTIME\n#include "platform/bachata/runtime_client.h"\n#endif','frame protocol include')
-    s=one(s,'    presenter->Present(req.frame);','    presenter->Present(req.frame);\n#ifdef ENABLE_BACHATA_RUNTIME\n    Platform::Bachata::ReportPresentedFrame();\n#endif','report actual guest presentation')
-    p.write_text(s)
-    return {"color":"SotC donor 5712cee31461, actual reduction identities for short compute workgroups on wave64"}
+    return {"color":"donor 5712cee31461, target reduction; preserve all unrelated caches"}
