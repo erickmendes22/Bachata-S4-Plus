@@ -811,6 +811,26 @@ void GameController::PollState() {
     result["wsiFexGuard"] = apply_wsi_fex_guard(root)
     from port_donor_write_faults import apply as apply_donor_write_faults
     result["donorWriteFaults"] = apply_donor_write_faults(root, order=True)
+    from port_fex_fault_evidence import apply as apply_fex_fault_evidence
+    result["fexFaultEvidence"] = apply_fex_fault_evidence(root)
+    from port_fex_clock_protocol import apply as apply_fex_clock_protocol
+    result["fexClockProtocol"] = apply_fex_clock_protocol(root)
+    from port_surface_metadata_protocol import apply as apply_surface_metadata_protocol
+    result["surfaceMetadataProtocol"] = apply_surface_metadata_protocol(root)
+    from port_donor_alu_semantics import apply as apply_donor_alu_semantics
+    result["donorAluSemantics"] = apply_donor_alu_semantics(root)
+    from port_donor_wave64_lds import apply as apply_donor_wave64_lds
+    result["donorWave64Lds"] = apply_donor_wave64_lds(root)
+    from port_donor_shader_inputs import apply as apply_donor_shader_inputs
+    result["donorShaderInputs"] = apply_donor_shader_inputs(root)
+    from port_donor_early_depth import apply as apply_donor_early_depth
+    result["donorEarlyDepth"] = apply_donor_early_depth(root)
+    from port_readconst_addr64 import apply as apply_readconst_addr64
+    result["readconstAddr64"] = apply_readconst_addr64(root)
+    from port_donor_draw_pipeline import apply as apply_donor_draw_pipeline
+    result["donorDrawPipeline"] = apply_donor_draw_pipeline(root)
+    from port_runtime_cache_generation import apply as apply_runtime_cache_generation
+    result["finalShaderCacheGeneration"] = apply_runtime_cache_generation(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
