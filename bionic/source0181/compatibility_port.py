@@ -775,6 +775,8 @@ void GameController::PollState() {
     result["targetAsyncGraphics"] = apply_async_graphics(root)
     from port_target_recorder import apply as apply_recorder
     result["targetRecorder"] = apply_recorder(root)
+    from port_sotc_async_compute import apply as apply_async_compute
+    result["sotcAsyncCompute"] = apply_async_compute(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
