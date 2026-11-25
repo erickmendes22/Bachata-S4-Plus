@@ -3,7 +3,7 @@ on:
   # The user requested an actual Android APK to test the fixed launch.
   # New commits supersede earlier builds; only the latest complete core runs.
   push:
-    branches: [feature/bionic-shadps4-0181-source-port-20261121]
+    branches: [work/bionic-sotc-color-20261125]
     paths:
       - '.github/workflows/bachata-bionic-generic-source.yml'
       - 'bionic/generic/**'
@@ -84,6 +84,7 @@ jobs:
           grep -Fq 'BIONIC_CPP_FAIL_FAST_START' bionic/generic/build-generic.sh
           ! grep -Fq -- '-- -k 0' bionic/generic/build-generic.sh
           python3 bionic/source0181/assert_native_api.py --source generic-upstream
+          grep -Fq 'BACHATA_ABSENT_REDUCTION_LANE' generic-upstream/src/shader_recompiler/ir/passes/lower_wave64_pass.cpp
           # Fail the cheap preflight if the host protobuf generator can again
           # become a cached /usr/bin/protoc after restoring CMakeCache.txt.
           grep -Fq 'BACHATA_HOST_PROTOC_EXECUTABLE:FILEPATH' bionic/generic/build-generic.sh

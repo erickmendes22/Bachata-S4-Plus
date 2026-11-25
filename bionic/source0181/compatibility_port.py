@@ -756,6 +756,8 @@ void GameController::PollState() {
     result["watcherPairingAndRptr"] = apply_watcher_rptr(root)
     from port_compiled_descriptor_contract import apply as apply_compiled_descriptor_contract
     result["compiledDescriptorContract"] = apply_compiled_descriptor_contract(root)
+    from port_sotc_color_only import apply as apply_color_only
+    result["sotcColorOnly"] = apply_color_only(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
