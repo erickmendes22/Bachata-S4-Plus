@@ -15,8 +15,7 @@ def apply(root: Path, sotc: bool):
         if inc not in p.read_text(): p.write_text(inc+"\n"+p.read_text())
     for n in ("vk_barrier_tracker.h","vk_barrier_tracker.cpp"):
         shutil.copyfile(Path(__file__).parent/"inherited"/n,v/n)
-    # Compile exact tree in this translation unit: no additional CMake ABI.
-    # The original Zlib notice remains in both copied files.
+    # Compile exact tree in the runtime translation unit. Original license retained.
     h=v/"vk_runtime.h"; c=v/"vk_runtime.cpp"
     edit(h,'#include "common/interval_set.h"','#include "common/interval_set.h"\n#include "video_core/renderer_vulkan/vk_barrier_tracker.h"')
     edit(h,"    BufferBarriers* resource{};","""    BarrierTracker donor_barriers;
@@ -64,6 +63,7 @@ def apply(root: Path, sotc: bool):
     }""")
     edit(c,"    image_barriers.clear();\n    for (auto& resource : resources) {",
          "    image_barriers.clear();\n    donor_barriers.Clear();\n    for (auto& resource : resources) {")
+    prefix(v/"vk_barrier_tracker.cpp", "#include <algorithm>")
     with c.open("a") as f: f.write('\n#include "video_core/renderer_vulkan/vk_barrier_tracker.cpp"\n')
     # Correct GPU-resource lifetime. These are temporary modules created only
     # by the constructor, not the shared Program::Module objects.
@@ -91,6 +91,7 @@ def apply(root: Path, sotc: bool):
     prefix(pc,'#include "common/elf_info.h"')
     prefix(pc,"#include <filesystem>")
     prefix(pc,"#include <algorithm>")
+    prefix(pc,'#include "video_core/amdgpu/bachata_order_msaa.h"')
     version="-".join(re.search(rf"{n} = (\d+)u;",ser.read_text())[1] for n in
                      ("ShaderMetaVersion","ShaderBinaryVersion","PipelineKeyVersion"))
     init=r'''
@@ -225,8 +226,135 @@ def apply(root: Path, sotc: bool):
     assert old in s
     s=s.replace(old,"            if(!buffer_cache.IsRangeGpuWritten(source,sizeof(u32)))continue;\n            visited.insert(page);\n            buffer_cache.TrackSrtSourcePage(page);")
     raster.write_text(s)
+    # The SotC donor batches streaming uploads into 512 KiB pieces and copies
+    # them in parallel. On FEX, workers must NEVER touch protected guest VAs:
+    # a fault on a worker would wait on the GPU producer which is joining it.
+    # Resolve all physical spans under the VMM shared lock, then split the
+    # physical backing aliases. Fall back to the original path on any hole.
+    mh=root/"src/core/memory.h"; mc=root/"src/core/memory.cpp"
+    prefix(mh,"#include <span>")
+    prefix(mc,"#include <condition_variable>")
+    prefix(mc,"#include <thread>")
+    prefix(mc,"#include <vector>")
+    edit(mh,"    void CopySparseMemory(VAddr source, u8* dest, u64 size);",
+         """    void CopySparseMemory(VAddr source, u8* dest, u64 size);
+    struct PhysicalUpload { VAddr source; u8* dest; u64 size; };
+    bool CopyPhysicalUploads(std::span<const PhysicalUpload> uploads);""")
+    edit(mc,"void MemoryManager::CopySparseMemory(VAddr address, u8* dest, u64 size) {",
+         r'''namespace {
+struct UploadPiece { const u8* source; u8* dest; u64 size; };
+void CopyUploadPieces(std::span<const UploadPiece> pieces) {
+    for (const auto& piece:pieces) std::memcpy(piece.dest,piece.source,piece.size);
+}
+class PhysicalUploadWorker {
+public:
+    PhysicalUploadWorker():thread([this] {
+        for (;;) {
+            std::unique_lock lock{mutex};
+            cv.wait(lock,[this]{return pending||stop;});
+            if(stop) return;
+            const auto work=pieces;
+            lock.unlock();
+            CopyUploadPieces(work);
+            lock.lock();
+            pending=false;
+            cv.notify_all();
+        }
+    }) {}
+    ~PhysicalUploadWorker() {
+        { std::scoped_lock lock{mutex}; stop=true; }
+        cv.notify_all();
+        thread.join();
+    }
+    void Run(std::span<const UploadPiece> work) {
+        std::scoped_lock serialize{producer};
+        const auto split=work.size()/2;
+        {
+            std::scoped_lock lock{mutex};
+            pieces=work.first(split);
+            pending=true;
+        }
+        cv.notify_all();
+        CopyUploadPieces(work.subspan(split));
+        std::unique_lock lock{mutex};
+        cv.wait(lock,[this]{return !pending;});
+        pieces={};
+    }
+private:
+    std::mutex mutex,producer;
+    std::condition_variable cv;
+    std::span<const UploadPiece> pieces;
+    bool pending{},stop{};
+    std::thread thread;
+};
+} // namespace
+
+bool MemoryManager::CopyPhysicalUploads(std::span<const PhysicalUpload> uploads) {
+    std::shared_lock lock{mutex};
+    constexpr u64 PieceSize=512*1024;
+    std::vector<UploadPiece> pieces;
+    for (const auto& upload:uploads) {
+        auto addr=upload.source;
+        auto* dest=upload.dest;
+        auto remaining=upload.size;
+        if (remaining>UINT64_MAX-addr) return false;
+        while (remaining) {
+            if (!IsValidMapping(addr)) return false;
+            const auto& vma=FindVMA(addr)->second;
+            if (!HasPhysicalBacking(vma)) return false;
+            const u64 bytes=std::min(remaining,vma.base+vma.size-addr);
+            if (!VisitPhysicalSpans(vma,addr,bytes,[&](PAddr phys,u64 n) {
+                const auto* src=impl.BackingBase()+phys;
+                while(n) {
+                    const auto step=std::min(n,PieceSize);
+                    pieces.push_back({src,dest,step});
+                    src+=step;dest+=step;n-=step;
+                }
+            })) return false;
+            addr+=bytes;remaining-=bytes;
+        }
+    }
+    // No data have been copied if validation failed. The VMM lock remains
+    // held until both host threads have finished the unprotected aliases.
+    if (pieces.size()<4) CopyUploadPieces(pieces);
+    else {
+        try {
+            static PhysicalUploadWorker worker;
+            worker.Run(pieces);
+        } catch (...) {
+            CopyUploadPieces(pieces);
+        }
+    }
+    return true;
+}
+
+void MemoryManager::CopySparseMemory(VAddr address, u8* dest, u64 size) {''')
+    bc=root/"src/video_core/buffer_cache/buffer_cache.cpp"
+    prefix(bc,'#include "common/elf_info.h"')
+    edit(bc,"""        for (auto& copy : copies) {
+            memory->CopySparseMemory(copy.dstOffset, staging.mapped + copy.srcOffset, copy.size);
+            copy.srcOffset += staging.offset;
+            copy.dstOffset -= arena->cpu_addr;
+        }""",
+         """        bool parallel=false;
+        const auto serial=Common::ElfInfo::Instance().GameSerial();
+        if (total_size_bytes>=2_MB &&
+            (serial=="CUSA00785" || serial=="CUSA08809" || serial=="CUSA08034")) {
+            std::vector<Core::MemoryManager::PhysicalUpload> uploads;
+            uploads.reserve(copies.size());
+            for (const auto& copy:copies)
+                uploads.push_back({copy.dstOffset,staging.mapped+copy.srcOffset,copy.size});
+            parallel=memory->CopyPhysicalUploads(uploads);
+        }
+        for (auto& copy : copies) {
+            if (!parallel)
+                memory->CopySparseMemory(copy.dstOffset, staging.mapped + copy.srcOffset, copy.size);
+            copy.srcOffset += staging.offset;
+            copy.dstOffset -= arena->cpu_addr;
+        }""")
     return {"barrier":"exact shared DXVK barrier tree and conservative read ranges; original scheduler",
             "cache":"persistent driver/ABI root; synchronized atomic files; valid shader preload",
             "lifetime":"constructor auxiliary Vulkan modules released",
             "srt":"dirty DWORD validated before marking visited page",
+            "uploads":"validated physical alias batch with 512KiB pieces, two host threads, synchronous completion",
             "cpu":"FEX retained","fps":"original videoout, FPS and Android presentation code retained"}
