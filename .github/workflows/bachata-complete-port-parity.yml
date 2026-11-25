@@ -1,0 +1,88 @@
+name: Bachata FEX functional source parity
+on:
+  push:
+    branches: [work/bionic-complete-port-parity-20261125]
+    paths:
+      - 'bionic/ports/**'
+      - '.github/workflows/bachata-complete-port-parity.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: bachata-fex-functional-source-parity
+  cancel-in-progress: true
+jobs:
+  source-parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout exact Order reference (not its binary)
+        uses: actions/checkout@v4
+        with:
+          repository: erickmendes22/gow3_android_daedalus_fork
+          ref: 756a4f0cc603b02971d45b36354143249a4fe492
+          path: order-port
+      - uses: actions/checkout@v4
+        with:
+          repository: JulioCacko/The-Order-1886_pc
+          ref: c53cd01d032995fe622033623ab64b4cf6b02233
+          path: order-pc
+          submodules: recursive
+      - name: Reconstruct the actual compiled Order GPU source
+        run: |
+          python3 order-port/the-order-1886-android/scripts/assemble.py --source order-pc --output order-effective
+      - uses: actions/checkout@v4
+        with:
+          repository: erickmendes22/gow3_android_daedalus_fork
+          ref: 0366868550bde078d9ed9d88bc72d8acb1584679
+          path: sotc-port
+      - uses: actions/checkout@v4
+        with:
+          repository: AjncSystem/ShadowOfTheColossus-PC
+          ref: 732cb37d3470d2dad2cc99da19283253c96b53fc
+          path: sotc-pc
+          submodules: recursive
+      - name: Reconstruct exact SotC GPU used by 0.2.0
+        run: |
+          python3 sotc-port/ports/sotc/android/stage_renderer.py --upstream sotc-pc --out sotc-effective
+          python3 sotc-port/ports/sotc/android/wire_ahb.py --root sotc-port --gpu sotc-effective
+      - name: Reconstruct both actual Bachata FEX cores
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/zenithblue-oss/shadps4-arm64.git bachata-order
+          git -C bachata-order checkout --quiet be6bc2e9c60799e071dd2fafa6216e8d80ec619c
+          git -C bachata-order config user.name 'Bachata Source Port CI'
+          git -C bachata-order config user.email 'source-port@users.noreply.github.com'
+          git -C bachata-order remote add shadps4 https://github.com/shadps4-emu/shadPS4.git
+          git -C bachata-order fetch --quiet --filter=blob:none shadps4 3912336fdfffbd5c99b59d92e997ea6ebd62216c
+          cp -a bachata-order bachata-sotc
+          git fetch --no-tags origin 74f01b20951e270e71a2d132e5efcc4fd76954ba
+          git worktree add --detach sotc-bachata-overlay 74f01b20951e270e71a2d132e5efcc4fd76954ba
+          python3 bionic/source0181/rebase_arm64.py --source bachata-order --output out/order-rebase
+          python3 bionic/source0181/port_0181.py --source bachata-order --report out/order-parity.json
+          python3 sotc-bachata-overlay/bionic/source0181/rebase_arm64.py --source bachata-sotc --output out/sotc-rebase
+          python3 sotc-bachata-overlay/bionic/source0181/port_0181.py --source bachata-sotc --report out/sotc-parity.json
+      - name: Compare every effective GPU source file and symbol by subsystem
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y universal-ctags
+          python3 bionic/ports/source_parity.py --order-donor order-effective/gpu/shadps4 --sotc-donor sotc-effective/shadps4 --order-bachata bachata-order/src --sotc-bachata bachata-sotc/src --out out/functional-parity
+      - name: Export effective source trees for direct adaptation, no native compilation
+        run: |
+          tar -czf out/effective-gpu-sources.tar.gz \
+            order-effective/gpu/shadps4 \
+            sotc-effective/shadps4 \
+            bachata-order/src \
+            bachata-sotc/src
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bachata-fex-effective-source-parity-NOT-APK
+          path: |
+            out/functional-parity/
+            out/order-parity.json
+            out/sotc-parity.json
+            out/effective-gpu-sources.tar.gz
+          if-no-files-found: error

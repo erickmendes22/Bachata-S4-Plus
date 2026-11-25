@@ -24,7 +24,7 @@ BASE_RELEASE = "0.2.7"
 NATIVE_DIR = "lib/arm64-v8a/"
 NATIVE_MANIFEST = "assets/runtime/native-runtime.json"
 SOTC_CORE = "libbachata_sotc_core.so"
-SOTC_REV = "4fb12a7c96be5f28989f994fcb2281f2ff9e30f1"
+SOTC_REV = "81aa7c1ae4c9dcb16123306bf1733921d3984b4a"
 REQUIRED_LIBRARIES = {"libbachata_native_runtime.so", "libbachata_bionic_core.so"}
 CRITICAL_PRESERVED = {
     "AndroidManifest.xml",
@@ -95,7 +95,7 @@ def main() -> None:
         if marker not in core_binary:
             die(f"Compiled native core is missing required current-build integration: {marker!r}")
 
-    # The explicitly selected SotC core is the original device-tested Bionic
+    # The explicitly selected SotC core is the revised dedicated Bionic
     # binary, not a generic legacy fallback. Its actual SHA is part of the APK provenance.
     sotc = staged.get(SOTC_CORE)
     if not sotc or f"BACHATA_CORE_REVISION={SOTC_REV}".encode() not in sotc.read_bytes():
