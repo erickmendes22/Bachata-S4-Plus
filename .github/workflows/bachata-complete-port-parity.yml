@@ -1,0 +1,53 @@
+name: Bachata exact donor input and ABI gate
+on:
+  push:
+    branches: [work/bionic-complete-port-parity-20261125]
+    paths:
+      - 'bionic/ports/**'
+      - '.github/workflows/bachata-complete-port-parity.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  exact-donor-gate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          repository: erickmendes22/gow3_android_daedalus_fork
+          run-id: 44980141404
+          name: The-Order-1886-Daedalus-Bionic-Android-0.1.37-release-unsigned
+          github-token: ${{ github.token }}
+          path: inputs/order
+      - uses: actions/download-artifact@v4
+        with:
+          repository: erickmendes22/ShadowOfTheColossus-Android-Aot
+          run-id: 45109431755
+          name: Shadow-of-the-Colossus-Daedalus-AOT-0.2.0-NGS2-AUDIO-UNSIGNED
+          github-token: ${{ github.token }}
+          path: inputs/sotc
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 45616521572
+          name: Bachata-S4Plus-REAL-shadPS4-0181-FEX-Bionic-P36-APK
+          github-token: ${{ github.token }}
+          path: inputs/bachata
+      - name: Audit entire original donor APKs and native ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          find inputs -name '*.apk' -print
+          mapfile -t order < <(find inputs/order -name '*.apk')
+          mapfile -t sotc < <(find inputs/sotc -name '*.apk')
+          mapfile -t bachata < <(find inputs/bachata -name '*.apk')
+          test "${#order[@]}" = 1
+          test "${#sotc[@]}" = 1
+          test "${#bachata[@]}" = 1
+          python3 -m py_compile bionic/ports/import_exact_ports.py
+          python3 bionic/ports/import_exact_ports.py --order "${order[0]}" --sotc "${sotc[0]}" --bachata "${bachata[0]}" --out out/exact-ports
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exact-port-inputs-ABI-report-NOT-APK
+          path: out/exact-ports/parity-inputs.json
