@@ -94,6 +94,7 @@ jobs:
           python3 bionic/source0181/test_memory_transaction.py --source generic-upstream
           python3 bionic/source0181/test_donor_barrier_tree.py --source generic-upstream
           python3 bionic/source0181/test_present_boot_ownership.py --source generic-upstream
+          python3 bionic/source0181/test_wsi_fex_guard.py --source generic-upstream
           python3 bionic/source0181/test_donor_pipeline_key.py --source generic-upstream
           # Fail the cheap preflight if the host protobuf generator can again
           # become a cached /usr/bin/protoc after restoring CMakeCache.txt.
@@ -311,6 +312,7 @@ jobs:
           python3 bionic/source0181/test_memory_transaction.py --source generic-upstream
           python3 bionic/source0181/test_donor_barrier_tree.py --source generic-upstream
           python3 bionic/source0181/test_present_boot_ownership.py --source generic-upstream
+          python3 bionic/source0181/test_wsi_fex_guard.py --source generic-upstream
           python3 bionic/source0181/test_donor_pipeline_key.py --source generic-upstream
           python3 - <<'PY'
           import json
