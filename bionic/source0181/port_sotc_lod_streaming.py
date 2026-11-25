@@ -87,6 +87,7 @@ inline void Collect(Core::MemoryManager* memory,std::array<u64,256>& entries) {
                 const VAddr base=(VAddr{d[1]}<<6)|(VAddr{d[2]&3u}<<38);
                 const u64 bytes=u64{d[0]}+0x20;
                 std::array<u64,256> entries{};
+                auto* memory=Core::Memory::Instance();
                 BachataSotcLod::Collect(memory,entries);
                 // Both bank tables are independently bounded by the actual packet.
                 for(u32 half=0;half<2;++half) {
@@ -131,6 +132,7 @@ void BufferCache::ReleaseUnmappedArena(VAddr address, u64 size) {""")
     else buffer_cache.InvalidateMemory(addr,size);
     texture_cache.UnmapMemory(addr,size);
     if(BachataSotcLod::Enabled()) {''')
+    edit("video_core/buffer_cache/buffer_cache.cpp",'#include "common/alignment.h"','#include "common/alignment.h"\n#include "common/elf_info.h"')
     edit("video_core/buffer_cache/buffer_cache.cpp","        constexpr u64 WindowSize = 512_KB;",
          """        const auto serial=Common::ElfInfo::Instance().GameSerial();
         const u64 WindowSize = (serial=="CUSA08809"||serial=="CUSA08034")?64_KB:512_KB;""")
