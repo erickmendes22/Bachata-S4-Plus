@@ -46,11 +46,11 @@ void LowerWave64BallotPass(IR::Program& program, const RuntimeInfo& runtime_info
     if (profile.subgroup_size==64) {
         // Only the actual donor shader and workgroup are established.
         // Preserve the previously working upstream behavior everywhere else.
-        if (program.info.pgm_hash==0x87cf9b8aULL && num_threads==32)
-            FoldAbsentReductionLanes(program,32);
+        if (num_threads>0 && num_threads<64)
+            FoldAbsentReductionLanes(program,num_threads);
         return;
     }
-    if (num_threads<=32) return;''','scope absent-lane identity to verified donor shader')
+    if (num_threads<=32) return;''','match actual donor reduction shape, not fixed shader hash')
     p.write_text(s)
 
     p=root/'src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp'
@@ -58,4 +58,16 @@ void LowerWave64BallotPass(IR::Program& program, const RuntimeInfo& runtime_info
     s,n=re.subn(r'ShaderBinaryVersion = (\d+)u;',lambda m:f'ShaderBinaryVersion = {int(m.group(1))+101}u;',s)
     if n!=1: raise RuntimeError("shader binary cache version drift")
     p.write_text(s)
-    return {"color":"SotC donor 5712cee31461, only 0x87cf9b8a 32-thread wave64 reduction"}
+    # Warmup must not dereference an uninitialized Vulkan cache handle.
+    p=root/'src/video_core/renderer_vulkan/vk_pipeline_cache.cpp'
+    s=p.read_text()
+    s=one(s,'    WarmUp();\n\n    auto [cache_result, cache]', '    auto [cache_result, cache]', 'initialize before warmup')
+    s=one(s,'    pipeline_cache = std::move(cache);\n}', '    pipeline_cache = std::move(cache);\n    WarmUp();\n}', 'warmup after cache exists')
+    p.write_text(s)
+    # Restore only the actual guest flip event, not the later scheduler policy.
+    p=root/'src/core/libraries/videoout/driver.cpp'
+    s=p.read_text()
+    s=one(s,'#include "imgui/renderer/imgui_core.h"', '#include "imgui/renderer/imgui_core.h"\n#ifdef ENABLE_BACHATA_RUNTIME\n#include "platform/bachata/runtime_client.h"\n#endif','frame protocol include')
+    s=one(s,'    presenter->Present(req.frame);','    presenter->Present(req.frame);\n#ifdef ENABLE_BACHATA_RUNTIME\n    Platform::Bachata::ReportPresentedFrame();\n#endif','report actual guest presentation')
+    p.write_text(s)
+    return {"color":"SotC donor 5712cee31461, actual reduction identities for short compute workgroups on wave64"}
