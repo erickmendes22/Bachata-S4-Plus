@@ -791,6 +791,8 @@ void GameController::PollState() {
     result["sotcDmaSweep"] = apply_sotc_dma_sweep(root)
     from port_donor_runtime_contract import apply as apply_donor_runtime
     result["donorRuntimeContract"] = apply_donor_runtime(root)
+    from port_present_boot_ownership import apply as apply_present_boot
+    result["presentBootOwnership"] = apply_present_boot(root)
     from port_sotc_fast_render import apply as apply_fast_render
     result["sotcFastRender"] = apply_fast_render(root)
     from port_sotc_draw_pipe import apply as apply_draw_pipe
