@@ -787,6 +787,8 @@ void GameController::PollState() {
     result["targetBatchedReadback"] = apply_target_batched_readback(root)
     from port_order_deferred_image_readback import apply as apply_deferred_readback
     result["orderDeferredImageReadback"] = apply_deferred_readback(root)
+    from port_target_async_graphics import apply as apply_async_graphics
+    result["targetAsyncGraphics"] = apply_async_graphics(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
