@@ -779,6 +779,8 @@ void GameController::PollState() {
     result["sotcAsyncCompute"] = apply_async_compute(root)
     from port_sotc_lod_streaming import apply as apply_lod_streaming
     result["sotcLodStreaming"] = apply_lod_streaming(root)
+    from port_target_donor_settings import apply as apply_donor_settings
+    result["targetDonorSettings"] = apply_donor_settings(root, sotc=True)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
