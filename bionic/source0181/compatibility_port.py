@@ -795,6 +795,8 @@ void GameController::PollState() {
     result["presentBootOwnership"] = apply_present_boot(root)
     from port_wsi_fex_guard import apply as apply_wsi_fex_guard
     result["wsiFexGuard"] = apply_wsi_fex_guard(root)
+    from port_donor_write_faults import apply as apply_donor_write_faults
+    result["donorWriteFaults"] = apply_donor_write_faults(root, order=False)
     from port_sotc_fast_render import apply as apply_fast_render
     result["sotcFastRender"] = apply_fast_render(root)
     from port_sotc_draw_pipe import apply as apply_draw_pipe

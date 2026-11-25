@@ -3,7 +3,7 @@
 Tests protection order, page boundary behavior, concurrent dirty word publication.
 Does not claim Android/FEX runtime equivalence.
 """
-import argparse, pathlib, subprocess, tempfile
+import argparse, pathlib, subprocess, tempfile, os
 p=argparse.ArgumentParser()
 p.add_argument("--source",required=True)
 args=p.parse_args()
@@ -140,9 +140,47 @@ int main() {
     }
     stop.store(true,std::memory_order_release);
     reader.join();
+
+    // Exact mapped-window policy: GPU-owned and dirty pages never get
+    // reclassified; a guest write can unprotect clean neighbours only.
+    constexpr VAddr window=3*HIGHER_PAGE_SIZE;
+    auto count=[](VAddr,u64){};
+    t->ForEachUploadRange(window,4*4096,false,count,[]{});
+    t->ForEachUploadRange(window+4096,4096,true,count,[]{});
+    t->MarkWriteWindow<false>(window,4*4096);
+    assert(t->IsRegionCpuModified(window,4096));
+    assert(t->IsRegionGpuModified(window+4096,4096));
+    assert(!t->IsRegionCpuModified(window+4096,4096));
+    assert(t->IsRegionCpuModified(window+8192,4096));
+    t->ForEachUploadRange(window,4096,false,count,[]{});
+    t->ForEachUploadRange(window+8192,2*4096,false,count,[]{});
+    t->MarkWriteWindow<true>(window,4*4096);
+    assert(t->IsRegionCpuModified(window,4096));
+    assert(!t->IsRegionCpuModified(window+8192,4096));
+    std::cout<<"BACHATA_DONOR_GUEST_WRITE_WINDOW_PASS\n";
+
+    constexpr VAddr hot=4*HIGHER_PAGE_SIZE;
+    // Longer deterministic test quantum; actual Android default is 1 ms.
+    t->ForEachUploadRange(hot,4096,false,count,[]{});
+    t->InvalidateRegion(hot,1,[]{assert(false);},true);
+    t->ForEachUploadRange(hot,4096,false,count,[]{});
+    assert(!t->IsRegionCpuModified(hot,4096));
+    t->InvalidateRegion(hot,1,[]{assert(false);},true);
+    t->ForEachSweepSpan([](VAddr,u64){});
+    u64 hot_bytes=0;
+    t->ForEachUploadRange(hot,4096,false,[&](VAddr,u64 n){hot_bytes+=n;},[]{});
+    assert(hot_bytes==4096 && t->IsRegionCpuModified(hot,4096));
+    assert((pm.At(hot)==std::pair{0,0}));
+    bool resweep=false;
+    t->ForEachSweepSpan([&](VAddr a,u64 n){if(a<=hot&&hot<a+n)resweep=true;});
+    assert(resweep);
+    t->ForEachUploadRange(hot,4096,true,count,[]{});
+    assert(!t->IsRegionCpuModified(hot,4096)&&t->IsRegionGpuModified(hot,4096));
+    assert((pm.At(hot)==std::pair{1,1}));
+    std::cout<<"BACHATA_SOTC_FAULT_GRACE_PASS hot-upload/requeue/ownership\n";
     std::cout<<"BACHATA_EFFECTIVE_DONOR_UPLOAD_TRANSACTION_PASS cross_region=2 cycles=4096\n";
 }
 ''')
     binary=tmp/"test"
     subprocess.run(["c++","-std=c++23","-O2","-pthread","-I",str(tmp),"-I",str(src),str(tmp/"test.cpp"),"-o",str(binary)],check=True)
-    subprocess.run([str(binary)],check=True)
+    subprocess.run([str(binary)],check=True,env={**__import__("os").environ,"SOTC_FAULT_GRACE_US":"100000","SOTC_FAULT_GRACE_PAGES":"32","SOTC_FAULT_GRACE":"1"})
