@@ -32,7 +32,7 @@ def apply(root:Path):
         if nid(name)!=value:
             raise RuntimeError(f"PS4 NID mismatch {name}: {nid(name)}")
     path=root/"src/core/guest_cpu/hle_call_adapter.cpp"
-    content='#include "common/elf_info.h"\n'+path.read_text()
+    content=path.read_text()
     begin=content.index("    constexpr std::size_t veneer_size = 16;\n")
     end_anchor="    __builtin___clear_cache(reinterpret_cast<char*>(code), reinterpret_cast<char*>(code + veneer_size));\n"
     end=content.index(end_anchor,begin)+len(end_anchor)
@@ -49,7 +49,7 @@ def apply(root:Path):
     const bool do_setjmp = is_libc && (hash == "gNQ1V2vfXDE" || hash == "sjpkrhugvVI");
     const bool do_longjmp = is_libc && (hash == "lKEN2IebgJ0" || hash == "+F+9hhi6k9Q");
     constexpr u8 guest_memcpy[]{0x48,0x89,0xf8,0x48,0x89,0xd1,0xfc,0xf3,0xa4,0xc3};
-    const bool do_memcpy = (Common::ElfInfo::Instance().GameSerial() == "CUSA00785") && is_libc && hash == "Q3VBxCXhUHs";
+    const bool do_memcpy = BachataCompat::Order1886() && is_libc && hash == "Q3VBxCXhUHs";
     auto* const code = static_cast<u8*>(page);
     std::size_t written = 0;
     if (do_memcpy) {

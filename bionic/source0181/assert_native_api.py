@@ -84,7 +84,7 @@ def audit(root: Path) -> None:
             "controllers[0]->ReadState()", "pressed(Button::Cross)",
             "pressed(Button::Circle)", "ImGuiBackendFlags_HasGamepad"),
         "src/video_core/renderer_vulkan/vk_scheduler.cpp": (
-            "BACHATA_SINGLE_SUBMIT_POLL", "PopPendingOperations(false)",
+            "BACHATA_SINGLE_SUBMIT_POLL", "PopPendingOperations(BachataCompat::Sotc608())",
             "work_semaphore.Refresh();"),
         "src/core/libraries/videoout/driver.h": ("bool SubmitFlip(VideoOutPort*",),
         "src/core/libraries/videoout/video_out.cpp": (
@@ -96,7 +96,7 @@ def audit(root: Path) -> None:
             "#include <png.h>", "png_write_image(",
             "GetSplashPath()", "DecodePngFile(splash_path)",
             "BACHATA_GUEST_SIZED_INTERMEDIATE", "BACHATA_IDENTITY_DISPLAY",
-            "BACHATA_DISPLAY_PATH", "opaque_sampled_view"),
+            "BACHATA_DISPLAY_PATH", "opaque_sampled_view", "BACHATA_SOTC_608_PROFILE"),
         "src/core/libraries/sysmodule/sysmodule_internal.h": (
             "g_need_scelibc", "g_need_fios2"),
         "src/core/libraries/sysmodule/sysmodule_internal.cpp": (

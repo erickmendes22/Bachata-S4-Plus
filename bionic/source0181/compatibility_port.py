@@ -761,6 +761,10 @@ void GameController::PollState() {
     result["watcherPairingAndRptr"] = apply_watcher_rptr(root)
     from port_compiled_descriptor_contract import apply as apply_compiled_descriptor_contract
     result["compiledDescriptorContract"] = apply_compiled_descriptor_contract(root)
+    # Restore the independently tested 608a1ac SotC behavior without
+    # undoing The Order fixes for every other title.
+    from port_sotc_608_profile import install as install_sotc_profile
+    install_sotc_profile(root)
     from port_sotc_render_and_common_performance import apply as apply_sotc_render_perf
     result["sotcRenderAndCommonPerformance"] = apply_sotc_render_perf(root)
     from port_bionic_runtime_parity import apply as apply_bionic_runtime_parity
@@ -769,8 +773,10 @@ void GameController::PollState() {
     result["bionicHotpaths"] = apply_bionic_hotpaths(root)
     from port_bionic_present_cache import apply as apply_present_cache
     result["bionicPresentCache"] = apply_present_cache(root)
-    from port_order_recovery import apply as apply_order_recovery
-    result["orderRecovery"] = apply_order_recovery(root)
+    from port_single_core_pthread import apply as apply_pthread_opaque
+    result["pthreadOpaque"] = apply_pthread_opaque(root)
+    from port_confirmed_order_recovery import apply as apply_order
+    result["confirmedOrderRecovery"] = apply_order(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")

@@ -58,6 +58,19 @@ void MemoryManager::CopySparseMemory(VAddr address, u8* dest, u64 size) {
         const auto& vma=it->second;
         const u64 bytes=std::min<u64>(size,vma.base+vma.size-address);
         if (HasPhysicalBacking(vma)) {
+            if (BachataCompat::Sotc608()) {
+                std::memset(dest,0,bytes);
+                const u64 begin=address-vma.base;
+                const u64 end=begin+bytes;
+                auto part=vma.phys_areas.upper_bound(begin);
+                if (part!=vma.phys_areas.begin()) --part;
+                for (;part!=vma.phys_areas.end() && part->first<end;++part) {
+                    const u64 lo=std::max<u64>(begin,part->first);
+                    const u64 hi=std::min<u64>(end,part->first+part->second.size);
+                    if (hi>lo) std::memcpy(dest+lo-begin,
+                        impl.BackingBase()+part->second.base+lo-part->first,hi-lo);
+                }
+            } else {
             // BACHATA_SPARSE_COPY_ONCE: write each destination byte once.
             // Previously every physical byte was first memset then memcpy.
             // PRT holes are still zeroed, including interior and trailing holes.
@@ -76,6 +89,7 @@ void MemoryManager::CopySparseMemory(VAddr address, u8* dest, u64 size) {
                 cursor=hi;
             }
             if (cursor<end) std::memset(dest+cursor-begin,0,end-cursor);
+            }
         } else if (vma.IsMapped()) {
             // Non-physical file mappings retain their original copy behavior.
             std::memcpy(dest,std::bit_cast<const u8*>(address),bytes);
@@ -110,7 +124,7 @@ bool MemoryManager::TryReadBacking(VAddr address, void* data, u64 size) {
     if (size>UINT64_MAX-address) return false;
     // Typical SRT reads are a DWORD or a contiguous descriptor/table.
     // Validate and copy a single physical area without two VMA walks.
-    if (IsValidMapping(address)) {
+    if (!BachataCompat::Sotc608() && IsValidMapping(address)) {
         const auto& vma=FindVMA(address)->second;
         if (HasPhysicalBacking(vma) && address>=vma.base &&
             size<=vma.base+vma.size-address) {

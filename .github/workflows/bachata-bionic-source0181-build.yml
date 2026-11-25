@@ -577,12 +577,28 @@ jobs:
           set -euo pipefail
           test "$(cat out/bionic/stage/BIONIC_SOURCE_REVISION.txt)" = "$EXPECTED_REVISION"
 
-      - name: Retrieve exact device-confirmed SotC 608a1ac APK
+      - name: Wait for corrected SotC artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 100); do
+            state="$(gh api repos/$GITHUB_REPOSITORY/actions/runs/45538070514)"
+            test "$(jq -r .head_sha <<< "$state")" = "62e36aeeda3a229ddbb1e7a1f6129a9413b07f92"
+            if [[ "$(jq -r .status <<< "$state")" == completed ]]; then
+              test "$(jq -r .conclusion <<< "$state")" = success
+              exit 0
+            fi
+            sleep 30
+          done
+          exit 2
+
+      - name: Retrieve corrected SotC APK
         uses: actions/download-artifact@v4
         with:
           name: Bachata-S4Plus-REAL-shadPS4-0181-FEX-Bionic-P36-APK
           path: out/sotc608
-          run-id: 45428055233
+          run-id: 45538070514
           github-token: ${{ github.token }}
 
       - name: Android build tools and ELF patching

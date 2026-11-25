@@ -35,10 +35,12 @@ def apply(root: Path):
     // identity swizzles. ImGui must still see opaque alpha when a copy
     // preserves the guest's original (possibly zero) alpha bytes.
 #ifdef __ANDROID__
-    auto sampled_info = view_info;
-    sampled_info.components.a = vk::ComponentSwizzle::eOne;
-    frame->opaque_sampled_view = Check<"create opaque display view">(device.createImageView(sampled_info));
-    view = frame->opaque_sampled_view;
+    if (!BachataCompat::Sotc608()) {
+        auto sampled_info = view_info;
+        sampled_info.components.a = vk::ComponentSwizzle::eOne;
+        frame->opaque_sampled_view = Check<"create opaque display view">(device.createImageView(sampled_info));
+        view = frame->opaque_sampled_view;
+    }
 #endif
     frame->imgui_texture = ImGui::Vulkan::AddTexture(view, vk::ImageLayout::eShaderReadOnlyOptimal);""")
     edit(root, pc, """    texture_cache.UpdateImage(image_id);
@@ -52,7 +54,12 @@ def apply(root: Path):
     // size, not the screen size, is authoritative.
     u32 frame_width = 0, frame_height = 0;
 #ifdef __ANDROID__
-    if (!fsr_settings.enable) {
+    static const bool report_profile = [] {
+        LOG_INFO(Render_Vulkan,"BACHATA_SOTC_608_PROFILE enabled={}",BachataCompat::Sotc608());
+        return true;
+    }();
+    (void)report_profile;
+    if (!BachataCompat::Sotc608() && !fsr_settings.enable) {
         const auto& size = texture_cache.GetImage(image_id).info.size;
         frame_width = size.width;
         frame_height = size.height;
@@ -80,7 +87,7 @@ def apply(root: Path):
     // BACHATA_IDENTITY_DISPLAY: at unit gamma, SRGB sampling followed by
     // the postprocess SRGB encode is an identity operation on RGB bytes.
     // Check the *actual* Vulkan backing, not merely the guest descriptor.
-    if (!fsr_settings.enable && !frame->is_hdr && !pp_settings.hdr &&
+    if (!BachataCompat::Sotc608() && !fsr_settings.enable && !frame->is_hdr && !pp_settings.hdr &&
         !pp_settings.srgb_input && pp_settings.gamma == 1.0f &&
         frame->width == image_size.width && frame->height == image_size.height &&
         image.backing) {
@@ -209,7 +216,7 @@ PipelineCache::~PipelineCache() = default;""",
     // serialized compute/graphics pipelines which dereference this handle.
     std::vector<u8> bytes;
 #ifdef __ANDROID__
-    if (EmulatorSettings.IsPipelineCacheEnabled()) {
+    if (!BachataCompat::Sotc608() && EmulatorSettings.IsPipelineCacheEnabled()) {
         try {
             DriverCacheFile::Identity id{instance.GetVendorID(),instance.GetDeviceID(),
                                          instance.GetDriverVersion(),{}};

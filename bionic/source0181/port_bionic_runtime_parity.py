@@ -70,7 +70,7 @@ def apply(root: Path):
     replace(scheduler, "    Wait(presubmit_tick);\n}",
             "    Wait(presubmit_tick);\n"
             "    // A completed wait already publishes its observed GPU tick.\n"
-            "    PopPendingOperations(false);\n}")
+            "    if (!BachataCompat::Sotc608()) PopPendingOperations(false);\n}")
     replace(scheduler, """void Scheduler::PopPendingOperations() {
     std::unique_lock lk(pending_ops_mutex);
     work_semaphore.Refresh();""",
@@ -88,7 +88,7 @@ def apply(root: Path):
     BeginSession();
 
     // The immediately preceding query already published a completed tick.
-    PopPendingOperations(false);""")
+    PopPendingOperations(BachataCompat::Sotc608());""")
     return {"fps": "original native Frame event at guest flip",
             "saveDialogInput": "remote pad snapshot when SDL gamepad absent",
             "scheduler": "single completion poll; restore unbounded 0.18.1 submission ordering; explicit waits retained"}

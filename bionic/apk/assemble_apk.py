@@ -24,7 +24,7 @@ BASE_RELEASE = "0.2.7"
 NATIVE_DIR = "lib/arm64-v8a/"
 NATIVE_MANIFEST = "assets/runtime/native-runtime.json"
 SOTC_CORE = "libbachata_sotc_core.so"
-SOTC_REV = "608a1ac652ce47e9081cf7b886cd0a382ef7fca4"
+SOTC_REV = "62e36aeeda3a229ddbb1e7a1f6129a9413b07f92"
 REQUIRED_LIBRARIES = {"libbachata_native_runtime.so", "libbachata_bionic_core.so"}
 CRITICAL_PRESERVED = {
     "AndroidManifest.xml",
@@ -99,7 +99,7 @@ def main() -> None:
     # binary, not a generic legacy fallback. Its actual SHA is part of the APK provenance.
     sotc = staged.get(SOTC_CORE)
     if not sotc or f"BACHATA_CORE_REVISION={SOTC_REV}".encode() not in sotc.read_bytes():
-        die("Missing exact device-confirmed SotC 608a1ac core")
+        die("Missing corrected SotC core")
     sotc_sha=sha256(sotc.read_bytes())
 
     # Preserve all of the v0.2.7 UI, settings, DEX, drivers, patches,

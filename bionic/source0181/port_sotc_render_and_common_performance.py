@@ -48,7 +48,7 @@ void LowerWave64BallotPass(IR::Program& program, const RuntimeInfo& runtime_info
     if (profile.subgroup_size==64) {
         // Only the actual donor shader and workgroup are established.
         // Preserve the previously working upstream behavior everywhere else.
-        if (program.info.pgm_hash==0x87cf9b8aULL && num_threads==32)
+        if (!BachataCompat::Sotc608() && program.info.pgm_hash==0x87cf9b8aULL && num_threads==32)
             FoldAbsentReductionLanes(program,32);
         return;
     }
@@ -108,7 +108,8 @@ struct ImageResource {''','exact light table guard')
     s=p.read_text()
     s=one(s,'''    return gpu_modified_ranges.Intersects(addr,size) ||
            memory_tracker->IsRegionGpuModified(addr,size);''',
-        '''    return gpu_modified_ranges.Intersects(addr,size);''','true byte-range provenance, not any nearby GPU write')
+        '''    return gpu_modified_ranges.Intersects(addr,size) ||
+           (BachataCompat::Sotc608() && memory_tracker->IsRegionGpuModified(addr,size));''','title-specific byte-range provenance')
     s=one(s,'void BufferCache::TrackSrtSourcePage(VAddr page) {',
         '''// BACHATA_BATCH_SRT_READBACK: all pages in a pointer-graph pass share
 // one staging allocation and one GPU completion. The normal CPU fault
@@ -157,7 +158,14 @@ void BufferCache::TrackSrtSourcePage(VAddr page) {''','one staging copy/fence pe
     s=p.read_text()
     start=s.index('    for(unsigned pass=0;pass<4;++pass) {',s.index('void Rasterizer::ReadBackGpuWrittenSrtSources'))
     end=s.index('\n}\n',start)
-    s=s[:start]+'''    std::unordered_set<VAddr> visited;
+    legacy=s[start:end]
+    s=s[:start]+'''    if (BachataCompat::Sotc608()) {
+        // BACHATA_SOTC_608_SRT: original 608a1ac loop, including its
+        // per-page visit/reset order and the original ReadMemory fence.
+'''+legacy+'''
+        return;
+    }
+    std::unordered_set<VAddr> visited;
     for (unsigned pass=0;pass<4;++pass) {
         std::vector<VAddr> pages;
         for (const auto source:stage.srt_guest_sources) {
@@ -201,7 +209,8 @@ void BufferCache::TrackSrtSourcePage(VAddr page) {''','one staging copy/fence pe
     s=one(s,'''    for (size_t i=0;i<program->modules.size();++i) {
         auto& candidate=program->modules[i];''',
         '''    for (size_t k=0;k<program->modules.size();++k) {
-        const size_t i=(program->last_used+k)%program->modules.size();
+        const size_t i=BachataCompat::Sotc608() ? k :
+            (program->last_used+k)%program->modules.size();
         auto& candidate=program->modules[i];''','likely permutation first')
     s=one(s,'''    if (auto& fetch=program->modules[perm_idx].spec.fetch_shader_data; !fetch.Empty())''',
         '''    program->last_used=perm_idx;
@@ -215,7 +224,7 @@ void BufferCache::TrackSrtSourcePage(VAddr page) {''','one staging copy/fence pe
     p.write_text(s)
     p=root/'src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp'
     s=p.read_text()
-    s,n=re.subn(r'ShaderBinaryVersion = (\d+)u;',lambda m:f'ShaderBinaryVersion = {int(m.group(1))+3}u;',s)
+    s,n=re.subn(r'ShaderBinaryVersion = (\d+)u;',lambda m:f'ShaderBinaryVersion = {int(m.group(1))+4}u;',s)
     if n!=1: raise RuntimeError('shader binary version drift')
     p.write_text(s)
     return {"color":"SotC donor 0x87cf9b8a 32-thread reduction identity on wave64 only",
