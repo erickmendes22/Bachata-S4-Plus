@@ -17,8 +17,11 @@ def apply(root:Path):
                    desc.is_r128 == existing.is_r128 && desc.is_depth == existing.is_depth &&""")
     # R128 is authoritative from the original MIMG opcode. Never read an
     # adjacent descriptor as the high half if IR discovery produced only 4 words.
-    edit(rp,"    auto image = image_res.GetSharp(info);",
-         """    const u32 expected_words=image_res.is_r128 ? 4u : 8u;
+    path=root/rp
+    src=path.read_text()
+    start=src.index("    ImageResource image_res = {")
+    end=src.index("\n    };",start)+len("\n    };")
+    src=src[:end]+"\n"+"""    const u32 expected_words=image_res.is_r128 ? 4u : 8u;
     if (resource.sharps[0].num_dwords!=expected_words) {
         LOG_WARNING(Render_Recompiler,
                     "BACHATA_TSHARP_WIDTH_MISMATCH shader={:#x} r128={} discovered={}",
@@ -27,7 +30,8 @@ def apply(root:Path):
         // reinterpret unknown data as a mapped texture.
         image_res.sharp_fetch.summary=SharpFetch<AmdGpu::Image>::Summary::Invalid;
     }
-    auto image = image_res.GetSharp(info);""")
+"""+src[end:]
+    path.write_text(src)
     # Bounds and exact loaded-word provenance are needed at runtime, including
     # serialized shader metadata. Never infer R128 from the contents of T#.
     r="src/shader_recompiler/resource.h"
@@ -51,37 +55,38 @@ def apply(root:Path):
                 if (u32{sharp_fetch.offsets[i]}!=u32{sharp_fetch.offsets[0]}+i)
                     return AmdGpu::Image::Null(is_depth);
         }""")
-    # Existing exact write tracking drops page-level producer provenance.
-    # The legacy tracker is the authority for GPU ownership, even when the
-    # byte-range side index is incomplete. Use the ordinary precise readback.
+    # Preserve the 504db690 fast path. If tracker and exact byte index
+    # disagree, use the original ownership-aware readback for that page.
+    bc="src/video_core/buffer_cache/buffer_cache.h"
+    edit(bc,"    void TrackSrtSourcePage(VAddr page);",
+         "    bool IsSrtPageGpuOwned(VAddr page);\\n    void TrackSrtSourcePage(VAddr page);")
     bc="src/video_core/buffer_cache/buffer_cache.cpp"
-    edit(bc,"    return gpu_modified_ranges.Intersects(addr,size);",
-         """    return gpu_modified_ranges.Intersects(addr,size) ||
-           memory_tracker->IsRegionGpuModified(addr,size);""")
+    edit(bc,"void BufferCache::TrackSrtSourcePage(VAddr page) {",
+         """bool BufferCache::IsSrtPageGpuOwned(VAddr page) {
+    return memory_tracker->IsRegionGpuModified(page,4096);
+}
+void BufferCache::TrackSrtSourcePage(VAddr page) {""")
     ras="src/video_core/renderer_vulkan/vk_rasterizer.cpp"
     path=root/ras
-    s=path.read_text()
-    begin=s.index("    std::unordered_set<VAddr> visited;",s.index("void Rasterizer::ReadBackGpuWrittenSrtSources"))
-    end=s.index("\n}\n",begin)
-    s=s[:begin]+"""    for(unsigned pass=0;pass<4;++pass) {
-        std::unordered_set<VAddr> visited;
-        bool changed=false;
-        for(const auto source:stage.srt_guest_sources) {
-            if(source<0x10000 || source>=0x10000000000ULL) continue;
-            const VAddr page=source&PageMask;
-            if(visited.contains(page) ||
-               !buffer_cache.IsRangeGpuWritten(source,sizeof(u32)) ||
-               !IsMapped(page,PageSize)) continue;
-            visited.insert(page);
-            buffer_cache.TrackSrtSourcePage(page);
+    src=path.read_text()
+    start=src.index("void Rasterizer::ReadBackGpuWrittenSrtSources")
+    end=src.index("\n}\n",start)
+    part=src[start:end]
+    # The exact batch remains intact; add fallback only for missing provenance.
+    needle="!buffer_cache.IsRangeGpuWritten(source,sizeof(u32))"
+    if part.count(needle)!=1: raise RuntimeError("SRT exact source check drift")
+    part=part.replace(needle,"(!buffer_cache.IsRangeGpuWritten(source,sizeof(u32)) && !buffer_cache.IsSrtPageGpuOwned(page))",1)
+    needle="        if (pages.empty() || !buffer_cache.DownloadSrtSourcePages(pages)) break;"
+    if part.count(needle)!=1: raise RuntimeError("SRT batch completion drift")
+    part=part.replace(needle,"""        if (pages.empty()) break;
+        bool changed=buffer_cache.DownloadSrtSourcePages(pages);
+        for (const VAddr page:pages) {
+            if (!buffer_cache.IsSrtPageGpuOwned(page)) continue;
             buffer_cache.ReadMemory(page,PageSize,false,true);
             changed=true;
         }
-        if(!changed)break;
-        auto& writable=const_cast<Shader::Info&>(stage);
-        writable.RefreshFlatBuf();
-    }"""+s[end:]
-    path.write_text(s)
+        if (!changed) break;""",1)
+    path.write_text(src[:start]+part+src[end:])
     # Avoid filesystem directory creation/lookup on every new permutation
     # when neither patching nor collection is enabled.
     pc="src/video_core/renderer_vulkan/vk_pipeline_cache.cpp"
@@ -96,5 +101,5 @@ def apply(root:Path):
     if n!=1: raise RuntimeError("shader cache version drift")
     p.write_text(s)
     return {"descriptor":"distinct R128/depth, full width and bounds checks",
-            "srt":"restore tracker-owned readback path; preserve pointer provenance",
+            "srt":"retain batch, tracker-owned fallback; preserve pointer provenance",
             "spikes":"unused vertex rates and disabled shader patch lookup"}

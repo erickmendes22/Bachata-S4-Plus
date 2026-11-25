@@ -23,6 +23,8 @@ EXPECTED_BASE_SHA256 = "35c6fad39430e54aba561877953323e03b322a589a44442931317450
 BASE_RELEASE = "0.2.7"
 NATIVE_DIR = "lib/arm64-v8a/"
 NATIVE_MANIFEST = "assets/runtime/native-runtime.json"
+SOTC_CORE = "libbachata_sotc_core.so"
+SOTC_REV = "786341b8e747b10216011748878473c0ad18e22e"
 REQUIRED_LIBRARIES = {"libbachata_native_runtime.so", "libbachata_bionic_core.so"}
 CRITICAL_PRESERVED = {
     "AndroidManifest.xml",
@@ -93,6 +95,13 @@ def main() -> None:
         if marker not in core_binary:
             die(f"Compiled native core is missing required current-build integration: {marker!r}")
 
+    # The explicitly selected SotC core is the original device-tested Bionic
+    # binary, not a generic legacy fallback. Its actual SHA is part of the APK provenance.
+    sotc = staged.get(SOTC_CORE)
+    if not sotc or f"BACHATA_CORE_REVISION={SOTC_REV}".encode() not in sotc.read_bytes():
+        die("Missing exact new SotC color-recovery core")
+    sotc_sha=sha256(sotc.read_bytes())
+
     # Preserve all of the v0.2.7 UI, settings, DEX, drivers, patches,
     # icons and managed glibc runtime; overwrite ONLY compiled native libs
     # and the native-runtime checksum manifest.
@@ -101,7 +110,7 @@ def main() -> None:
         patched_dex = args.patched_classes8.read_bytes()
         if not patched_dex.startswith(b"dex\n") or len(patched_dex) < 1024:
             die("Patched classes8.dex is invalid")
-        if b"bachata_bionic_core" not in patched_dex:
+        if b"bachata_bionic_core" not in patched_dex or b"bachata_sotc_core" not in patched_dex:
             die("Rebuilt classes8.dex does not register the real Bionic core JNI library")
         changed["classes8.dex"] = patched_dex
     with zipfile.ZipFile(args.base) as original:
@@ -119,7 +128,9 @@ def main() -> None:
         files = original_manifest.get("files")
         if not isinstance(files, list):
             die("Invalid native runtime manifest file list")
-        # Maintain the original two-entry schema used by the 0.2.7 frontend.
+        # Preserve the existing schema, add explicit integrity entry for the selected core.
+        if not any(item.get("name")==SOTC_CORE for item in files):
+            files.append({"name":SOTC_CORE,"size":sotc.stat().st_size,"sha256":sotc_sha})
         for item in files:
             filename = item.get("name")
             if filename in staged:
@@ -143,6 +154,8 @@ def main() -> None:
                 "nativeCoreRevisionMarker": revision_marker,
                 "nativeCoreSourceRevision": core_source_revision,
                 "legacyFallback": False,
+                "titleCoreOverrides":{"CUSA08809":SOTC_REV,"CUSA08034":SOTC_REV},
+                "sotcCoreSha256":sotc_sha,
                 "glibcFallback": "025",
                 "removedGlibcVariants": ["020", "023", "024"],
                 "deviceTested": False,
@@ -198,6 +211,8 @@ def main() -> None:
                 build_identity.get("nativeCoreSha256") != core_sha or
                 build_identity.get("nativeCoreRevisionMarker") != revision_marker):
             die("APK build provenance and runtime installation identity disagree")
+        if build_identity.get("sotcCoreSha256") != sha256(result.read(NATIVE_DIR+SOTC_CORE)):
+            die("SotC pinned binary integrity mismatch")
         all_runtime_paths = {x.get("path") for x in new_runtime_manifest.get("files", [])}
         if GLIBC_KEEP not in all_runtime_paths or GLIBC_DROP & all_runtime_paths:
             die("Wrong glibc variants still referenced by manifest")

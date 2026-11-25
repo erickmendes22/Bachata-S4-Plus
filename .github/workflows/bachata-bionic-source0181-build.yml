@@ -7,6 +7,8 @@ on:
     paths:
       - '.github/workflows/bachata-bionic-generic-source.yml'
       - 'bionic/generic/**'
+      - 'bionic/apk/**'
+      - 'bionic/jni/**'
       - 'bionic/source0181/**'
       - '.github/workflows/bachata-bionic-source0181-build.yml'
   workflow_dispatch:
@@ -27,7 +29,7 @@ permissions:
 
 jobs:
   bionic-source-preflight:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.core_run_id == '' }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.core_run_id == '') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[apk-only]')) }}
     name: Fast Bionic/FEX source and ABI audit (no APK)
     runs-on: ubuntu-24.04
     timeout-minutes: 12
@@ -53,6 +55,9 @@ jobs:
           # Verify runtimeVersion changes with core SHA, extracted guest marker
           # tracks core SHA, and extraction manifest hashes match updated files.
           python3 bionic/apk/test_runtime_identity.py
+          python3 bionic/apk/test_patch_frontend.py
+          c++ -std=c++17 -Wall -Wextra -Werror bionic/jni/test_core_title_selector.cpp -o /tmp/bachata-title-selector
+          /tmp/bachata-title-selector
           # Exercise x86 guest register/RSP/RET fiber transitions on a host mock
           # BEFORE building Android/FEX, to catch missing assembly semantics.
           python3 bionic/source0181/test_fex_fiber.py
@@ -516,16 +521,18 @@ jobs:
 
   assemble-bionic-apk:
     needs: [full-ps4-bionic]
-    if: ${{ always() && (needs.full-ps4-bionic.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.core_run_id != '')) }}
+    if: ${{ always() && !cancelled() && (needs.full-ps4-bionic.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.core_run_id != '') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[apk-only]'))) }}
     name: Assemble and sign Bachata S4+ 0.2.7 actual source 0.18.1 Bionic APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 75
     env:
       BACHATA_P36_PRIVATE_KEY: ${{ secrets.BACHATA_P36_PRIVATE_KEY }}
       BACHATA_P36_CERT: ${{ secrets.BACHATA_P36_CERT }}
     steps:
       - name: Checkout all packaging and integration source from GitHub
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Require permanent Bachata S4+ P36 signing secrets
         shell: bash
@@ -536,12 +543,66 @@ jobs:
             exit 3
           fi
 
+      - name: Resolve core reuse request and verify native source unchanged
+        id: core
+        env:
+          MANUAL_CORE_RUN: ${{ inputs.core_run_id }}
+          APK_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[apk-only]') }}
+        run: |
+          set -euo pipefail
+          if [[ "$APK_ONLY" == "true" ]]; then
+            read -r run rev < <(python3 -c 'import json; d=json.load(open("bionic/apk/reuse_core.json")); print(d["run"],d["revision"])')
+            [[ "$run" =~ ^[0-9]+$ && "$rev" =~ ^[0-9a-f]{40}$ ]]
+            git merge-base --is-ancestor "$rev" HEAD
+            git diff --exit-code "$rev" HEAD -- bionic/source0181 bionic/generic bionic/build-core.sh
+            echo "run=$run" >> "$GITHUB_OUTPUT"
+            echo "revision=$rev" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=${MANUAL_CORE_RUN:-$GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Retrieve successful updated Bionic core from pinned build
         uses: actions/download-artifact@v4
         with:
           name: Bachata-S4Plus-REAL-shadPS4-0181-FEX-Bionic-core
           path: out/bionic/stage
-          run-id: ${{ inputs.core_run_id || github.run_id }}
+          run-id: ${{ steps.core.outputs.run }}
+          github-token: ${{ github.token }}
+
+      - name: Verify reused core revision
+        if: ${{ steps.core.outputs.revision != '' }}
+        env:
+          EXPECTED_REVISION: ${{ steps.core.outputs.revision }}
+        run: |
+          set -euo pipefail
+          test "$(cat out/bionic/stage/BIONIC_SOURCE_REVISION.txt)" = "$EXPECTED_REVISION"
+
+      - name: Wait for exact corrected SotC build and artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOTC_RUN: "45523233716"
+          SOTC_REVISION: "786341b8e747b10216011748878473c0ad18e22e"
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 80); do
+            state="$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$SOTC_RUN)"
+            test "$(jq -r .head_sha <<< "$state")" = "$SOTC_REVISION"
+            status="$(jq -r .status <<< "$state")"
+            if [[ "$status" == completed ]]; then
+              test "$(jq -r .conclusion <<< "$state")" = success
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::SotC build did not complete within 40 minutes"
+          exit 2
+
+      - name: Retrieve exact newly corrected SotC APK
+        uses: actions/download-artifact@v4
+        with:
+          name: Bachata-S4Plus-REAL-shadPS4-0181-FEX-Bionic-P36-APK
+          path: out/sotc608
+          run-id: 45523233716
           github-token: ${{ github.token }}
 
       - name: Android build tools and ELF patching
@@ -559,6 +620,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends patchelf binutils
           python3 -m py_compile bionic/apk/assemble_apk.py bionic/apk/patch_frontend.py bionic/apk/compact_runtime.py bionic/apk/prepare_slim_native.py
           bash -n bionic/apk/normalize_elf.sh
+          python3 bionic/apk/test_patch_frontend.py
 
       - name: Fetch exact Bachata S4+ 0.2.7 Android frontend from Release
         run: |
@@ -578,10 +640,10 @@ jobs:
             'https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar' \
             -o out/apk/apktool-2.12.1.jar
           java -Xmx5G -jar out/apk/apktool-2.12.1.jar d -f -r \
-            out/apk/Bachata-S4-Plus-v0.2.7-base.apk -o out/apk/decoded > out/apk/apktool-decompile.log 2>&1
+            out/apk/Bachata-S4-Plus-v0.2.7-base.apk -o out/apk/decoded > out/apk/apktool-decompile.log 2>&1 || { cat out/apk/apktool-decompile.log; exit 1; }
           python3 bionic/apk/patch_frontend.py out/apk/decoded
           java -Xmx5G -jar out/apk/apktool-2.12.1.jar b out/apk/decoded \
-            -o out/apk/recompiled-smali.apk > out/apk/apktool-rebuild.log 2>&1
+            -o out/apk/recompiled-smali.apk > out/apk/apktool-rebuild.log 2>&1 || { cat out/apk/apktool-rebuild.log; exit 1; }
           unzip -p out/apk/recompiled-smali.apk classes8.dex > out/apk/classes8-bionic.dex
           test -s out/apk/classes8-bionic.dex
           echo "NativeRuntimeBridge Bionic core JNI loader DEX prepared (rest of frontend preserved)"
@@ -627,6 +689,15 @@ jobs:
           python3 bionic/apk/prepare_slim_native.py out/bionic/stage \
             --strip "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
           echo "BIONIC_NATIVE_DEBUG_STRIPPED; GLIBC_025_COMPACTED_DURING_ASSEMBLY"
+
+      - name: Import newly built verified SotC core and check shared dependencies
+        run: |
+          set -euo pipefail
+          old=out/sotc608/Bachata-S4Plus-v0.2.7-shadPS4-0.18.1-SOURCE-Bionic-P36.apk
+          test -s "$old"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$old" > out/sotc608/signer.txt
+          grep -Fq 'd04ef2a865f8ed5ab8f98321be93ed2881eaa64f844fbaf480e18a8336620a72' out/sotc608/signer.txt
+          python3 bionic/apk/import_sotc_core.py "$old" out/bionic/stage/lib/arm64-v8a
 
       - name: Integrate newly compiled native runtime into 0.2.7 APK
         run: |

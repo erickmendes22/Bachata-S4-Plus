@@ -28,11 +28,15 @@ NEW = """    const-string v0, "bachata_native_runtime"
     # The JNI adapter loads the core via loadCoreAndSetupJNI() after setup.
     .line 14"""
 CORE_HELPER = """
-.method public static final loadCoreAndSetupJNI()V
+.method public static final loadCoreAndSetupJNI(Z)V
     .locals 1
 
+    if-eqz p0, :main_core
+    const-string v0, "bachata_sotc_core"
+    goto :load_core
+    :main_core
     const-string v0, "bachata_bionic_core"
-
+    :load_core
     invoke-static {v0}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V
 
     invoke-static {}, Lorg/libsdl/app/SDL;->setupJNI()V
@@ -52,9 +56,10 @@ def main() -> None:
     body = file.read_text(encoding="utf-8")
     if body.count(OLD) != 1:
         raise SystemExit("Refusing wrong dex: NativeRuntimeBridge.<clinit> anchor mismatch")
-    body = body.replace(OLD, NEW, 1)
-    if "loadCoreAndSetupJNI()V" in body:
+    # Check the original smali declarations, not the explanatory comment in NEW.
+    if any(line.lstrip().startswith(".method ") and "loadCoreAndSetupJNI(" in line for line in body.splitlines()):
         raise SystemExit("Core boot helper already present: refuse double patch")
+    body = body.replace(OLD, NEW, 1)
     body += CORE_HELPER
     file.write_text(body, encoding="utf-8")
     print("BIONIC_FRONTEND_DEFERRED_CORE_LOAD_READY: adapter first; core and SDL initialized after service setup")
