@@ -783,6 +783,8 @@ void GameController::PollState() {
     result["orderShaderWorkers"] = apply_order_shader_workers(root)
     from port_ahb_present import apply as apply_ahb_present
     result["ahbPresent"] = apply_ahb_present(root)
+    from port_target_batched_readback import apply as apply_target_batched_readback
+    result["targetBatchedReadback"] = apply_target_batched_readback(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
