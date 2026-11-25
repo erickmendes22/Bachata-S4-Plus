@@ -795,6 +795,8 @@ void GameController::PollState() {
     result["targetDonorSettings"] = apply_donor_settings(root, sotc=False)
     from port_target_cache_persistence import apply as apply_target_cache
     result["targetCachePersistence"] = apply_target_cache(root, order=True)
+    from port_order_live_pso import apply as apply_order_live_pso
+    result["orderLivePso"] = apply_order_live_pso(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
