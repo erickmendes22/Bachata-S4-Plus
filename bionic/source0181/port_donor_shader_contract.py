@@ -116,11 +116,15 @@ using FMaskResourceList = boost::container::static_vector<FMaskResource, NUM_FMA
     with rec.open("a") as f: f.write('\n#include "shader_recompiler/ir/passes/sampled_image_uniform_guard_pass.cpp"\n')
     patch=passes/"resource_patching_pass.cpp"
     prefix(patch,'#include "shader_recompiler/ir/passes/fmask_identity.h"')
-    edit(patch,"""            return desc.sharp_fetch == existing.sharp_fetch && desc.is_array == existing.is_array &&
-                   desc.is_r128 == existing.is_r128""",
-         """            return desc.sharp_fetch == existing.sharp_fetch && desc.is_array == existing.is_array &&
-                   desc.uniform_guard == existing.uniform_guard &&
-                   desc.is_r128 == existing.is_r128""")
+    # SotC's older resource matcher also omitted the r128/depth discriminator.
+    # Preserve existing descriptor-array constraints and add those missing keys.
+    anchor="            return desc.sharp_fetch == existing.sharp_fetch && desc.is_array == existing.is_array &&\n"
+    old=patch.read_text()
+    if old.count(anchor)!=1: raise RuntimeError("image descriptor key anchor")
+    insert="                   desc.uniform_guard == existing.uniform_guard &&\n"
+    if "                   desc.is_r128 == existing.is_r128 && desc.is_depth == existing.is_depth &&\n" not in old:
+        insert+="                   desc.is_r128 == existing.is_r128 && desc.is_depth == existing.is_depth &&\n"
+    edit(patch,anchor,anchor+insert)
     edit(patch,"            return desc.sharp_idx == existing.sharp_idx;",
          """            return desc.source.sharp_fetch == existing.source.sharp_fetch &&
                    desc.source.uniform_guard == existing.source.uniform_guard &&
@@ -214,8 +218,8 @@ using FMaskResourceList = boost::container::static_vector<FMaskResource, NUM_FMA
     live=ser.parent/"order_live_pso_cache.h"
     if live.exists():
         v=live.read_text()
-        versions="-".join(re.search(rf"{n} = (\\d+)u;",s)[1] for n in ("ShaderMetaVersion","ShaderBinaryVersion","PipelineKeyVersion"))
-        v,n=re.subn(r"live-pso-v1-\\d+-\\d+-\\d+", "live-pso-v1-"+versions, v)
+        versions="-".join(re.search(rf"{n} = (\d+)u;",s)[1] for n in ("ShaderMetaVersion","ShaderBinaryVersion","PipelineKeyVersion"))
+        v,n=re.subn(r"live-pso-v1-\d+-\d+-\d+", "live-pso-v1-"+versions, v)
         if n!=1: raise RuntimeError("live PSO ABI namespace drift")
         live.write_text(v)
     return {"uniform_guard":"exact donor CFG edge dominance and all-use guard analysis for Order",
