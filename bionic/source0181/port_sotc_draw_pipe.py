@@ -152,8 +152,12 @@ void Liverpool::DrainDrawQueue() {
     draw_back_owns_recorder=false;
 }
 void Liverpool::QueueDirectDraw(const char* marker,const void* address,bool indexed,u32 offset) {
-    // Preserve the serial path on other games, UFFD, or null GPU.
-    if (!BachataSotcLod::Enabled() || EmulatorSettings.IsUserfaultfdTracking()) {
+    // Regression recovery: PM4 and draw preparation must share a single
+    // producer until side-effect boundaries no longer force per-draw handoffs.
+    // The Vulkan recording thread remains active; no draws are skipped.
+    constexpr bool ordered_draw_worker_verified=false;
+    if (!ordered_draw_worker_verified || !BachataSotcLod::Enabled() ||
+        EmulatorSettings.IsUserfaultfdTracking()) {
         rasterizer->ScopeMarker(marker,fmt::make_format_args(address),
                                 [&]{rasterizer->Draw(indexed,offset);});
         return;
@@ -285,6 +289,12 @@ std::thread::id Rasterizer::GetGpuCommandProcessorThread() {""")
         s=s.replace("liverpool->last_cb_extent","liverpool->DrawCbExtent()")
         s=s.replace("liverpool->last_db_extent","liverpool->DrawDbExtent()")
         p.write_text(s)
-    return {"ordered_draw_queue":"32 entries, dirty register chunks and captured extents/CS",
+    # The guest's temporary 1080p video-out surface is not the Android
+    # presentation allocation. Preserve the initial AHB output extent and
+    # existing scaling; actual window resize still takes the standard path.
+    edit("video_core/renderer_vulkan/vk_presenter.cpp",
+         "    if(is_game_frame)swapchain.SetGameExtent(frame->width,frame->height);",
+         "    // SotC: preserve the configured Android AHB output extent.")
+    return {"ordered_draw_queue":"single PM4 producer for regression recovery; Vulkan recorder retained",
             "synchronization":"drain at side effects, callbacks, CE/compute, flips; signal tracker aware",
             "fallback":"serial on other games and UFFD"}
