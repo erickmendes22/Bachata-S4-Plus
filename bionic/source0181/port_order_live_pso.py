@@ -80,7 +80,7 @@ inline vk::ResultValue<vk::UniquePipeline> CreateOrderLiveGraphics(
         // Never retry against a rejected cache. Reconstruct from live state.
         bytes.clear();
         cache=device.createPipelineCacheUnique({});
-        feedback={};
+        feedback=vk::PipelineCreationFeedback{};
         if(cache.result!=vk::Result::eSuccess)
             return device.createGraphicsPipelineUnique(nullptr,original);
         result=device.createGraphicsPipelineUnique(*cache.value,info);
@@ -234,7 +234,70 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
     assert s.count(anchor)==1
     s=s.replace(anchor,"        const auto hash=std::hash<GraphicsPipelineKey>{}(graphics_key);\n"+sample+"\n        GraphicsPipeline::SerializationSupport sdata{};")
     p.write_text(s)
+    # The Android donor interns identical SRT programs and refreshes the
+    # base program once per shader selection. Retain our per-permutation
+    # compiled descriptor metadata but share the actual synchronized data
+    # for consecutive candidates whose complete walker bytes are identical.
+    walker=root/"src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp"
+    w=walker.read_text()
+    old="""    auto copy = std::make_unique<u32[]>(words);
+    std::memcpy(copy.get(), code, words * sizeof(u32));
+    std::scoped_lock lock{g_walker_mutex};
+    return g_walkers.emplace_back(std::move(copy)).get();"""
+    assert w.count(old)==1
+    # The portable walker no longer poisons failed loads (revalidates every
+    # dispatch), so intern only when the live code has no atomic mutations.
+    assert "fetch_or(" not in w and "fetch_and(" not in w
+    w=w.replace(old,"""    std::scoped_lock lock{g_walker_mutex};
+    if (AmdGpu::BachataOrderNoMsaa()) {
+        static std::unordered_multimap<u64,std::pair<const u32*,size_t>> index;
+        u64 hash=14695981039346656037ull;
+        for(size_t i=0;i<words;++i) { hash^=code[i];hash*=1099511628211ull; }
+        const auto [first,last]=index.equal_range(hash);
+        for(auto it=first;it!=last;++it) {
+            const auto& [stored,n]=it->second;
+            if(n==words&&!std::memcmp(stored,code,words*sizeof(u32))) return stored;
+        }
+        auto copy=std::make_unique<u32[]>(words);
+        std::memcpy(copy.get(),code,words*sizeof(u32));
+        const auto* stored=g_walkers.emplace_back(std::move(copy)).get();
+        index.emplace(hash,std::pair{stored,words});
+        return stored;
+    }
+    auto copy = std::make_unique<u32[]>(words);
+    std::memcpy(copy.get(), code, words * sizeof(u32));
+    return g_walkers.emplace_back(std::move(copy)).get();""")
+    if '#include "video_core/amdgpu/regs_color.h"' not in w:
+        w=w.replace('#include "core/memory.h"','#include "core/memory.h"\n#include "video_core/amdgpu/regs_color.h"',1)
+    walker.write_text(w)
+    edit(c,"    for (size_t k=0;k<program->modules.size();++k) {",
+         """    const Shader::Info* order_srt_snapshot=nullptr;
+    for (size_t k=0;k<program->modules.size();++k) {""")
+    edit(c,"""        effective.pgm_base=params.Base();
+        effective.user_data=params.user_data;
+        effective.RefreshFlatBuf();
+        if (srt_sync) srt_sync(effective);""",
+         """        effective.pgm_base=params.Base();
+        effective.user_data=params.user_data;
+        const bool share_srt=AmdGpu::BachataOrderNoMsaa() &&
+            effective.sw_stage!=SwStage::TessellationControl &&
+            effective.sw_stage!=SwStage::TessellationEval &&
+            effective.srt_info.walker_func;
+        if (share_srt && order_srt_snapshot &&
+            effective.srt_info.walker_func==order_srt_snapshot->srt_info.walker_func &&
+            effective.srt_info.walker_func_size==order_srt_snapshot->srt_info.walker_func_size &&
+            effective.srt_info.flattened_bufsize_dw==order_srt_snapshot->srt_info.flattened_bufsize_dw) {
+            // Same guest SGPR input and exact same immutable walker, in this
+            // one shader selection only. Copy synchronized bytes and provenance.
+            effective.flattened_ud_buf=order_srt_snapshot->flattened_ud_buf;
+            effective.srt_guest_sources=order_srt_snapshot->srt_guest_sources;
+        } else {
+            effective.RefreshFlatBuf();
+            if (srt_sync) srt_sync(effective);
+            order_srt_snapshot=share_srt?&effective:nullptr;
+        }""")
     return {"cache":"driver-validated per-PSO cache, exact live state, no eager graphics warmup",
             "lifetime":"free auxiliary Vulkan shader modules after pipeline creation",
             "oom":"GPU-complete least-recently-used eviction and one retry, no discarded draw",
-            "feedback":"actual driver-reported application cache hits, misses and duration"}
+            "feedback":"actual driver-reported application cache hits, misses and duration",
+            "srt":"intern exact immutable walkers; reuse synchronized snapshot only within one shader selection"}
