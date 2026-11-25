@@ -88,6 +88,47 @@ void LowerWave64BallotPass(IR::Program& program, const RuntimeInfo& runtime_info
     assert s.index('presenter->Present(req.frame);') < s.index(hook)
     p.write_text(s)
 
+    # Current standalone Android donor: preserve real compute outputs when
+    # a dispatch also writes metadata (stage_meta_clear_integrity.py).
+    p=root/'src/video_core/renderer_vulkan/vk_rasterizer.cpp'
+    s=p.read_text()
+    s=one(s,'''    if (!info.has_bitwise_xor) {
+        // Assume if a shader writes metadata without address calculation, it is a clear shader.''',
+        '''#ifdef __ANDROID__
+    bool metadata_only_dispatch = info.images.empty();
+    u32 non_special_writes = 0;
+    for (const auto& desc : info.buffers) {
+        if (!desc.is_written) continue;
+        if (desc.IsSpecial() || ++non_special_writes > 1) {
+            metadata_only_dispatch = false;
+            break;
+        }
+    }
+    metadata_only_dispatch &= non_special_writes == 1;
+#else
+    constexpr bool metadata_only_dispatch = true;
+#endif
+    if (!info.has_bitwise_xor && metadata_only_dispatch) {
+        // Assume if a shader writes metadata without address calculation, it is a clear shader.''',
+        'donor metadata clear integrity')
+    assert 'texture_cache.ClearMeta(address)' in s
+    p.write_text(s)
+    # Same donor restores LDS workgroup barriers on Qualcomm, including
+    # wave64. The serialized Shader::Profile equality rejects old profiles.
+    p=root/'src/video_core/renderer_vulkan/vk_pipeline_cache.cpp'
+    s=p.read_text()
+    s=one(s,'''        .needs_lds_barriers = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary ||
+                              instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,''',
+        '''        .needs_lds_barriers = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary ||
+                              instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp ||
+#ifdef __ANDROID__
+                              instance.GetVendorID() == 0x5143 ||
+                              instance.SubgroupSize() < 64 ||
+#endif
+                              false,''',
+        'donor Adreno LDS integrity')
+    p.write_text(s)
+
     # Current PC donor aaf95c06deec0: near-4GiB read-only descriptors
     # are unbounded, not necessarily corrupt; don't repeatedly log them
     # at ERROR/WARNING or allocate their full VMA remainder.
@@ -165,4 +206,4 @@ void LowerWave64BallotPass(IR::Program& program, const RuntimeInfo& runtime_info
     s=one(s,'            bool result{};\n            if (is_compute) {',
         '            infos.fill(nullptr);\n            modules.fill(nullptr);\n            runtime_infos.fill({});\n            fetch_shader=nullptr;\n            bool result{};\n            if (is_compute) {','reset partially loaded stages')
     p.write_text(s)
-    return {"color":"donor 5712cee31461, target reduction", "textures":"current Android fragment TSharp arrays; vertex excluded; feature gated", "fps":"one native guest-flip event; no duplicate", "cache":"invalidate affected fragment modules; preserve other stages", "buffers":"donor read-only unbounded window, mapped/storage bounds, debug log", "srt":"exact source before page dedup; no dropped GPU writes"}
+    return {"color":"donor 5712cee31461, target reduction", "textures":"current Android fragment TSharp arrays; vertex excluded; feature gated", "fps":"one native guest-flip event; no duplicate", "cache":"fragment generation and shader-profile validation", "integrity":"donor metadata-only clear guard and Adreno LDS barriers", "buffers":"donor read-only unbounded window, mapped/storage bounds, debug log", "srt":"exact source before page dedup; no dropped GPU writes"}
