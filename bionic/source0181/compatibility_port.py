@@ -797,6 +797,8 @@ void GameController::PollState() {
     result["wsiFexGuard"] = apply_wsi_fex_guard(root)
     from port_donor_write_faults import apply as apply_donor_write_faults
     result["donorWriteFaults"] = apply_donor_write_faults(root, order=False)
+    from port_sotc_async_readback import apply as apply_sotc_async_readback
+    result["sotcAsyncReadback"] = apply_sotc_async_readback(root)
     from port_sotc_fast_render import apply as apply_fast_render
     result["sotcFastRender"] = apply_fast_render(root)
     from port_sotc_draw_pipe import apply as apply_draw_pipe
