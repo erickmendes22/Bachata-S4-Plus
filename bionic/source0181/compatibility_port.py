@@ -803,6 +803,8 @@ void GameController::PollState() {
     result["memoryTransaction"] = apply_memory_transaction(root, order=True)
     from port_donor_pipeline_key import apply as apply_donor_pipeline_key
     result["donorPipelineKey"] = apply_donor_pipeline_key(root)
+    from port_donor_runtime_contract import apply as apply_donor_runtime
+    result["donorRuntimeContract"] = apply_donor_runtime(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
