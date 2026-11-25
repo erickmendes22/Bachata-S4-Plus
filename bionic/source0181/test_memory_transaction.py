@@ -109,6 +109,22 @@ int main() {
     t->ForEachUploadRange((1ULL<<40)-4096,8192,true,gather,invalid);
     assert(!invalid_called);
     assert(!t->IsRegionCpuModified(1ULL<<40,4096));
+    // Drain initial whole-region notifications, then prove exact dirty-word
+    // publication, coalescing and one-time consumption across the boundary.
+    t->ForEachSweepSpan([](VAddr,u64){});
+    t->MarkRegionAsCpuModified(a,n);
+    std::vector<std::pair<VAddr,u64>> spans;
+    auto collect=[&](VAddr addr,u64 size){spans.emplace_back(addr,size);};
+    t->ForEachSweepSpan(collect);
+    std::ranges::sort(spans);
+    assert(spans.size()==2);
+    assert((spans[0]==std::pair<VAddr,u64>{HIGHER_PAGE_SIZE-BYTES_PER_WORD,BYTES_PER_WORD}));
+    assert((spans[1]==std::pair<VAddr,u64>{HIGHER_PAGE_SIZE,BYTES_PER_WORD}));
+    spans.clear();
+    t->ForEachSweepSpan(collect);
+    assert(spans.empty());
+    bytes=0;
+    t->ForEachUploadRange(a,n,false,gather,[&]{assert(bytes==n);});
     std::atomic<bool> stop{false};
     std::thread reader([&]{
         while(!stop.load(std::memory_order_acquire))

@@ -787,6 +787,8 @@ void GameController::PollState() {
     result["donorShaderContract"] = apply_shader_contract(root, order=False)
     from port_memory_transaction import apply as apply_memory_transaction
     result["memoryTransaction"] = apply_memory_transaction(root, order=False)
+    from port_sotc_dma_sweep import apply as apply_sotc_dma_sweep
+    result["sotcDmaSweep"] = apply_sotc_dma_sweep(root)
     from port_sotc_fast_render import apply as apply_fast_render
     result["sotcFastRender"] = apply_fast_render(root)
     from port_sotc_draw_pipe import apply as apply_draw_pipe
