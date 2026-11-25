@@ -8,6 +8,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: write
 concurrency:
   group: bachata-fex-functional-source-parity
   cancel-in-progress: true
@@ -17,6 +18,14 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Cancel superseded intermediate SotC APK compilation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          status=$(gh api repos/$GITHUB_REPOSITORY/actions/runs/45625377156 --jq .status)
+          if [ "$status" != completed ]; then
+            gh api -X POST repos/$GITHUB_REPOSITORY/actions/runs/45625377156/cancel
+          fi
       - name: Checkout exact Order reference (not its binary)
         uses: actions/checkout@v4
         with:
@@ -58,8 +67,8 @@ jobs:
           git -C bachata-order remote add shadps4 https://github.com/shadps4-emu/shadPS4.git
           git -C bachata-order fetch --quiet --filter=blob:none shadps4 3912336fdfffbd5c99b59d92e997ea6ebd62216c
           cp -a bachata-order bachata-sotc
-          git fetch --no-tags origin 81aa7c1ae4c9dcb16123306bf1733921d3984b4a
-          git worktree add --detach sotc-bachata-overlay 81aa7c1ae4c9dcb16123306bf1733921d3984b4a
+          git fetch --no-tags origin 8929d5a8316e6e9d5a35e44848a98bef39be2488
+          git worktree add --detach sotc-bachata-overlay 8929d5a8316e6e9d5a35e44848a98bef39be2488
           python3 bionic/source0181/rebase_arm64.py --source bachata-order --output out/order-rebase
           python3 bionic/source0181/port_0181.py --source bachata-order --report out/order-parity.json
           python3 sotc-bachata-overlay/bionic/source0181/rebase_arm64.py --source bachata-sotc --output out/sotc-rebase
@@ -69,6 +78,13 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y universal-ctags
           python3 bionic/ports/source_parity.py --order-donor order-effective/gpu/shadps4 --sotc-donor sotc-effective/shadps4 --order-bachata bachata-order/src --sotc-bachata bachata-sotc/src --out out/functional-parity
+      - name: Export effective source trees for direct adaptation, no native compilation
+        run: |
+          tar -czf out/effective-gpu-sources.tar.gz \
+            order-effective/gpu/shadps4 \
+            sotc-effective/shadps4 \
+            bachata-order/src \
+            bachata-sotc/src
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -77,4 +93,5 @@ jobs:
             out/functional-parity/
             out/order-parity.json
             out/sotc-parity.json
+            out/effective-gpu-sources.tar.gz
           if-no-files-found: error
