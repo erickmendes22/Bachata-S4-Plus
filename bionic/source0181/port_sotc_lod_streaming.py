@@ -136,6 +136,26 @@ void BufferCache::ReleaseUnmappedArena(VAddr address, u64 size) {""")
     edit("video_core/buffer_cache/buffer_cache.cpp","        constexpr u64 WindowSize = 512_KB;",
          """        const auto serial=Common::ElfInfo::Instance().GameSerial();
         const u64 WindowSize = (serial=="CUSA08809"||serial=="CUSA08034")?64_KB:512_KB;""")
+    # Match the Android donor log: narrow random faults, streaming grows
+    # 64 -> 128 -> 256 -> 512 -> 1024 KiB for sequential guest accesses.
+    edit("video_core/buffer_cache/buffer_cache.cpp",
+         "    const auto flush_request = [this, device_addr, size, is_write] {",
+         """    u64 stream=0;
+    const auto serial=Common::ElfInfo::Instance().GameSerial();
+    if ((serial=="CUSA08809"||serial=="CUSA08034") && !assume_locks) {
+        thread_local VAddr last_end=0;
+        thread_local u64 last_size=0;
+        constexpr u64 base=64_KB, maximum=1024_KB;
+        if (last_size && device_addr>=last_end && device_addr-last_end<base)
+            last_size=std::min(last_size*2,maximum);
+        else last_size=base;
+        last_end=Common::AlignDown(device_addr,base)+last_size;
+        stream=last_size;
+    }
+    const auto flush_request = [this, device_addr, size, is_write, stream] {""")
+    edit("video_core/buffer_cache/buffer_cache.cpp",
+         "std::max<VAddr>(window_start + WindowSize, device_addr + size), arena_end);",
+         "std::max<VAddr>(window_start + (stream?stream:WindowSize), device_addr + size), arena_end);")
     # Same-stream upload memo, precise lifetime via tick + ring wrap.
     edit("video_core/buffer_cache/buffer.h","    /// Tick of the most recent commit into this buffer, 0 if never used.",
          """    [[nodiscard]] u64 WrapGeneration() const noexcept { return wrap_generation; }
