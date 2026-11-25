@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""SotC gameplay baseline: donor color, fragment descriptor arrays, native frame events.
-Source preflight run 45615431758 passed the complete 0.18.1 overlay application.
-The current donor also uses the read-only buffer window and debug clamp logging.
-Device rendering and performance must still be measured.
-"""
+"""Only the actual SotC donor color correction on the exact gameplay source."""
 from pathlib import Path
 import re
 def one(s,a,b,label):
@@ -55,155 +51,22 @@ void LowerWave64BallotPass(IR::Program& program, const RuntimeInfo& runtime_info
     if (num_threads<=32) return;''','scope absent-lane identity to verified donor shader')
     p.write_text(s)
 
-    # Current standalone SotC enables stage_fragment_tsharp.py. Keep the
-    # existing nonuniform feature gate, bounds/null slot and vertex exclusion.
-    p=root/'src/shader_recompiler/ir/passes/resource_patching_pass.cpp'
-    s=p.read_text()
-    s=one(s,'const u32 array_size = info.hw_stage == HwStage::Compute && profile.supports_nonuniform_image_arrays ? DynamicTsharpArraySize() : 0;',
-        '''const bool table_stage = info.hw_stage == HwStage::Compute ||
-                             info.hw_stage == HwStage::Fragment;
-    const u32 array_size = table_stage && profile.supports_nonuniform_image_arrays
-                               ? DynamicTsharpArraySize() : 0;''',
-        'SotC Android fragment material TSharp tables')
-    assert 'MatchSharpTable(resource.sharps[0])' in s
-    assert 'NumArrayDescriptors(info) + array_size + 1' in s
-    p.write_text(s)
-
-    # Restore the same guest-flip protocol used by the working main core.
-    # An imported upstream implementation may already contain the hook.
-    # Never report an extra frame, vblank or the idle UI redraw.
-    p=root/'src/core/libraries/videoout/driver.cpp'
-    s=p.read_text()
-    hook='Platform::Bachata::ReportPresentedFrame();'
-    if s.count(hook)==0:
-        s=one(s,'    presenter->Present(req.frame);',
-            '    presenter->Present(req.frame);\n#ifdef ENABLE_BACHATA_RUNTIME\n    '+hook+'\n#endif',
-            'SotC guest flip event')
-    elif s.count(hook)!=1:
-        raise RuntimeError('Duplicate native frame report')
-    if '#include "platform/bachata/runtime_client.h"' not in s:
-        s=one(s,'#include "imgui/renderer/imgui_core.h"',
-            '#include "imgui/renderer/imgui_core.h"\n#ifdef ENABLE_BACHATA_RUNTIME\n#include "platform/bachata/runtime_client.h"\n#endif',
-            'SotC runtime event include')
-    assert s.index('presenter->Present(req.frame);') < s.index(hook)
-    p.write_text(s)
-
-    # Current standalone Android donor: preserve real compute outputs when
-    # a dispatch also writes metadata (stage_meta_clear_integrity.py).
-    p=root/'src/video_core/renderer_vulkan/vk_rasterizer.cpp'
-    s=p.read_text()
-    s=one(s,'''    if (!info.has_bitwise_xor) {
-        // Assume if a shader writes metadata without address calculation, it is a clear shader.''',
-        '''#ifdef __ANDROID__
-    bool metadata_only_dispatch = info.images.empty();
-    u32 non_special_writes = 0;
-    for (const auto& desc : info.buffers) {
-        if (!desc.is_written) continue;
-        if (desc.IsSpecial() || ++non_special_writes > 1) {
-            metadata_only_dispatch = false;
-            break;
-        }
-    }
-    metadata_only_dispatch &= non_special_writes == 1;
-#else
-    constexpr bool metadata_only_dispatch = true;
-#endif
-    if (!info.has_bitwise_xor && metadata_only_dispatch) {
-        // Assume if a shader writes metadata without address calculation, it is a clear shader.''',
-        'donor metadata clear integrity')
-    assert 'texture_cache.ClearMeta(address)' in s
-    p.write_text(s)
-    # Same donor restores LDS workgroup barriers on Qualcomm, including
-    # wave64. The serialized Shader::Profile equality rejects old profiles.
-    p=root/'src/video_core/renderer_vulkan/vk_pipeline_cache.cpp'
-    s=p.read_text()
-    s=one(s,'''        .needs_lds_barriers = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary ||
-                              instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,''',
-        '''        .needs_lds_barriers = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary ||
-                              instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp ||
-#ifdef __ANDROID__
-                              instance.GetVendorID() == 0x5143 ||
-                              instance.SubgroupSize() < 64 ||
-#endif
-                              false,''',
-        'donor Adreno LDS integrity')
-    p.write_text(s)
-
-    # Current PC donor aaf95c06deec0: near-4GiB read-only descriptors
-    # are unbounded, not necessarily corrupt; don't repeatedly log them
-    # at ERROR/WARNING or allocate their full VMA remainder.
-    p=root/'src/video_core/renderer_vulkan/vk_rasterizer.cpp'
-    s=p.read_text()
-    s=one(s,'            const u64 bounded = std::min(mapped, limit);',
-        '''            u64 bounded = std::min(mapped, limit);
-            // Exact SotC donor read-only window policy. Never truncate
-            // writes or GPU ReadConst snapshots; preserve explicit mapping
-            // and Vulkan device limits.
-            if (shadow && !readconst && !desc.is_written &&
-                (vsharp.GetSize() >= 0xFFFF0000ULL || bounded > (256ULL << 20))) {
-                constexpr u64 donor_window = 64ULL << 20;
-                bounded = std::min(bounded, donor_window);
-            }''','SotC donor read-only unbounded buffer window')
-    s=one(s,'''                    LOG_ERROR(Render, "Clamped size from {} to {} for stage {:#x}",
-                              vsharp.GetSize(), size, stage.pgm_hash);''',
-        '''                    LOG_DEBUG(Render, "Clamped size from {} to {} for stage {:#x}",
-                              vsharp.GetSize(), size, stage.pgm_hash);''',
-        'donor routine clamp log severity')
-    # The old loop discarded the entire page on the first CPU-only DWORD
-    # before checking the remaining GPU-authored DWORDs. Check exact source
-    # provenance before deduplication, preserving the original download.
-    s=one(s,'''            if(!visited.insert(page).second)continue;
-            if(!buffer_cache.IsRegionGpuModified(page,PageSize))continue;''',
-        '''            if(visited.contains(page))continue;
-            if(!buffer_cache.IsRegionGpuModified(page,PageSize))continue;''',
-        'SRT dedup after valid source')
-    s=one(s,'''            if(!buffer_cache.IsRangeGpuWritten(source,sizeof(u32)))continue;
-            buffer_cache.TrackSrtSourcePage(page);''',
-        '''            if(!buffer_cache.IsRangeGpuWritten(source,sizeof(u32)))continue;
-            visited.insert(page);
-            buffer_cache.TrackSrtSourcePage(page);''',
-        'record actual GPU-written source')
-    s=one(s,'''        LOG_INFO(Render_Vulkan,
-                 "BACHATA_RELEASE026_SRT_GPU_PAGES_REFRESHED pass={} pages={}",
-                 pass,visited.size());''',
-        '''        LOG_DEBUG(Render_Vulkan,
-                 "BACHATA_RELEASE026_SRT_GPU_PAGES_REFRESHED pass={} pages={}",
-                 pass,visited.size());''','avoid repeated SRT logging')
-    p.write_text(s)
-    p=root/'src/core/memory.cpp'
-    s=p.read_text()
-    s=one(s,'''        LOG_WARNING(Kernel_Vmm,
-                    "BACHATA_RELEASE026_GPU_RANGE_CLAMP addr={:#x} request={:#x} valid={:#x}",''',
-        '''        LOG_DEBUG(Kernel_Vmm,
-                    "BACHATA_RELEASE026_GPU_RANGE_CLAMP addr={:#x} request={:#x} valid={:#x}",''',
-        'routine range clamp debug logging')
-    p.write_text(s)
-    p=root/'src/video_core/amdgpu/liverpool.cpp'
-    s=p.read_text()
-    s=one(s,'                LOG_WARNING(Render, "Unimplemented IT_SET_PREDICATION");',
-        '''                static bool reported = false;
-                if (!reported) {
-                    reported = true;
-                    LOG_WARNING(Render, "Unimplemented IT_SET_PREDICATION (reported once)");
-                }''','current donor warning-once behavior')
-    p.write_text(s)
-
     # Preserve all unrelated binary/meta versions from 608a1ac, including
-    # the working non-fragment pipelines in 66F3F9ED. Only affected shaders
+    # the 1332 working pipelines in 66F3F9ED. Only the affected shader
     # receives a new per-shader generation; no global cache invalidation.
     p=root/'src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp'
     s=p.read_text()
     key='Serialization::ShaderBinaryVersion + (AmdGpu::BachataOrderNoMsaa() ? 64u : 0u)'
     s=one(s,'meta.Write('+key+');',
-        'meta.Write('+key+' + (info.pgm_hash==0x87cf9b8aULL ? 101u : (info.hw_stage==Shader::HwStage::Fragment ? 102u : 0u)));','targeted writer')
+        'meta.Write('+key+' + (info.pgm_hash==0x87cf9b8aULL ? 101u : 0u));','targeted writer')
     s=one(s,'    if (binary_version != '+key+') {',
-        '    if (binary_version != '+key+' && binary_version != '+key+' + 101u && binary_version != '+key+' + 102u) {','accept both version generations')
+        '    if (binary_version != '+key+' && binary_version != '+key+' + 101u) {','accept both version generations')
     s=one(s,'    return info.Deserialize(ar) && effective_info.Deserialize(ar);',
         '''    if (!info.Deserialize(ar) || !effective_info.Deserialize(ar)) return false;
     return binary_version == Serialization::ShaderBinaryVersion +
         (AmdGpu::BachataOrderNoMsaa() ? 64u : 0u) +
-        (info.pgm_hash==0x87cf9b8aULL ? 101u : (info.hw_stage==Shader::HwStage::Fragment ? 102u : 0u));''','reject old fragment or affected color shader')
+        (info.pgm_hash==0x87cf9b8aULL ? 101u : 0u);''','reject only old affected shader')
     s=one(s,'            bool result{};\n            if (is_compute) {',
         '            infos.fill(nullptr);\n            modules.fill(nullptr);\n            runtime_infos.fill({});\n            fetch_shader=nullptr;\n            bool result{};\n            if (is_compute) {','reset partially loaded stages')
     p.write_text(s)
-    return {"color":"donor 5712cee31461, target reduction", "textures":"current Android fragment TSharp arrays; vertex excluded; feature gated", "fps":"one native guest-flip event; no duplicate", "cache":"fragment generation and shader-profile validation", "integrity":"donor metadata-only clear guard and Adreno LDS barriers", "buffers":"donor read-only unbounded window, mapped/storage bounds, debug log", "srt":"exact source before page dedup; no dropped GPU writes"}
+    return {"color":"donor 5712cee31461, target reduction; preserve all unrelated caches"}

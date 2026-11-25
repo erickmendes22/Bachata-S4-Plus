@@ -763,30 +763,8 @@ void GameController::PollState() {
     result["compiledDescriptorContract"] = apply_compiled_descriptor_contract(root)
     from port_sotc_color_only import apply as apply_color_only
     result["sotcColorOnly"] = apply_color_only(root)
-    from port_sotc_texture_coherence import apply as apply_sotc_texture
-    result["sotcTextureCoherence"] = apply_sotc_texture(root)
-    from port_ahb_present import apply as apply_ahb_present
-    result["ahbPresent"] = apply_ahb_present(root)
-    from port_sotc_dynamic_memo import apply as apply_sotc_dynamic_memo
-    result["sotcDynamicMemo"] = apply_sotc_dynamic_memo(root)
-    from port_target_batched_readback import apply as apply_target_batched_readback
-    result["targetBatchedReadback"] = apply_target_batched_readback(root)
-    from port_target_async_graphics import apply as apply_async_graphics
-    result["targetAsyncGraphics"] = apply_async_graphics(root)
-    from port_target_recorder import apply as apply_recorder
-    result["targetRecorder"] = apply_recorder(root)
-    from port_sotc_async_compute import apply as apply_async_compute
-    result["sotcAsyncCompute"] = apply_async_compute(root)
-    from port_sotc_lod_streaming import apply as apply_lod_streaming
-    result["sotcLodStreaming"] = apply_lod_streaming(root)
-    from port_target_donor_settings import apply as apply_donor_settings
-    result["targetDonorSettings"] = apply_donor_settings(root, sotc=True)
-    from port_target_cache_persistence import apply as apply_target_cache
-    result["targetCachePersistence"] = apply_target_cache(root, order=False)
-    from port_sotc_fast_render import apply as apply_fast_render
-    result["sotcFastRender"] = apply_fast_render(root)
-    from port_sotc_draw_pipe import apply as apply_draw_pipe
-    result["sotcDrawPipe"] = apply_draw_pipe(root)
+    from port_inherited_gpu import apply as apply_inherited_gpu
+    result["inheritedGpu"] = apply_inherited_gpu(root, sotc=True)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
