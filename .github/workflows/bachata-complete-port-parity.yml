@@ -58,30 +58,57 @@ jobs:
           git -C bachata-order remote add shadps4 https://github.com/shadps4-emu/shadPS4.git
           git -C bachata-order fetch --quiet --filter=blob:none shadps4 3912336fdfffbd5c99b59d92e997ea6ebd62216c
           cp -a bachata-order bachata-sotc
-          git fetch --no-tags origin 74f01b20951e270e71a2d132e5efcc4fd76954ba
-          git worktree add --detach sotc-bachata-overlay 74f01b20951e270e71a2d132e5efcc4fd76954ba
-          python3 bionic/source0181/rebase_arm64.py --source bachata-order --output out/order-rebase
-          python3 bionic/source0181/port_0181.py --source bachata-order --report out/order-parity.json
-          python3 sotc-bachata-overlay/bionic/source0181/rebase_arm64.py --source bachata-sotc --output out/sotc-rebase
-          python3 sotc-bachata-overlay/bionic/source0181/port_0181.py --source bachata-sotc --report out/sotc-parity.json
+          cp -a bachata-order bachata-order-baseline
+          cp -a bachata-order bachata-sotc-baseline
+          # Reconstruct exact failing cores and recovery baselines, not audit branch.
+          for pair in \
+            order:dc63ec0609dab18d3ecf58a59dcd1aa8852a8b50 \
+            sotc:139668e20d544cde0c5189299e01c44232e5f58b \
+            order-baseline:f75b1f569637b5a0677297405b6af14fde7d03e3 \
+            sotc-baseline:4fb12a7c96be5f28989f994fcb2281f2ff9e30f1; do
+            label="${pair%%:*}"
+            sha="${pair#*:}"
+            git fetch --no-tags origin "$sha"
+            git worktree add --detach "overlay-$label" "$sha"
+            python3 "overlay-$label/bionic/source0181/rebase_arm64.py" --source "bachata-$label" --output "out/$label-rebase"
+            python3 "overlay-$label/bionic/source0181/port_0181.py" --source "bachata-$label" --report "out/$label-parity.json"
+            echo "$label $sha" >> out/exact-revisions.txt
+          done
       - name: Compare every effective GPU source file and symbol by subsystem
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y universal-ctags
           python3 bionic/ports/source_parity.py --order-donor order-effective/gpu/shadps4 --sotc-donor sotc-effective/shadps4 --order-bachata bachata-order/src --sotc-bachata bachata-sotc/src --out out/functional-parity
+      - name: Classify inherited PC infrastructure separately from Android overlays
+        run: |
+          python3 bionic/ports/inherited_parity.py \
+            --order-pc order-pc/gpu/shadps4 --order-android order-effective/gpu/shadps4 \
+            --sotc-pc sotc-pc/gpu/shadps4 --sotc-android sotc-effective/shadps4 \
+            --order-current bachata-order/src --sotc-current bachata-sotc/src \
+            --order-baseline bachata-order-baseline/src --sotc-baseline bachata-sotc-baseline/src \
+            --order-shim order-effective/gpu/shim --sotc-shim sotc-effective/shim \
+            --out out/inherited-parity
       - name: Export effective source trees for direct adaptation, no native compilation
         run: |
           tar -czf out/effective-gpu-sources.tar.gz \
             order-effective/gpu/shadps4 \
             sotc-effective/shadps4 \
             bachata-order/src \
-            bachata-sotc/src
+            bachata-sotc/src \
+            bachata-order-baseline/src \
+            bachata-sotc-baseline/src \
+            order-pc/gpu/shadps4 sotc-pc/gpu/shadps4 \
+            order-effective/gpu/shim sotc-effective/shim
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: bachata-fex-effective-source-parity-NOT-APK
           path: |
             out/functional-parity/
+            out/inherited-parity/
+            out/exact-revisions.txt
+            out/order-baseline-parity.json
+            out/sotc-baseline-parity.json
             out/order-parity.json
             out/sotc-parity.json
             out/effective-gpu-sources.tar.gz
