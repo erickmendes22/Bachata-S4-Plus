@@ -583,8 +583,8 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 100); do
-            state="$(gh api repos/$GITHUB_REPOSITORY/actions/runs/45538070514)"
-            test "$(jq -r .head_sha <<< "$state")" = "62e36aeeda3a229ddbb1e7a1f6129a9413b07f92"
+            state="$(gh api repos/$GITHUB_REPOSITORY/actions/runs/45538267422)"
+            test "$(jq -r .head_sha <<< "$state")" = "4fb12a7c96be5f28989f994fcb2281f2ff9e30f1"
             if [[ "$(jq -r .status <<< "$state")" == completed ]]; then
               test "$(jq -r .conclusion <<< "$state")" = success
               exit 0
@@ -598,7 +598,7 @@ jobs:
         with:
           name: Bachata-S4Plus-REAL-shadPS4-0181-FEX-Bionic-P36-APK
           path: out/sotc608
-          run-id: 45538070514
+          run-id: 45538267422
           github-token: ${{ github.token }}
 
       - name: Android build tools and ELF patching

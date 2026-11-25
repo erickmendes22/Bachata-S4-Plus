@@ -1,7 +1,7 @@
 """Import the exact signed, previously device-tested 608a1ac core without rewriting it."""
 import hashlib,json,re,subprocess,sys,zipfile
 from pathlib import Path
-REV="62e36aeeda3a229ddbb1e7a1f6129a9413b07f92"
+REV="4fb12a7c96be5f28989f994fcb2281f2ff9e30f1"
 APK=Path(sys.argv[1])
 LIB=Path(sys.argv[2])
 PREFIX="lib/arm64-v8a/"

@@ -24,7 +24,7 @@ BASE_RELEASE = "0.2.7"
 NATIVE_DIR = "lib/arm64-v8a/"
 NATIVE_MANIFEST = "assets/runtime/native-runtime.json"
 SOTC_CORE = "libbachata_sotc_core.so"
-SOTC_REV = "62e36aeeda3a229ddbb1e7a1f6129a9413b07f92"
+SOTC_REV = "4fb12a7c96be5f28989f994fcb2281f2ff9e30f1"
 REQUIRED_LIBRARIES = {"libbachata_native_runtime.so", "libbachata_bionic_core.so"}
 CRITICAL_PRESERVED = {
     "AndroidManifest.xml",

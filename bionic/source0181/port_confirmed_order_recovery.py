@@ -11,11 +11,10 @@ def apply(root:Path):
     edit(rp,"return desc.sharp_fetch == existing.sharp_fetch && desc.is_array == existing.is_array &&",
          """return desc.sharp_fetch == existing.sharp_fetch && desc.is_array == existing.is_array &&
                    desc.is_r128 == existing.is_r128 && desc.is_depth == existing.is_depth &&""")
-    # Immediate DWORDs must not be promoted to a memcpy of unrelated flat slots.
-    edit(rp,"    if (sharp_fetch.summary != Summary::Invalid) {",
-         """    if (sharp_fetch.summary != Summary::Invalid &&
-        sharp.num_dwords != 0 &&
-        sharp_fetch.load_mask == ((1u<<sharp.num_dwords)-1u)) {""")
+    # f75b1f5 already has the donor fix in port_backing_and_uma.
+    # Audit it instead of applying the same overlay twice.
+    if "sharp_fetch.summary != Summary::Invalid && sharp_fetch.load_mask == all_loaded" not in (root/rp).read_text():
+        raise RuntimeError("Missing baseline mixed immediate descriptor correction")
     r="src/shader_recompiler/resource.h"
     edit(r,"        if (summary == Summary::SingleLoad) [[likely]] {",
          """        if (summary == Summary::SingleLoad &&
