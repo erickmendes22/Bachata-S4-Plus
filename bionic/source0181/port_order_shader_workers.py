@@ -203,12 +203,12 @@ private:
     using namespace Shader::Backend::SPIRV;
     struct Build {
         Shader::Info info;
-        Shader::RuntimeInfo runtime;
+        Shader::RuntimeInfo runtime{};
         Shader::Pools pools;
         std::optional<Shader::IR::Program> ir;
         std::optional<EmissionSnapshot> captured;
         std::optional<std::vector<u32>> patch;
-        Shader::Backend::Bindings begin, end;
+        Shader::Backend::Bindings begin{}, end{};
     };
     auto build=std::make_shared<Build>();
     build->info=info;
