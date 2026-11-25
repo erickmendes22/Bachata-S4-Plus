@@ -51,6 +51,45 @@ def apply(root:Path):
     s,n=re.subn(r'ShaderBinaryVersion = (\d+)u;',lambda m:f'ShaderBinaryVersion = {int(m.group(1))+109}u;',p.read_text())
     if n!=1: raise RuntimeError("Order shader cache version drift")
     p.write_text(s)
+    # Verified 0.18.1 translator contract: these VS step-rate registers are
+    # only consumed for input VGPR counts >0 and >1. Keep fetch divisors
+    # and disk-cache equality. Reuse the earlier reviewed exact-key change.
+    sp="src/shader_recompiler/specialization.h"
+    edit(sp,"    bool operator==(const StageSpecialization& other) const {",
+r'''    static bool RuntimeMatchesForDraw(const RuntimeInfo& a,const RuntimeInfo& b) {
+        if(a==b)return true;
+        if(a.sw_stage!=SwStage::Vertex||b.sw_stage!=SwStage::Vertex||
+           a.props.num_input_vgprs!=b.props.num_input_vgprs)return false;
+        // Only remove values the shader translator does not read.
+        // Fetch attributes are compared independently below (divisor).
+        auto x=a,y=b;
+        if(a.props.num_input_vgprs==0)x.sw.vs.step_rate_0=y.sw.vs.step_rate_0=0;
+        if(a.props.num_input_vgprs<=1)x.sw.vs.step_rate_1=y.sw.vs.step_rate_1=0;
+        return x==y;
+    }
+
+    bool operator==(const StageSpecialization& other) const {
+        return Matches(other,false);
+    }
+
+    bool Matches(const StageSpecialization& other,bool live_draw) const {''')
+    edit(sp,'''        if (runtime_info != other.runtime_info) {
+            return false;
+        }''',
+'''        if (live_draw ? !RuntimeMatchesForDraw(runtime_info,other.runtime_info)
+                      : runtime_info != other.runtime_info) {
+            return false;
+        }''')
+    pc="src/video_core/renderer_vulkan/vk_pipeline_cache.cpp"
+    edit(pc,'''            if (effective.sw_stage!=SwStage::TessellationControl &&
+                effective.sw_stage!=SwStage::TessellationEval &&
+                stored.runtime_info!=runtime_info) continue;''',
+'''            if (effective.sw_stage!=SwStage::TessellationControl &&
+                effective.sw_stage!=SwStage::TessellationEval &&
+                !Shader::StageSpecialization::RuntimeMatchesForDraw(stored.runtime_info,runtime_info)) continue;''')
+    edit(pc,"        if (!(candidate.spec==candidate_spec)) continue;",
+'''        if (!candidate.spec.Matches(candidate_spec,!BachataCompat::Sotc608())) continue;''')
+
     # Direct final image delivery, but only when the final ImGui draw is
     # exactly the opaque full-screen game quad. No skipped overlays or UI.
     sw="src/video_core/renderer_vulkan/vk_swapchain.h"
@@ -156,4 +195,4 @@ r'''        bool direct_present=false;
          """        const vk::ImageLayout post_old_layout = direct_present ? vk::ImageLayout::eTransferDstOptimal :
                                                     swapchain_copied_for_screenshot""")
     # The swapchain acquire semaphore must guard transfer writes too.
-    return {"descriptor":"complete load-mask, distinct R128/depth, bounds","present":"verified opaque fullscreen direct blit; otherwise original ImGui path","cache":"reset partial preload; no SRT or scheduler changes"}
+    return {"descriptor":"complete load-mask, distinct R128/depth, bounds","present":"verified opaque fullscreen direct blit; otherwise original ImGui path","cache":"reset partial preload; exact unused VS rate canonicalization; no SRT or scheduler changes"}
