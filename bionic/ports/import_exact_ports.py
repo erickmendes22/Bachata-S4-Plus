@@ -181,8 +181,9 @@ def main():
     require(not a.out.exists(), "refusing to overwrite staging directory")
     a.out.mkdir(parents=True)
     modules = {name: import_apk(name, getattr(a, name), a.out) for name in PINS}
-    cxx = {name: modules[name]["elf"]["lib/arm64-v8a/libc++_shared.so"]["sha256"]
-           for name in PINS}
+    cxx = {name: modules[name]["elf"][
+        "payload/sotcport/arm64/lib/libc++_shared.so" if name == "sotc"
+        else "lib/arm64-v8a/libc++_shared.so"]["sha256"] for name in PINS}
     require(len(set(cxx.values())) == 3, "unexpected dependency identity")
     # The two donor binaries are not interchangeable with the host core.
     # Android 10+ target-SDK restrictions prohibit executing a private filesDir
