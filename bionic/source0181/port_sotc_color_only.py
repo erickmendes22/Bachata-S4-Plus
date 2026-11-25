@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""SotC gameplay baseline: donor color, fragment descriptor arrays, and native frame events."""
+"""SotC gameplay baseline: donor color, fragment descriptor arrays, native frame events.
+Source preflight run 45615431758 passed the complete 0.18.1 overlay application.
+The current donor also uses the read-only buffer window and debug clamp logging.
+Device rendering and performance must still be measured.
+"""
 from pathlib import Path
 import re
 def one(s,a,b,label):
