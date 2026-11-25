@@ -7,6 +7,7 @@
 #include <bit>
 #include <limits>
 #include <optional>
+#include "common/types.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 #include <vulkan/vulkan_format_traits.hpp>
 
