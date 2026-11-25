@@ -55,38 +55,34 @@ def apply(root:Path):
                 if (u32{sharp_fetch.offsets[i]}!=u32{sharp_fetch.offsets[0]}+i)
                     return AmdGpu::Image::Null(is_depth);
         }""")
-    # Preserve the 504db690 fast path. If tracker and exact byte index
-    # disagree, use the original ownership-aware readback for that page.
-    bc="src/video_core/buffer_cache/buffer_cache.h"
-    edit(bc,"    void TrackSrtSourcePage(VAddr page);",
-         "    bool IsSrtPageGpuOwned(VAddr page);\n    void TrackSrtSourcePage(VAddr page);")
-    bc="src/video_core/buffer_cache/buffer_cache.cpp"
-    edit(bc,"void BufferCache::TrackSrtSourcePage(VAddr page) {",
-         """bool BufferCache::IsSrtPageGpuOwned(VAddr page) {
-    return memory_tracker->IsRegionGpuModified(page,4096);
-}
-void BufferCache::TrackSrtSourcePage(VAddr page) {""")
+    # Restore the exact high-FPS base SRT batch path. The broad fallback in
+    # 273b5e3 did not resolve rejected descriptors and regressed measured FPS.
+    # Fix cache replay contamination independently of descriptor interpretation.
+    ser="src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp"
+    edit(ser,"""            bool result{};
+            if (is_compute) {""",
+         """            // A prior rejected archive entry may have loaded only some stages.
+            // Never inherit its shader/module/runtime state in the next pipeline.
+            infos.fill(nullptr);
+            modules.fill(nullptr);
+            runtime_infos.fill({});
+            fetch_shader=nullptr;
+            bool result{};
+            if (is_compute) {""")
+    # Capture exact T# source locations only on actual footprint rejection.
     ras="src/video_core/renderer_vulkan/vk_rasterizer.cpp"
-    path=root/ras
-    src=path.read_text()
-    start=src.index("void Rasterizer::ReadBackGpuWrittenSrtSources")
-    end=src.index("\n}\n",start)
-    part=src[start:end]
-    # The exact batch remains intact; add fallback only for missing provenance.
-    needle="!buffer_cache.IsRangeGpuWritten(source,sizeof(u32))"
-    if part.count(needle)!=1: raise RuntimeError("SRT exact source check drift")
-    part=part.replace(needle,"(!buffer_cache.IsRangeGpuWritten(source,sizeof(u32)) && !buffer_cache.IsSrtPageGpuOwned(page))",1)
-    needle="        if (pages.empty() || !buffer_cache.DownloadSrtSourcePages(pages)) break;"
-    if part.count(needle)!=1: raise RuntimeError("SRT batch completion drift")
-    part=part.replace(needle,"""        if (pages.empty()) break;
-        bool changed=buffer_cache.DownloadSrtSourcePages(pages);
-        for (const VAddr page:pages) {
-            if (!buffer_cache.IsSrtPageGpuOwned(page)) continue;
-            buffer_cache.ReadMemory(page,PageSize,false,true);
-            changed=true;
-        }
-        if (!changed) break;""",1)
-    path.write_text(src[:start]+part+src[end:])
+    edit(ras,"""                LOG_WARNING(Render_Vulkan,
+                    "BACHATA_ORDER_IMAGE_SPAN_REJECT shader={:#x} addr={:#x} size={:#x}",
+                    stage.pgm_hash,info.guest_address,info.guest_size);""",
+         """                static u32 rejected_sharps=0;
+                const u32 reject_n=++rejected_sharps;
+                if (reject_n<=32 || reject_n%512==0) {
+                    LOG_WARNING(Render_Vulkan,
+                        "BACHATA_ORDER_IMAGE_SPAN_REJECT shader={:#x} addr={:#x} size={:#x} r128={} mask={:#x} flat={} offsets={} count={}",
+                        stage.pgm_hash,info.guest_address,info.guest_size,image_desc.is_r128,
+                        image_desc.sharp_fetch.load_mask,stage.flattened_ud_buf.size(),
+                        image_desc.sharp_fetch.offsets,reject_n);
+                }""")
     # Avoid filesystem directory creation/lookup on every new permutation
     # when neither patching nor collection is enabled.
     pc="src/video_core/renderer_vulkan/vk_pipeline_cache.cpp"
@@ -101,5 +97,5 @@ void BufferCache::TrackSrtSourcePage(VAddr page) {""")
     if n!=1: raise RuntimeError("shader cache version drift")
     p.write_text(s)
     return {"descriptor":"distinct R128/depth, full width and bounds checks",
-            "srt":"retain batch, tracker-owned fallback; preserve pointer provenance",
+            "srt":"restore exact 504db690 batch; no broad fallback",
             "spikes":"unused vertex rates and disabled shader patch lookup"}

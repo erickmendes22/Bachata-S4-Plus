@@ -255,7 +255,7 @@ Engine choose_engine(JNIEnv* env,bool sotc) {
     if(!load_core_from_service_classloader(env,sotc)||!try_engine(selected))
         return {};
     std::fprintf(stderr,"BACHATA_CORE_DISPATCH profile=%s library=%s\n",
-                 sotc?"SotC-color-recovery":"main",selected);
+                 sotc?"SotC-608a1ac":"main",selected);
     return engine;
 }
 } // namespace

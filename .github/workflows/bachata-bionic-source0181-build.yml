@@ -577,32 +577,12 @@ jobs:
           set -euo pipefail
           test "$(cat out/bionic/stage/BIONIC_SOURCE_REVISION.txt)" = "$EXPECTED_REVISION"
 
-      - name: Wait for exact corrected SotC build and artifact
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOTC_RUN: "45523233716"
-          SOTC_REVISION: "786341b8e747b10216011748878473c0ad18e22e"
-        run: |
-          set -euo pipefail
-          for attempt in $(seq 1 80); do
-            state="$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$SOTC_RUN)"
-            test "$(jq -r .head_sha <<< "$state")" = "$SOTC_REVISION"
-            status="$(jq -r .status <<< "$state")"
-            if [[ "$status" == completed ]]; then
-              test "$(jq -r .conclusion <<< "$state")" = success
-              exit 0
-            fi
-            sleep 30
-          done
-          echo "::error::SotC build did not complete within 40 minutes"
-          exit 2
-
-      - name: Retrieve exact newly corrected SotC APK
+      - name: Retrieve exact device-confirmed SotC 608a1ac APK
         uses: actions/download-artifact@v4
         with:
           name: Bachata-S4Plus-REAL-shadPS4-0181-FEX-Bionic-P36-APK
           path: out/sotc608
-          run-id: 45523233716
+          run-id: 45428055233
           github-token: ${{ github.token }}
 
       - name: Android build tools and ELF patching
@@ -690,7 +670,7 @@ jobs:
             --strip "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
           echo "BIONIC_NATIVE_DEBUG_STRIPPED; GLIBC_025_COMPACTED_DURING_ASSEMBLY"
 
-      - name: Import newly built verified SotC core and check shared dependencies
+      - name: Import exact device-confirmed SotC core and check shared dependencies
         run: |
           set -euo pipefail
           old=out/sotc608/Bachata-S4Plus-v0.2.7-shadPS4-0.18.1-SOURCE-Bionic-P36.apk
