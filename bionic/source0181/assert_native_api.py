@@ -174,7 +174,7 @@ def audit(root: Path) -> None:
         "src/video_core/buffer_cache/buffer_cache.h": (
             "bool IsRangeGpuWritten(VAddr addr, size_t size);",
             "void TrackSrtSourcePage(VAddr page);",
-            "RangeSet srt_source_pages;"),
+            "SynchronizedRanges srt_source_pages;", "std::shared_lock l{mutex};ranges.ForEachInRange"),
         "src/video_core/page_manager.cpp": (
             "EnsurePages((base_page+page_start)<<PM_PAGE_BITS,", "page_reservation_mutex",
             "BACHATA_WATCHER_PAIRING", "EnsurePages(aligned_addr, aligned_end);"),
