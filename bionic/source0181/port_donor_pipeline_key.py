@@ -39,15 +39,16 @@ def apply(root:Path):
     assert s.count(old)==1
     s=s.replace(old,"""        if (buffers.empty() && images.empty() && fmasks.empty() && samplers.empty() &&
             other.buffers.empty() && other.images.empty() && other.fmasks.empty() && other.samplers.empty()) {
-            // A resource-free shader can still read SGPR push constants.
-            // Their compiled offset is part of the translation contract.
-            return start.user_data == other.start.user_data ||
-                   (!info->ud_mask.mask && !other.info->ud_mask.mask);
+            // In this 0.18.1 FEX renderer GetUserData reads the per-stage
+            // Flatbuf descriptor, not a packed push-constant SGPR offset.
+            // A genuinely resource-free stage has no Flatbuf dependency.
+            // If inconsistent metadata advertises one, require identical bindings.
+            return (!info->has_flatbuf && !other.info->has_flatbuf) || start==other.start;
         }""")
     p.write_text(s)
     # Bump incompatible metadata, since earlier SPIR-V might contain an
     # incorrect push-constant offset from a reused resource-free variant.
     # Version and cache path are determined by the preceding donor contract.
     return {"graphics_key":"byte-preserving copy and zero-reset",
-            "resource_free_shader":"correct user-data offset matching",
+            "resource_free_shader":"FEX per-stage Flatbuf binding contract; no donor-only push-constant ABI",
             "cpu":"FEX","fps":"original"}
