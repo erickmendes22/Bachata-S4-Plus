@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Only the actual SotC donor color correction on the exact gameplay source."""
+"""SotC gameplay baseline: donor color, fragment descriptor arrays, and native frame events."""
 from pathlib import Path
 import re
 def one(s,a,b,label):
@@ -51,22 +51,55 @@ void LowerWave64BallotPass(IR::Program& program, const RuntimeInfo& runtime_info
     if (num_threads<=32) return;''','scope absent-lane identity to verified donor shader')
     p.write_text(s)
 
+    # Current standalone SotC enables stage_fragment_tsharp.py. Keep the
+    # existing nonuniform feature gate, bounds/null slot and vertex exclusion.
+    p=root/'src/shader_recompiler/ir/passes/resource_patching_pass.cpp'
+    s=p.read_text()
+    s=one(s,'const u32 array_size = info.hw_stage == HwStage::Compute && profile.supports_nonuniform_image_arrays ? DynamicTsharpArraySize() : 0;',
+        '''const bool table_stage = info.hw_stage == HwStage::Compute ||
+                             info.hw_stage == HwStage::Fragment;
+    const u32 array_size = table_stage && profile.supports_nonuniform_image_arrays
+                               ? DynamicTsharpArraySize() : 0;''',
+        'SotC Android fragment material TSharp tables')
+    assert 'MatchSharpTable(resource.sharps[0])' in s
+    assert 'NumArrayDescriptors(info) + array_size + 1' in s
+    p.write_text(s)
+
+    # Restore the same guest-flip protocol used by the working main core.
+    # An imported upstream implementation may already contain the hook.
+    # Never report an extra frame, vblank or the idle UI redraw.
+    p=root/'src/core/libraries/videoout/driver.cpp'
+    s=p.read_text()
+    hook='Platform::Bachata::ReportPresentedFrame();'
+    if s.count(hook)==0:
+        s=one(s,'    presenter->Present(req.frame);',
+            '    presenter->Present(req.frame);\n#ifdef ENABLE_BACHATA_RUNTIME\n    '+hook+'\n#endif',
+            'SotC guest flip event')
+    elif s.count(hook)!=1:
+        raise RuntimeError('Duplicate native frame report')
+    if '#include "platform/bachata/runtime_client.h"' not in s:
+        s=one(s,'#include "imgui/renderer/imgui_core.h"',
+            '#include "imgui/renderer/imgui_core.h"\n#ifdef ENABLE_BACHATA_RUNTIME\n#include "platform/bachata/runtime_client.h"\n#endif',
+            'SotC runtime event include')
+    assert s.index('presenter->Present(req.frame);') < s.index(hook)
+    p.write_text(s)
+
     # Preserve all unrelated binary/meta versions from 608a1ac, including
-    # the 1332 working pipelines in 66F3F9ED. Only the affected shader
+    # the working non-fragment pipelines in 66F3F9ED. Only affected shaders
     # receives a new per-shader generation; no global cache invalidation.
     p=root/'src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp'
     s=p.read_text()
     key='Serialization::ShaderBinaryVersion + (AmdGpu::BachataOrderNoMsaa() ? 64u : 0u)'
     s=one(s,'meta.Write('+key+');',
-        'meta.Write('+key+' + (info.pgm_hash==0x87cf9b8aULL ? 101u : 0u));','targeted writer')
+        'meta.Write('+key+' + (info.pgm_hash==0x87cf9b8aULL ? 101u : (info.hw_stage==Shader::HwStage::Fragment ? 102u : 0u)));','targeted writer')
     s=one(s,'    if (binary_version != '+key+') {',
-        '    if (binary_version != '+key+' && binary_version != '+key+' + 101u) {','accept both version generations')
+        '    if (binary_version != '+key+' && binary_version != '+key+' + 101u && binary_version != '+key+' + 102u) {','accept both version generations')
     s=one(s,'    return info.Deserialize(ar) && effective_info.Deserialize(ar);',
         '''    if (!info.Deserialize(ar) || !effective_info.Deserialize(ar)) return false;
     return binary_version == Serialization::ShaderBinaryVersion +
         (AmdGpu::BachataOrderNoMsaa() ? 64u : 0u) +
-        (info.pgm_hash==0x87cf9b8aULL ? 101u : 0u);''','reject only old affected shader')
+        (info.pgm_hash==0x87cf9b8aULL ? 101u : (info.hw_stage==Shader::HwStage::Fragment ? 102u : 0u));''','reject old fragment or affected color shader')
     s=one(s,'            bool result{};\n            if (is_compute) {',
         '            infos.fill(nullptr);\n            modules.fill(nullptr);\n            runtime_infos.fill({});\n            fetch_shader=nullptr;\n            bool result{};\n            if (is_compute) {','reset partially loaded stages')
     p.write_text(s)
-    return {"color":"donor 5712cee31461, target reduction; preserve all unrelated caches"}
+    return {"color":"donor 5712cee31461, target reduction", "textures":"current Android fragment TSharp arrays; vertex excluded; feature gated", "fps":"one native guest-flip event; no duplicate", "cache":"invalidate affected fragment modules; preserve other stages"}
