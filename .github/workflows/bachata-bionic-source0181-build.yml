@@ -3,7 +3,7 @@ on:
   # The user requested an actual Android APK to test the fixed launch.
   # New commits supersede earlier builds; only the latest complete core runs.
   push:
-    branches: [work/bionic-sotc-color-20261125]
+    branches: [work/bionic-sotc-color-20261125, work/bionic-sotc-parity-recovery-20261125]
     paths:
       - '.github/workflows/bachata-bionic-generic-source.yml'
       - 'bionic/generic/**'
@@ -88,6 +88,18 @@ jobs:
           python3 bionic/source0181/test_donor_barrier_tree.py --source generic-upstream
           python3 bionic/source0181/test_present_boot_ownership.py --source generic-upstream
           python3 bionic/source0181/test_wsi_fex_guard.py --source generic-upstream
+          python3 bionic/source0181/test_fex_fault_evidence.py --source generic-upstream
+          python3 bionic/source0181/test_fex_clock_protocol.py --source generic-upstream
+          python3 bionic/source0181/test_frame_protocol.py --source generic-upstream
+          python3 bionic/source0181/test_donor_alu_semantics.py --source generic-upstream
+          python3 bionic/source0181/test_donor_wave64_lds.py --source generic-upstream
+          python3 bionic/source0181/test_donor_shader_inputs.py --source generic-upstream
+          python3 bionic/source0181/test_donor_early_depth.py --source generic-upstream
+          python3 bionic/source0181/test_readconst_addr64.py --source generic-upstream
+          python3 bionic/source0181/test_donor_draw_pipeline.py --source generic-upstream
+          python3 bionic/source0181/test_pending_gpu_callbacks.py --source generic-upstream
+          python3 bionic/source0181/test_sotc_readback_completion.py --source generic-upstream
+          python3 bionic/source0181/test_sotc_arena_lifecycle.py --source generic-upstream
           python3 bionic/source0181/test_sotc_async_readback.py --source generic-upstream
           grep -Fq 'BACHATA_ABSENT_REDUCTION_LANE' generic-upstream/src/shader_recompiler/ir/passes/lower_wave64_pass.cpp
           # Fail the cheap preflight if the host protobuf generator can again
@@ -307,6 +319,18 @@ jobs:
           python3 bionic/source0181/test_donor_barrier_tree.py --source generic-upstream
           python3 bionic/source0181/test_present_boot_ownership.py --source generic-upstream
           python3 bionic/source0181/test_wsi_fex_guard.py --source generic-upstream
+          python3 bionic/source0181/test_fex_fault_evidence.py --source generic-upstream
+          python3 bionic/source0181/test_fex_clock_protocol.py --source generic-upstream
+          python3 bionic/source0181/test_frame_protocol.py --source generic-upstream
+          python3 bionic/source0181/test_donor_alu_semantics.py --source generic-upstream
+          python3 bionic/source0181/test_donor_wave64_lds.py --source generic-upstream
+          python3 bionic/source0181/test_donor_shader_inputs.py --source generic-upstream
+          python3 bionic/source0181/test_donor_early_depth.py --source generic-upstream
+          python3 bionic/source0181/test_readconst_addr64.py --source generic-upstream
+          python3 bionic/source0181/test_donor_draw_pipeline.py --source generic-upstream
+          python3 bionic/source0181/test_pending_gpu_callbacks.py --source generic-upstream
+          python3 bionic/source0181/test_sotc_readback_completion.py --source generic-upstream
+          python3 bionic/source0181/test_sotc_arena_lifecycle.py --source generic-upstream
           python3 bionic/source0181/test_sotc_async_readback.py --source generic-upstream
           python3 - <<'PY'
           import json
@@ -332,11 +356,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential clang lld llvm git cmake ninja-build python3-venv \
-            bison flex pkg-config curl unzip zip glslang-tools binutils ccache
+            bison flex pkg-config curl unzip zip glslang-tools binutils ccache spirv-tools
           # Public protoc 36.0 generates incompatible code for the pinned
           # shadexternals/protobuf fork; build the matching host compiler.
           bash -n bionic/build-core.sh
           bash -n bionic/generic/build-generic.sh
+
+      - name: Validate actual donor atomic and LDS SPIR-V with pinned Sirit
+        run: |
+          python3 bionic/source0181/test_donor_spirv_emission.py \
+            --source generic-upstream --sirit generic-upstream/externals/sirit \
+            --out out/spirv-validation
 
       - name: Restore cross-build and compiler caches (pinned NDK and sources)
         uses: actions/cache/restore@v4
@@ -481,6 +511,17 @@ jobs:
           name: Bachata-S4Plus-REAL-shadPS4-0181-FEX-Bionic-core
           path: out/bionic/stage/
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Preserve source reconciliation and emitted SPIR-V validation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bachata-functional-parity-validation
+          path: |
+            out/source0181/
+            out/spirv-validation/*.spv
+          if-no-files-found: warn
           retention-days: 14
 
       - name: Keep full-core CMake diagnostics on failure
