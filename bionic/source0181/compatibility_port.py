@@ -783,6 +783,8 @@ void GameController::PollState() {
     result["targetDonorSettings"] = apply_donor_settings(root, sotc=True)
     from port_target_cache_persistence import apply as apply_target_cache
     result["targetCachePersistence"] = apply_target_cache(root, order=False)
+    from port_donor_shader_contract import apply as apply_shader_contract
+    result["donorShaderContract"] = apply_shader_contract(root, order=False)
     from port_memory_transaction import apply as apply_memory_transaction
     result["memoryTransaction"] = apply_memory_transaction(root, order=False)
     from port_sotc_fast_render import apply as apply_fast_render
