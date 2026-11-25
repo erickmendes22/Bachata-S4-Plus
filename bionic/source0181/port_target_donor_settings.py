@@ -73,8 +73,8 @@ def apply(root, sotc=False):
         # Match actual guest argument list in reference logs, without
         # overriding explicit user arguments or other game's launch.
         edit("emulator.cpp","    std::filesystem::path mods_folder = game_folder;",
-             '''    if(id=="CUSA00785" && std::ranges::find(args,"-disablecloth")==args.end()) {
-        if(args.size()<32)args.emplace_back("-disablecloth");
+             '''    if(id=="CUSA00785") {
+        if(args.size()<32 && std::ranges::find(args,"-disablecloth")==args.end())args.emplace_back("-disablecloth");
         if(args.size()<31&&std::ranges::find(args,"-msaa")==args.end()) {
             args.emplace_back("-msaa");args.emplace_back("1");
         }
