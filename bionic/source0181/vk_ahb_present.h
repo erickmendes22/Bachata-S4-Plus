@@ -95,7 +95,8 @@ public:
         auto ctx=std::make_unique<Callback>(Callback{releases,last});
         ASurfaceTransaction_setBuffer(txn,control,slots[index].ahb,fd); // owns fd
         const ARect rect{0,0,static_cast<int32_t>(width),static_cast<int32_t>(height)};
-        ASurfaceTransaction_setGeometry(txn,control,&rect,&rect,0);
+        // NDK's C++ API takes const ARect& (not pointers).
+        ASurfaceTransaction_setGeometry(txn,control,rect,rect,0);
         ASurfaceTransaction_setBufferTransparency(txn,control,ASURFACE_TRANSACTION_TRANSPARENCY_OPAQUE);
         ASurfaceTransaction_setVisibility(txn,control,ASURFACE_TRANSACTION_VISIBILITY_SHOW);
         ASurfaceTransaction_setOnComplete(txn,ctx.release(),Complete);
