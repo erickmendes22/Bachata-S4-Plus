@@ -62,8 +62,8 @@ jobs:
           cp -a bachata-order bachata-sotc-baseline
           # Reconstruct exact failing cores and recovery baselines, not audit branch.
           for pair in \
-            order:dc63ec0609dab18d3ecf58a59dcd1aa8852a8b50 \
-            sotc:139668e20d544cde0c5189299e01c44232e5f58b \
+            order:9b9f866e846793d5197bb9e07d8c8e13327ee294 \
+            sotc:a34bde82d9014ee8105e428b7e38945063504472 \
             order-baseline:f75b1f569637b5a0677297405b6af14fde7d03e3 \
             sotc-baseline:4fb12a7c96be5f28989f994fcb2281f2ff9e30f1; do
             label="${pair%%:*}"
