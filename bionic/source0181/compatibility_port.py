@@ -797,6 +797,8 @@ void GameController::PollState() {
     result["targetCachePersistence"] = apply_target_cache(root, order=True)
     from port_order_live_pso import apply as apply_order_live_pso
     result["orderLivePso"] = apply_order_live_pso(root)
+    from port_donor_shader_contract import apply as apply_shader_contract
+    result["donorShaderContract"] = apply_shader_contract(root, order=True)
     from port_memory_transaction import apply as apply_memory_transaction
     result["memoryTransaction"] = apply_memory_transaction(root, order=True)
     result["portedInterfaces"].append(
