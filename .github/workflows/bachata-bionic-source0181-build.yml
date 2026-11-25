@@ -87,6 +87,7 @@ jobs:
           python3 bionic/source0181/test_memory_transaction.py --source generic-upstream
           python3 bionic/source0181/test_donor_barrier_tree.py --source generic-upstream
           python3 bionic/source0181/test_present_boot_ownership.py --source generic-upstream
+          python3 bionic/source0181/test_wsi_fex_guard.py --source generic-upstream
           grep -Fq 'BACHATA_ABSENT_REDUCTION_LANE' generic-upstream/src/shader_recompiler/ir/passes/lower_wave64_pass.cpp
           # Fail the cheap preflight if the host protobuf generator can again
           # become a cached /usr/bin/protoc after restoring CMakeCache.txt.
@@ -304,6 +305,7 @@ jobs:
           python3 bionic/source0181/test_memory_transaction.py --source generic-upstream
           python3 bionic/source0181/test_donor_barrier_tree.py --source generic-upstream
           python3 bionic/source0181/test_present_boot_ownership.py --source generic-upstream
+          python3 bionic/source0181/test_wsi_fex_guard.py --source generic-upstream
           python3 - <<'PY'
           import json
           data = json.load(open("out/source0181/bionic-0181-parity.json"))
