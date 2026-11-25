@@ -70,47 +70,4 @@ int PS4_SYSV_ABI fex_pthread_create(PthreadT* thread, const PthreadAttrT* attr,
                 return HleCallFailure{EFAULT, Name()};
             }''')
 
-    pc="src/video_core/renderer_vulkan/vk_pipeline_cache.cpp"
-    edit(root,pc,"#include <ranges>","#include <ranges>\n#include <cstring>")
-    edit(root,pc,"    const auto start_binding = binding;",
-         """    const auto start_binding = binding;
-    // BACHATA_SRT_LOOKUP_REUSE: candidate layouts can be different;
-    // do not use the first program's resource metadata for every variant.
-    // Only the just-refreshed flattened values of an identical SRT program
-    // are reusable within this single GetProgram invocation.
-    const Shader::Info* previous_srt=nullptr;
-    // 5c28eed regressed The Order: revert this newly introduced candidate
-    // snapshot reuse for that title. Keep the proven per-permutation refresh.
-    const bool reuse_srt=!BachataCompat::Sotc608() && !BachataCompat::Order1886() &&
-                         params.user_data.size()==16;""")
-    edit(root,pc,'''        effective.RefreshFlatBuf();
-        if (srt_sync) srt_sync(effective);''',
-         '''        const auto& code=effective.srt_info;
-        bool same=false;
-        if (reuse_srt && previous_srt && effective.sharp_tables.empty() &&
-            previous_srt->sharp_tables.empty()) {
-            const auto& previous=previous_srt->srt_info;
-            same=code.flattened_bufsize_dw==previous.flattened_bufsize_dw &&
-                code.walker_func_size==previous.walker_func_size &&
-                ((code.walker_func==previous.walker_func) ||
-                 (code.walker_func && previous.walker_func && code.walker_func_size &&
-                  std::memcmp(code.walker_func,previous.walker_func,code.walker_func_size)==0));
-        }
-        if (same) {
-            effective.flattened_ud_buf=previous_srt->flattened_ud_buf;
-            effective.srt_guest_sources=previous_srt->srt_guest_sources;
-        } else {
-            effective.RefreshFlatBuf();
-            if (srt_sync) srt_sync(effective);
-        }
-        previous_srt=&effective;''')
-    # CompileModule previously created/stat'ed a patch directory for
-    # every permutation even with shader patching switched off.
-    edit(root,pc,'    auto patch = GetShaderPatch(info.pgm_hash, info.hw_stage, perm_idx, "spv");',
-         """    std::optional<std::vector<u32>> patch;
-    if (BachataCompat::Sotc608() || BachataCompat::Order1886() || EmulatorSettings.IsPatchShaders() ||
-        EmulatorSettings.IsShaderCollect())
-        patch=GetShaderPatch(info.pgm_hash,info.hw_stage,perm_idx,"spv");""")
-    return {"pthread":"opaque 64-bit start argument, preserve native create and Orbis error",
-            "srt":"single lookup reuse of byte-identical layouts, preserve candidate-specific descriptors",
-            "fios":"CUSA05170 selects existing guest FIOS2 before archive HLE"}    return {"pthread":"opaque start argument and failure-only ABI evidence"}
+    return {"pthread":"opaque start argument and failure-only ABI evidence"}

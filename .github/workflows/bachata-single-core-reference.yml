@@ -16,6 +16,7 @@ jobs:
       - name: Generate reference and candidate independently
         run: |
           set -euo pipefail
+          python3 -m py_compile bionic/source0181/*.py bionic/apk/*.py
           git worktree add --detach /tmp/bachata-ref 608a1ac652ce47e9081cf7b886cd0a382ef7fca4
           git clone --quiet --filter=blob:none --no-checkout https://github.com/zenithblue-oss/shadps4-arm64.git /tmp/native-ref
           git -C /tmp/native-ref checkout --quiet be6bc2e9c60799e071dd2fafa6216e8d80ec619c
