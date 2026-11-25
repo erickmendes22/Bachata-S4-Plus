@@ -1,7 +1,7 @@
 """Import the exact signed revised SotC core without rewriting it."""
 import hashlib,json,re,subprocess,sys,zipfile
 from pathlib import Path
-REV="1401b3733b8facb592b5a49f14047369815e2a3e"
+REV="81aa7c1ae4c9dcb16123306bf1733921d3984b4a"
 APK=Path(sys.argv[1])
 LIB=Path(sys.argv[2])
 PREFIX="lib/arm64-v8a/"
