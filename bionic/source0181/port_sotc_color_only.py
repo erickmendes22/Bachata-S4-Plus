@@ -84,6 +84,65 @@ void LowerWave64BallotPass(IR::Program& program, const RuntimeInfo& runtime_info
     assert s.index('presenter->Present(req.frame);') < s.index(hook)
     p.write_text(s)
 
+    # Current PC donor aaf95c06deec0: near-4GiB read-only descriptors
+    # are unbounded, not necessarily corrupt; don't repeatedly log them
+    # at ERROR/WARNING or allocate their full VMA remainder.
+    p=root/'src/video_core/renderer_vulkan/vk_rasterizer.cpp'
+    s=p.read_text()
+    s=one(s,'            const u64 bounded = std::min(mapped, limit);',
+        '''            u64 bounded = std::min(mapped, limit);
+            // Exact SotC donor read-only window policy. Never truncate
+            // writes or GPU ReadConst snapshots; preserve explicit mapping
+            // and Vulkan device limits.
+            if (shadow && !readconst && !desc.is_written &&
+                (vsharp.GetSize() >= 0xFFFF0000ULL || bounded > (256ULL << 20))) {
+                constexpr u64 donor_window = 64ULL << 20;
+                bounded = std::min(bounded, donor_window);
+            }''','SotC donor read-only unbounded buffer window')
+    s=one(s,'''                    LOG_ERROR(Render, "Clamped size from {} to {} for stage {:#x}",
+                              vsharp.GetSize(), size, stage.pgm_hash);''',
+        '''                    LOG_DEBUG(Render, "Clamped size from {} to {} for stage {:#x}",
+                              vsharp.GetSize(), size, stage.pgm_hash);''',
+        'donor routine clamp log severity')
+    # The old loop discarded the entire page on the first CPU-only DWORD
+    # before checking the remaining GPU-authored DWORDs. Check exact source
+    # provenance before deduplication, preserving the original download.
+    s=one(s,'''            if(!visited.insert(page).second)continue;
+            if(!buffer_cache.IsRegionGpuModified(page,PageSize))continue;''',
+        '''            if(visited.contains(page))continue;
+            if(!buffer_cache.IsRegionGpuModified(page,PageSize))continue;''',
+        'SRT dedup after valid source')
+    s=one(s,'''            if(!buffer_cache.IsRangeGpuWritten(source,sizeof(u32)))continue;
+            buffer_cache.TrackSrtSourcePage(page);''',
+        '''            if(!buffer_cache.IsRangeGpuWritten(source,sizeof(u32)))continue;
+            visited.insert(page);
+            buffer_cache.TrackSrtSourcePage(page);''',
+        'record actual GPU-written source')
+    s=one(s,'''        LOG_INFO(Render_Vulkan,
+                 "BACHATA_RELEASE026_SRT_GPU_PAGES_REFRESHED pass={} pages={}",
+                 pass,visited.size());''',
+        '''        LOG_DEBUG(Render_Vulkan,
+                 "BACHATA_RELEASE026_SRT_GPU_PAGES_REFRESHED pass={} pages={}",
+                 pass,visited.size());''','avoid repeated SRT logging')
+    p.write_text(s)
+    p=root/'src/core/memory.cpp'
+    s=p.read_text()
+    s=one(s,'''        LOG_WARNING(Kernel_Vmm,
+                    "BACHATA_RELEASE026_GPU_RANGE_CLAMP addr={:#x} request={:#x} valid={:#x}",''',
+        '''        LOG_DEBUG(Kernel_Vmm,
+                    "BACHATA_RELEASE026_GPU_RANGE_CLAMP addr={:#x} request={:#x} valid={:#x}",''',
+        'routine range clamp debug logging')
+    p.write_text(s)
+    p=root/'src/video_core/amdgpu/liverpool.cpp'
+    s=p.read_text()
+    s=one(s,'                LOG_WARNING(Render, "Unimplemented IT_SET_PREDICATION");',
+        '''                static bool reported = false;
+                if (!reported) {
+                    reported = true;
+                    LOG_WARNING(Render, "Unimplemented IT_SET_PREDICATION (reported once)");
+                }''','current donor warning-once behavior')
+    p.write_text(s)
+
     # Preserve all unrelated binary/meta versions from 608a1ac, including
     # the working non-fragment pipelines in 66F3F9ED. Only affected shaders
     # receives a new per-shader generation; no global cache invalidation.
@@ -102,4 +161,4 @@ void LowerWave64BallotPass(IR::Program& program, const RuntimeInfo& runtime_info
     s=one(s,'            bool result{};\n            if (is_compute) {',
         '            infos.fill(nullptr);\n            modules.fill(nullptr);\n            runtime_infos.fill({});\n            fetch_shader=nullptr;\n            bool result{};\n            if (is_compute) {','reset partially loaded stages')
     p.write_text(s)
-    return {"color":"donor 5712cee31461, target reduction", "textures":"current Android fragment TSharp arrays; vertex excluded; feature gated", "fps":"one native guest-flip event; no duplicate", "cache":"invalidate affected fragment modules; preserve other stages"}
+    return {"color":"donor 5712cee31461, target reduction", "textures":"current Android fragment TSharp arrays; vertex excluded; feature gated", "fps":"one native guest-flip event; no duplicate", "cache":"invalidate affected fragment modules; preserve other stages", "buffers":"donor read-only unbounded window, mapped/storage bounds, debug log", "srt":"exact source before page dedup; no dropped GPU writes"}
