@@ -58,8 +58,8 @@ jobs:
           git -C bachata-order remote add shadps4 https://github.com/shadps4-emu/shadPS4.git
           git -C bachata-order fetch --quiet --filter=blob:none shadps4 3912336fdfffbd5c99b59d92e997ea6ebd62216c
           cp -a bachata-order bachata-sotc
-          git fetch --no-tags origin cec354c657a5c81831e6a1951e9eae827790b023
-          git worktree add --detach sotc-bachata-overlay cec354c657a5c81831e6a1951e9eae827790b023
+          git fetch --no-tags origin 3723738a75d88521c71797e43b95ac01cc116907
+          git worktree add --detach sotc-bachata-overlay 3723738a75d88521c71797e43b95ac01cc116907
           python3 bionic/source0181/rebase_arm64.py --source bachata-order --output out/order-rebase
           python3 bionic/source0181/port_0181.py --source bachata-order --report out/order-parity.json
           python3 sotc-bachata-overlay/bionic/source0181/rebase_arm64.py --source bachata-sotc --output out/sotc-rebase
