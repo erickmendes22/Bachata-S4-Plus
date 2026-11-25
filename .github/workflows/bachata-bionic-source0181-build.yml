@@ -3,7 +3,7 @@ on:
   # The user requested an actual Android APK to test the fixed launch.
   # New commits supersede earlier builds; only the latest complete core runs.
   push:
-    branches: [feature/bionic-shadps4-0181-source-port-20261121]
+    branches: [work/bionic-fps-baseline-20261125]
     paths:
       - '.github/workflows/bachata-bionic-generic-source.yml'
       - 'bionic/generic/**'

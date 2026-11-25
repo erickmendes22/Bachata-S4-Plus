@@ -234,10 +234,15 @@ def apply(root: Path) -> dict:
         '        // before early FIOS2 HLE was added. ArchiveMountSync only aliases\n'
         '        // /app0; it does not provide the contents of any PSARC archive.\n'
         '        const bool shadow_guest_archive =\n'
-        '            game_specific_modules_path.filename() == "CUSA08809";\n'
+        '            game_specific_modules_path.filename() == "CUSA08809" ||\n'
+        '            game_specific_modules_path.filename() == "CUSA05170";\n'
         '        const bool fios_lle_staged =\n'
         '            std::filesystem::exists(game_specific_modules_path / "libSceFios2.sprx") &&\n'
         '            !std::filesystem::exists(game_specific_modules_path / "libSceFios2.use-hle");\n'
+        '        // CUSA05170 loaded libSceFios2.prx successfully but early HLE\n'
+        '        // hijacked ArchiveMountSync, leaving PhyreFIOS2 empty.\n'
+        '        if (shadow_guest_archive)\n'
+        '            LOG_INFO(Lib_Kernel, "BACHATA_GUEST_FIOS2_ARCHIVE_PREFERRED");\n'
         '        if (!fios_lle_staged && !shadow_guest_archive) {\n'
         '            Libraries::Fios2::RegisterLib(sym);\n'
         '            LOG_INFO(Lib_Kernel, "BACHATA_FIOS2_EARLY_HLE_READY");\n'
@@ -764,6 +769,8 @@ void GameController::PollState() {
     result["bionicHotpaths"] = apply_bionic_hotpaths(root)
     from port_bionic_present_cache import apply as apply_present_cache
     result["bionicPresentCache"] = apply_present_cache(root)
+    from port_order_recovery import apply as apply_order_recovery
+    result["orderRecovery"] = apply_order_recovery(root)
     result["portedInterfaces"].append(
         "Release ReadConst GPU buffer isolation: IR provenance, host-visible "
         "CPU snapshot, scheduler-held lifetime; GPU-authored data stays in GPU cache")
