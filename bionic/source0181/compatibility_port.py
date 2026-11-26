@@ -940,4 +940,7 @@ void GameController::PollState() {
     from port_shared_io_dependencies import apply as apply_shared_io_dependencies
     result["sharedIoDependencies"] = apply_shared_io_dependencies(root)
 
+    from port_dmem_exact_ranges import apply as apply_dmem_exact_ranges
+    result["dmemExactRanges"] = apply_dmem_exact_ranges(root)
+
     return result

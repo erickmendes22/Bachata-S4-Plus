@@ -87,6 +87,7 @@ jobs:
           ! grep -Fq -- '-- -k 0' bionic/generic/build-generic.sh
           python3 bionic/source0181/assert_native_api.py --source generic-upstream
           python3 bionic/source0181/test_memory_transaction.py --source generic-upstream
+          python3 bionic/source0181/test_dmem_exact_ranges.py --source generic-upstream
           python3 bionic/source0181/test_donor_barrier_tree.py --source generic-upstream
           python3 bionic/source0181/test_present_boot_ownership.py --source generic-upstream
           python3 bionic/source0181/test_wsi_fex_guard.py --source generic-upstream
@@ -317,6 +318,7 @@ jobs:
           set -euo pipefail
           python3 bionic/source0181/assert_native_api.py --source generic-upstream
           python3 bionic/source0181/test_memory_transaction.py --source generic-upstream
+          python3 bionic/source0181/test_dmem_exact_ranges.py --source generic-upstream
           python3 bionic/source0181/test_donor_barrier_tree.py --source generic-upstream
           python3 bionic/source0181/test_present_boot_ownership.py --source generic-upstream
           python3 bionic/source0181/test_wsi_fex_guard.py --source generic-upstream
