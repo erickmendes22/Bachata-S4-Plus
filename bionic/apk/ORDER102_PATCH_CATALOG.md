@@ -155,15 +155,22 @@ jar cf out/apk/order-catalog-helper.jar -C out/apk/order-catalog-classes .
 ```
 
 O assembler deve substituir `classes4.dex` e `classes8.dex` pelos arquivos acima
-e incluir `out/apk/order-catalog-dex/classes.dex` como `classes14.dex`, falhando
-se a base já contiver esse destino. Incluir todas as classes internas do helper
-no JAR. O helper usa somente Java/XML/NIO, sem depender de `android.jar`.
+e incluir `out/apk/order-catalog-dex/classes.dex` como `classes16.dex`. A base
+exata fixada pelo SHA-256 `35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8`
+já contém `classes.dex` até `classes15.dex`. O assembler exige esse inventário
+contíguo, sem duplicatas, e rejeita colisão com o destino do helper. Todos os
+DEX originais fora de `classes4.dex` e `classes8.dex`, incluindo `classes14.dex`
+e `classes15.dex`, são preservados byte a byte. Os metadados registram
+`frontendIntegration.catalogueHelperDex = "classes16.dex"` e os hashes dos
+três DEX integrados. Incluir todas as classes internas do helper no JAR.
+O helper usa somente Java/XML/NIO, sem depender de `android.jar`.
 
 ## Verificação
 
 ```bash
 python3 -B bionic/apk/test_order102_patch_catalog.py
 python3 -B bionic/apk/test_order_patch_catalog_migration.py
+python3 -B bionic/apk/test_frontend_dex_layout.py
 ```
 
 O primeiro teste executa os aplicadores reais fixados do doador em imagens de
@@ -177,6 +184,12 @@ bytes novos preservados, idempotência e dois processos concorrentes. Executa
 também o fluxo de registradores do método do seletor com o contrato do instalador
 simulado: `install → prepare → return`, sem migração nem retorno antigo quando
 a instalação falha. O fluxo do launcher conserva as demais instruções.
+
+O terceiro executa o guard e o writer ZIP reais: conserva os DEX originais
+fora de 4/8, anexa o helper em 16 e rejeita layouts com lacunas, entradas extras,
+duplicatas ou colisão. Também integra `test_runtime_identity.py`, já executado
+no workflow. `--reference-apk` permite repetir a prova com os bytes dos 15 DEX
+da baseline entregue, cuja metadata identifica a mesma base fixada.
 
 Ambos passaram localmente. O helper real também foi compilado por D8 com API 31,
 correspondente ao mínimo do frontend, sem erros nem warnings. O DEX emitido é

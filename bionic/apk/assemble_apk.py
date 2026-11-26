@@ -24,6 +24,8 @@ from order102_patch_catalog import CATALOG_VERSION, catalogue_identity, runtime_
 
 EXPECTED_BASE_SHA256 = "35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8"
 BASE_RELEASE = "0.2.7"
+HELPER_DEX = "classes16.dex"
+BASE_DEX_NAMES = frozenset({"classes.dex", *(f"classes{n}.dex" for n in range(2, 16))})
 NATIVE_DIR = "lib/arm64-v8a/"
 NATIVE_MANIFEST = "assets/runtime/native-runtime.json"
 SOTC_CORE = "libbachata_sotc_core.so"
@@ -42,6 +44,28 @@ def sha256(data: bytes) -> str:
 
 def die(message: str) -> None:
     raise SystemExit(f"BIONIC APK ASSEMBLY FAILED: {message}")
+
+
+def validate_base_dex_layout(original: zipfile.ZipFile) -> None:
+    names = original.namelist()
+    if HELPER_DEX in names:
+        die(f"Unexpected base DEX layout; helper would overwrite {HELPER_DEX}")
+    dex_names = [name for name in names if re.fullmatch(r"classes[0-9]*\.dex", name)]
+    if set(dex_names) != BASE_DEX_NAMES or len(dex_names) != len(BASE_DEX_NAMES):
+        die("Unexpected base DEX layout; pinned 0.2.7 requires exactly classes.dex through classes15.dex")
+
+
+def write_apk_entries(original: zipfile.ZipFile, output: zipfile.ZipFile,
+                      changed: dict[str, bytes]) -> None:
+    for info in original.infolist():
+        if info.filename in changed:
+            data = changed.pop(info.filename)
+        else:
+            data = original.read(info.filename)
+        output.writestr(copy.copy(info), data)
+    for name, data in sorted(changed.items()):
+        output.writestr(name, data, compress_type=zipfile.ZIP_DEFLATED,
+                        compresslevel=6)
 
 
 def main() -> None:
@@ -94,6 +118,7 @@ def main() -> None:
     # not update runtimeVersion, so every new APK reused the old 9ceb...
     # extracted root and old GUEST_RUNTIME_BUILD name.
     with zipfile.ZipFile(args.base) as original:
+        validate_base_dex_layout(original)
         catalogue_updates = runtime_updates(original)
     runtime_version = runtime_identity(core_sha, catalogue_updates)
     parity_marker = "BACHATA_CORE_PARITY=20261123-SRT4-GPUPAGE1-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1-RELEASEFIOS2-SAFDIRECT2-GPUCLAMP1-BUDGET1-RCSNAP1-IFILE1-FIOSERR1"
@@ -120,7 +145,7 @@ def main() -> None:
     patched_dex_files = {
         "classes4.dex": args.patched_classes4,
         "classes8.dex": args.patched_classes8,
-        "classes14.dex": args.catalogue_helper_dex,
+        HELPER_DEX: args.catalogue_helper_dex,
     }
     helper_descriptor = b"Lcom/bachatas4/android/patches/OrderPatchCatalog;"
     for dex_name, dex_file in patched_dex_files.items():
@@ -137,8 +162,6 @@ def main() -> None:
         names = set(original.namelist())
         if not (CRITICAL_PRESERVED | {RUNTIME_ZIP, RUNTIME_MANIFEST}).issubset(names) or NATIVE_MANIFEST not in names:
             die("APK 0.2.7 missing the expected Android frontend files")
-        if not {"classes4.dex", "classes8.dex"}.issubset(names) or "classes14.dex" in names:
-            die("Unexpected base DEX layout; helper would overwrite existing classes")
         compact_zip, compact_manifest = compact_runtime(
             original, runtime_version=runtime_version,
             core_revision=core_source_revision, core_sha256=core_sha,
@@ -186,6 +209,7 @@ def main() -> None:
                 },
                 "frontendIntegration": {
                     "catalogueHelperMinApi": 31,
+                    "catalogueHelperDex": HELPER_DEX,
                     "dexSha256": {name: sha256(path.read_bytes())
                                   for name, path in patched_dex_files.items()},
                 },
@@ -196,15 +220,7 @@ def main() -> None:
         ).encode("utf-8")
         args.output.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(args.output, "w", allowZip64=True) as output:
-            for info in original.infolist():
-                if info.filename in changed:
-                    data = changed.pop(info.filename)
-                else:
-                    data = original.read(info.filename)
-                output.writestr(copy.copy(info), data)
-            for name, data in sorted(changed.items()):
-                output.writestr(name, data, compress_type=zipfile.ZIP_DEFLATED,
-                                compresslevel=6)
+            write_apk_entries(original, output, changed)
 
     # Re-open generated archive: detect corruption and verify complete
     # replacement without silently building a partial or stale APK.

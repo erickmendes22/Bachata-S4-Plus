@@ -138,3 +138,5 @@ def test() -> None:
 
 if __name__ == "__main__":
     test()
+    from test_frontend_dex_layout import test as test_frontend_dex_layout
+    test_frontend_dex_layout()
