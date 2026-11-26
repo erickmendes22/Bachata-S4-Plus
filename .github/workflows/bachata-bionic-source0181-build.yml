@@ -229,28 +229,27 @@ jobs:
 
       - name: Resolve core reuse request and verify native source unchanged
         id: core
-        env:
-          MANUAL_CORE_RUN: ${{ inputs.core_run_id }}
-          APK_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[apk-only]') }}
         run: |
           set -euo pipefail
-          if [[ "$APK_ONLY" == "true" ]]; then
-            read -r run rev < <(python3 -c 'import json; d=json.load(open("bionic/apk/reuse_core.json")); print(d["run"],d["revision"])')
-            [[ "$run" =~ ^[0-9]+$ && "$rev" =~ ^[0-9a-f]{40}$ ]]
-            git merge-base --is-ancestor "$rev" HEAD
-            git diff --exit-code "$rev" HEAD -- bionic/source0181 bionic/generic bionic/build-core.sh
-            echo "run=$run" >> "$GITHUB_OUTPUT"
-            echo "revision=$rev" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=${MANUAL_CORE_RUN:-$GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
-          fi
+          python3 bionic/apk/test_core_pins.py
+          read -r run rev sotc_run sotc_rev < <(python3 bionic/apk/core_pins.py)
+          git merge-base --is-ancestor "$rev" HEAD
+          git diff --exit-code "$rev" HEAD -- bionic/source0181 bionic/generic bionic/build-core.sh
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "revision=$rev" >> "$GITHUB_OUTPUT"
+          echo "sotc_run=$sotc_run" >> "$GITHUB_OUTPUT"
+          echo "sotc_revision=$sotc_rev" >> "$GITHUB_OUTPUT"
 
       - name: Wait for completed native validation of both exact FEX revisions
         env:
           GH_TOKEN: ${{ github.token }}
+          MAIN_RUN: ${{ steps.core.outputs.run }}
+          MAIN_REVISION: ${{ steps.core.outputs.revision }}
+          SOTC_RUN: ${{ steps.core.outputs.sotc_run }}
+          SOTC_REVISION: ${{ steps.core.outputs.sotc_revision }}
         run: |
           set -euo pipefail
-          for pair in "45891720104 74726eb861b8da5055cfd810512b573c265b64cd" "45897025445 8c1c43e6e9b690c10f9ce17b25c96855a5b3ea5b"; do
+          for pair in "$MAIN_RUN $MAIN_REVISION" "$SOTC_RUN $SOTC_REVISION"; do
             read -r run revision <<< "$pair"
             for attempt in $(seq 1 360); do
               state="$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$run)"
@@ -283,7 +282,7 @@ jobs:
         with:
           name: Bachata-S4Plus-REAL-shadPS4-0181-FEX-Bionic-core
           path: out/sotc-stage
-          run-id: 45897025445
+          run-id: ${{ steps.core.outputs.sotc_run }}
           github-token: ${{ github.token }}
 
       - name: Android build tools and ELF patching
@@ -391,9 +390,11 @@ jobs:
           echo "BIONIC_NATIVE_DEBUG_STRIPPED; GLIBC_025_COMPACTED_DURING_ASSEMBLY"
 
       - name: Normalize, strip and import the second validated Bachata FEX core
+        env:
+          EXPECTED_SOTC_REVISION: ${{ steps.core.outputs.sotc_revision }}
         run: |
           set -euo pipefail
-          test "$(cat out/sotc-stage/BIONIC_SOURCE_REVISION.txt)" = "8c1c43e6e9b690c10f9ce17b25c96855a5b3ea5b"
+          test "$(cat out/sotc-stage/BIONIC_SOURCE_REVISION.txt)" = "$EXPECTED_SOTC_REVISION"
           bash bionic/apk/normalize_elf.sh out/sotc-stage/lib/arm64-v8a
           NDK="$ANDROID_HOME/ndk/30.0.14904198"
           python3 bionic/apk/prepare_slim_native.py out/sotc-stage \

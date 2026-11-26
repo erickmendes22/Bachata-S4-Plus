@@ -1,7 +1,8 @@
 """Combine independently compiled Bachata FEX cores, verifying exact revision and ABI."""
 import hashlib,re,subprocess,sys
 from pathlib import Path
-REV="8c1c43e6e9b690c10f9ce17b25c96855a5b3ea5b"
+from core_pins import read_pins, require_revision
+REV = read_pins()["sotc_revision"]
 stage=Path(sys.argv[1])
 lib=Path(sys.argv[2])
 assert (stage/"BIONIC_SOURCE_REVISION.txt").read_text().strip()==REV
@@ -11,7 +12,7 @@ new="libbachata_sotc_core.so"
 def sha(b):return hashlib.sha256(b).hexdigest()
 def needed(p):return set(re.findall(r"Shared library: \[(.*?)\]",subprocess.check_output(["readelf","-d",str(p)],text=True)))
 raw=(src/old).read_bytes()
-assert ("BACHATA_CORE_REVISION="+REV).encode() in raw
+require_revision(raw, REV, "Imported SotC core")
 assert needed(src/old)==needed(lib/old),"Core DT_NEEDED mismatch"
 for dep in needed(src/old):
     if not (src/dep).is_file():continue

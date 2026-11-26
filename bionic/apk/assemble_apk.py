@@ -21,6 +21,7 @@ from compact_runtime import (
     compact_runtime, runtime_identity, GLIBC_DROP, GLIBC_KEEP, RUNTIME_ZIP, RUNTIME_MANIFEST,
 )
 from order102_patch_catalog import CATALOG_VERSION, catalogue_identity, runtime_updates
+from core_pins import read_pins, require_revision
 
 EXPECTED_BASE_SHA256 = "35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8"
 BASE_RELEASE = "0.2.7"
@@ -29,7 +30,7 @@ BASE_DEX_NAMES = frozenset({"classes.dex", *(f"classes{n}.dex" for n in range(2,
 NATIVE_DIR = "lib/arm64-v8a/"
 NATIVE_MANIFEST = "assets/runtime/native-runtime.json"
 SOTC_CORE = "libbachata_sotc_core.so"
-SOTC_REV = "4b96fe4efb3483a81ab77f824559227774b0b6d5"
+
 REQUIRED_LIBRARIES = {"libbachata_native_runtime.so", "libbachata_bionic_core.so"}
 CRITICAL_PRESERVED = {
     "AndroidManifest.xml",
@@ -81,6 +82,10 @@ def main() -> None:
     parser.add_argument("--catalogue-helper-dex", type=Path, required=True,
                         help="Selection migration helper, including all inner classes")
     args = parser.parse_args()
+    pins = read_pins()
+    sotc_revision = pins["sotc_revision"]
+    if args.revision != pins["revision"]:
+        die(f"Requested main core is not the validated revision: {args.revision}")
 
     base_bytes_sha256 = hashlib.file_digest(args.base.open("rb"), "sha256").hexdigest()
     if base_bytes_sha256 != EXPECTED_BASE_SHA256:
@@ -133,11 +138,17 @@ def main() -> None:
     # The explicitly selected SotC core is the revised dedicated Bionic
     # binary, not a generic legacy fallback. Its actual SHA is part of the APK provenance.
     sotc = staged.get(SOTC_CORE)
-    if not sotc or f"BACHATA_CORE_REVISION={SOTC_REV}".encode() not in sotc.read_bytes():
-        die("Missing corrected SotC core")
-    sotc_sha=sha256(sotc.read_bytes())
-    if b"BACHATA_PATCH_GROUP_APPLIED" not in sotc.read_bytes():
+    if sotc is None:
+        die(f"Missing dedicated SotC core file: {SOTC_CORE}")
+    sotc_raw = sotc.read_bytes()
+    try:
+        require_revision(sotc_raw, sotc_revision, "Dedicated SotC core")
+    except ValueError as error:
+        die(str(error))
+    sotc_sha = sha256(sotc_raw)
+    if b"BACHATA_PATCH_GROUP_APPLIED" not in sotc_raw:
         die("SotC core lacks the shared guarded patch group contract")
+    del sotc_raw
 
     # Preserve the 0.2.7 frontend; replace the two reviewed integration DEX,
     # add the isolated selection helper, and install the verified catalogue.
@@ -200,7 +211,7 @@ def main() -> None:
                 "nativeCoreRevisionMarker": revision_marker,
                 "nativeCoreSourceRevision": core_source_revision,
                 "legacyFallback": False,
-                "titleCoreOverrides":{"CUSA08809":SOTC_REV,"CUSA08034":SOTC_REV},
+                "titleCoreOverrides":{"CUSA08809":sotc_revision,"CUSA08034":sotc_revision},
                 "sotcCoreSha256":sotc_sha,
                 "bundledPatchCatalog": {
                     "version": CATALOG_VERSION,
@@ -262,8 +273,17 @@ def main() -> None:
                 build_identity.get("nativeCoreSha256") != core_sha or
                 build_identity.get("nativeCoreRevisionMarker") != revision_marker):
             die("APK build provenance and runtime installation identity disagree")
-        if build_identity.get("sotcCoreSha256") != sha256(result.read(NATIVE_DIR+SOTC_CORE)):
+        packaged_sotc = result.read(NATIVE_DIR + SOTC_CORE)
+        if build_identity.get("sotcCoreSha256") != sha256(packaged_sotc):
             die("SotC pinned binary integrity mismatch")
+        if build_identity.get("titleCoreOverrides") != {
+                "CUSA08809": sotc_revision, "CUSA08034": sotc_revision}:
+            die("SotC revision provenance mismatch")
+        try:
+            require_revision(packaged_sotc, sotc_revision, "Packaged SotC core")
+        except ValueError as error:
+            die(str(error))
+        del packaged_sotc
         all_runtime_paths = {x.get("path") for x in new_runtime_manifest.get("files", [])}
         if GLIBC_KEEP not in all_runtime_paths or GLIBC_DROP & all_runtime_paths:
             die("Wrong glibc variants still referenced by manifest")
