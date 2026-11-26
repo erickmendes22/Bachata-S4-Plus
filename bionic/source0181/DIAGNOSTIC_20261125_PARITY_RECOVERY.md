@@ -182,6 +182,84 @@ passa a pertencer ao callback, evitando que uma execução aninhada invalide a
 iteração externa. O teste executa o `Finish` e os callbacks reais, incluindo
 liberação anterior ao retry e batches de faults intercalados.
 
+## Nova captura SotC de 26/11/2026: `5F5C7839`
+
+Esta captura executa CUSA08809 v01.00 com o core dedicado
+`36f6301f91b2c8fd49084ebae97bd5c8254992f1`, confirmado pelo marcador do core
+carregado em `shadps4.log:9`. O processo começa às 00:31:55.204 UTC; o primeiro
+frame é apresentado às 00:32:13.953 UTC, aproximadamente 18,75 segundos depois
+(`application.log:20,29,30`; timestamps precisos também em `session.json`).
+Portanto, esta execução alcançou apresentação e produziu eventos para o medidor.
+As quatro janelas seguintes registram 48,73, 35,58, 31,00 e 32,54 FPS
+(`application.log:32–35`). A amostra inicial de FPS zero tem janela de duração
+zero e não é uma medida comparável de desempenho.
+
+O usuário relata congelamento. O último evento de desempenho é das
+00:32:22.016 UTC; a interface continua enviando inputs até 00:32:24.735 UTC,
+e o usuário encerra a sessão às 00:32:26.293 UTC. `process-exit.json` registra
+`CANCELLED_BY_USER`, saída zero e nenhum sinal. Esse encerramento não deve ser
+classificado como crash, nem usado para negar o congelamento anterior.
+
+Os caminhos novos estavam ativos: `shadps4.log:1854` registra DrawPipe habilitado
+por padrão do SotC, oito CPUs, FEX, tracking por sinais e recorder habilitado.
+O TSC registra cristal de 19,2 MHz, multiplicador 64 e frequência convidada de
+1.228,8 MHz (`shadps4.log:1132`). O trecho retido não contém host fault FEX ou
+perda de device Vulkan. Há truncamento intermediário em `shadps4.log:7189`,
+portanto a ausência desses marcadores não prova que nenhum evento ocorreu em
+toda a sessão.
+
+O último trabalho visível do GpuDraw é uma operação de residência
+(`shadps4.log:14485`). As últimas entradas da thread de comandos são os shaders
+FS `0x465f664a` e VS `0x5dab0dab` em `CompileModule`
+(`shadps4.log:14487–14488`). Depois disso, Game:Main e workers de carregamento
+ainda registram atividade. A versão testada só registra a entrada da compilação;
+não permite decidir se a pausa ocorreu na tradução, em um readback de SRT, na
+criação do shader/pipeline ou em uma espera de GPU. A última entrada de shader
+não é, por si só, prova de defeito nesse shader.
+
+### Correção reproduzida de reentrância no unmap
+
+A investigação encontrou um defeito independente e reproduzível em
+`BufferCache::ReleaseUnmappedArena`: depois de coletar os backing ranges, um
+`Flush()` podia executar callbacks que vinculavam um novo intervalo. A função
+então removia todo o intervalo da tabela de residência, mas liberava apenas os
+backings presentes na lista antiga. A reprodução com os métodos C++ reais
+terminou com tabela vazia e 131.072 bytes ainda alocados. Outro controle
+negativo demonstrou unbind antes da conclusão do lote recém-vinculado.
+
+O unmap agora repete `Finish()` enquanto os callbacks publicarem novos binds,
+coleta os backings somente após a conclusão desses lotes e não faz outro flush
+reentrante entre essa coleta e o unbind. O teste acrescenta quatro combinações:
+alocador SotC ou legado, com ou sem intervalos vizinhos que devem sobreviver.
+Ele verifica conclusão dos binds antes do unbind, preservação dos vizinhos,
+ausência de blocos órfãos e separação dos lotes sparse. A fonte anterior falha;
+a correção passa junto com os casos existentes de OOM, migração de arena,
+readback retido e callback durante flush. Isso comprova o defeito e a correção
+do contrato exercitado; não comprova que ele causou o congelamento desta captura.
+
+### Captura necessária para localizar uma próxima pausa
+
+`BACHATA_GPU_PROGRESS` passa a registrar início e retorno de tradução, callback
+SRT, emissão SPIR-V, criação de shader module e criação de PSO gráfico/compute.
+Esses registros ocorrem nos misses de compilação, com hashes, variante, duração
+e ticks publicados. O caminho de cache do Order e o worker de compute do SotC
+mantêm suas respectivas implementações.
+
+Uma espera CP/Draw que exceda dois segundos gera uma única amostra
+`BACHATA_GPU_WAIT`, com posições da fila e hashes copiados no pacote sob o lock
+da fila. Os ticks são leituras atômicas; a captura não inspeciona descriptors,
+`Shader::Info` ou sessões do recorder enquanto outro thread os modifica. Uma
+espera da timeline também registra uma amostra após dois segundos, com seu tick
+alvo, e depois mantém a espera bloqueante. Um erro Vulkan distinto de timeout
+é informado explicitamente, evitando o loop infinito anterior sobre o mesmo
+erro. Não há logging por draw nem frames produzidos por essa instrumentação.
+
+Os testes executam `CompileModule` e `Semaphore::Wait` extraídos da fonte final,
+incluindo falhas por fase, shader patch, preservação de valores move-only,
+espera com lock e erro de device. Eles tornam a próxima captura interpretável;
+a estabilidade e a equivalência de desempenho continuam dependendo de gameplay
+comparável no aparelho.
+
 ## Verificação e limites da conclusão
 
 O workflow reconstrói a fonte a partir das revisões fixadas, aplica todos os

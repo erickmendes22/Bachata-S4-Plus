@@ -64,6 +64,17 @@ def apply(root: Path):
     end = s.index("\n    }\n    // 0.18.1 IntervalList", start)
     s = s[:start] + "        FreeArenaBlocks(range.memory, range.offset, range.end - range.start);" + s[end:]
     p.write_text(s)
+    edit(bc, """    scheduler.Finish();
+    // Donor ReleaseBlocks: Finish may have run deferred fault rebinds.
+    // Never put those binds and their unbinds in the same sparse batch.
+    collect();
+    if(!pending_binds.empty())scheduler.Flush();""", """    // Finish can run completed fault callbacks that publish more sparse binds.
+    // Retire each new batch before collecting the ranges to unbind: a Flush
+    // after collect() could otherwise rebind a hole omitted by that snapshot.
+    do {
+        scheduler.Finish();
+    } while (!pending_binds.empty());
+    collect();""")
     edit(bc, "void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {",
          """void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
     AdvanceUseEpoch(std::chrono::steady_clock::now());""")

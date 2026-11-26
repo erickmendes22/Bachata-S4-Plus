@@ -485,11 +485,46 @@ void TestEvictionFlushRebind(){
     }
     std::cout<<"SOTC_ARENA_FLUSH_REBIND_RETIREMENT_PASS cases=4\n";
 }
+void TestUnmapNestedRebind(){
+    for(const char* serial:{"CUSA08809","CUSA00785"})for(bool neighbours:{false,true}){
+        BufferCache c;Common::ElfInfo::Instance().serial=serial;
+        c.EnsureResident(&c.arena0,neighbours?8:10,11);
+        if(neighbours)c.EnsureResident(&c.arena0,16,17);
+        bool armed=false,injected=false;u64 last_bind_tick=0;unsigned unbinds=0;
+        const auto ordinary_flush=c.scheduler.on_flush;
+        c.scheduler.on_finish=[&]{c.EnsureResident(&c.arena0,12,13);armed=true;};
+        c.scheduler.on_flush=[&]{
+            for(const auto& batch:c.pending_binds)for(const auto& bind:batch.binds){
+                if(bind.memory)last_bind_tick=c.scheduler.CurrentTick();
+                else {++unbinds;assert(c.scheduler.IsFree(last_bind_tick));}
+            }
+            ordinary_flush();
+            // The second completion publishes a range absent from the first
+            // post-Finish snapshot. It must be submitted, retired and recollected.
+            if(armed&&!std::exchange(injected,true))c.EnsureResident(&c.arena0,14,15);
+        };
+        c.ReleaseUnmappedArena(10*B,6*B);
+        assert(injected&&unbinds&&c.scheduler.finishes==3);
+        assert(!c.resident_ranges.Overlaps(10,16));
+        u64 used=c.ArenaUsedBytes();
+        for(const auto& [memory,blocks]:c.backing_blocks){(void)memory;used+=blocks*B;}
+        assert(used==(neighbours?4:0)*B);
+        assert(c.resident_ranges.Size()==(neighbours?2:0));
+        if(neighbours){assert(c.resident_ranges.Contains(8,10));assert(c.resident_ranges.Contains(16,18));}
+        // A sparse submission must never bind and unbind an overlapping range.
+        for(const auto& batch:c.submitted_binds)for(size_t i=0;i<batch.size();++i)
+            for(size_t j=i+1;j<batch.size();++j){const auto& a=batch[i];const auto& b=batch[j];
+                if(bool(a.memory)!=bool(b.memory))
+                    assert(a.resourceOffset+a.size<=b.resourceOffset||b.resourceOffset+b.size<=a.resourceOffset);}
+        c.scheduler.Finish();
+    }
+    Sotc();std::cout<<"SOTC_ARENA_UNMAP_NESTED_REBIND_PASS cases=4\n";
+}
 int main(){
     setenv("SOTC_ARENA_EVICT_MB","1",1);setenv("SOTC_ARENA_EVICT_STEP_MB","1",1);
     setenv("SOTC_ARENA_EVICT_IDLE_S","30",1);setenv("SOTC_EVICT_ASYNC","1",1);
     setenv("SOTC_ARENA_GROUP","1",1);
-    TestAllocate();TestHeldAndBatches();TestProtection();TestMismatch();TestIdentity();TestLegacyAndUnmap();TestAllocationRecoveryRebind();TestEvictionFlushRebind();
+    TestAllocate();TestHeldAndBatches();TestProtection();TestMismatch();TestIdentity();TestLegacyAndUnmap();TestAllocationRecoveryRebind();TestEvictionFlushRebind();TestUnmapNestedRebind();
 }
 '''
     run_cpp(cpp,"sotc_arena_lifecycle")

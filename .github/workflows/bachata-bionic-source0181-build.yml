@@ -91,6 +91,8 @@ jobs:
           python3 bionic/source0181/test_fex_fault_evidence.py --source generic-upstream
           python3 bionic/source0181/test_fex_clock_protocol.py --source generic-upstream
           python3 bionic/source0181/test_frame_protocol.py --source generic-upstream
+          git -C generic-upstream submodule update --init --depth 1 externals/pugixml
+          python3 bionic/source0181/test_guarded_patch_groups.py --source generic-upstream
           python3 bionic/source0181/test_donor_alu_semantics.py --source generic-upstream
           python3 bionic/source0181/test_donor_wave64_lds.py --source generic-upstream
           python3 bionic/source0181/test_donor_shader_inputs.py --source generic-upstream
@@ -98,6 +100,8 @@ jobs:
           python3 bionic/source0181/test_donor_nan_clamp.py --source generic-upstream
           python3 bionic/source0181/test_readconst_addr64.py --source generic-upstream
           python3 bionic/source0181/test_donor_draw_pipeline.py --source generic-upstream
+          python3 bionic/source0181/test_indirect_submission_protocol.py --source generic-upstream
+          python3 bionic/source0181/test_shader_stall_progress.py --source generic-upstream
           python3 bionic/source0181/test_pending_gpu_callbacks.py --source generic-upstream
           python3 bionic/source0181/test_sotc_readback_completion.py --source generic-upstream
           python3 bionic/source0181/test_sotc_arena_lifecycle.py --source generic-upstream
@@ -323,6 +327,8 @@ jobs:
           python3 bionic/source0181/test_fex_fault_evidence.py --source generic-upstream
           python3 bionic/source0181/test_fex_clock_protocol.py --source generic-upstream
           python3 bionic/source0181/test_frame_protocol.py --source generic-upstream
+          git -C generic-upstream submodule update --init --depth 1 externals/pugixml
+          python3 bionic/source0181/test_guarded_patch_groups.py --source generic-upstream
           python3 bionic/source0181/test_donor_alu_semantics.py --source generic-upstream
           python3 bionic/source0181/test_donor_wave64_lds.py --source generic-upstream
           python3 bionic/source0181/test_donor_shader_inputs.py --source generic-upstream
@@ -330,6 +336,8 @@ jobs:
           python3 bionic/source0181/test_donor_nan_clamp.py --source generic-upstream
           python3 bionic/source0181/test_readconst_addr64.py --source generic-upstream
           python3 bionic/source0181/test_donor_draw_pipeline.py --source generic-upstream
+          python3 bionic/source0181/test_indirect_submission_protocol.py --source generic-upstream
+          python3 bionic/source0181/test_shader_stall_progress.py --source generic-upstream
           python3 bionic/source0181/test_pending_gpu_callbacks.py --source generic-upstream
           python3 bionic/source0181/test_sotc_readback_completion.py --source generic-upstream
           python3 bionic/source0181/test_sotc_arena_lifecycle.py --source generic-upstream
@@ -369,6 +377,7 @@ jobs:
           python3 bionic/source0181/test_donor_spirv_emission.py \
             --source generic-upstream --sirit generic-upstream/externals/sirit \
             --out out/spirv-validation
+          python3 bionic/source0181/test_indirect_submission_protocol.py --source generic-upstream --validate-spirv
 
       - name: Restore cross-build and compiler caches (pinned NDK and sources)
         uses: actions/cache/restore@v4
