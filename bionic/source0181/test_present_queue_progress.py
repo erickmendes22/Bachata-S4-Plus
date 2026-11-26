@@ -657,6 +657,7 @@ def source_contract(source: Path):
     src=source/'src';dc=(src/'core/libraries/videoout/driver.cpp').read_text()
     pc=(src/'video_core/renderer_vulkan/vk_presenter.cpp').read_text()
     ph=(src/'video_core/renderer_vulkan/vk_presenter.h').read_text()
+    assert '#include "video_core/amdgpu/liverpool.h"' in pc.splitlines()
     assert 'bool Present(Frame* frame,' in ph
     actual=block(pc,'bool Presenter::Present(')
     assert 'free_frame(false);\n            return false;' in actual
@@ -671,11 +672,56 @@ def source_contract(source: Path):
     assert 'token.stop_requested() || !requests.empty()' not in block(dc,'void VideoOutDriver::PresentThread(')
     for fn in ['void VideoOutDriver::DrawBlankFrame()','void VideoOutDriver::DrawLastFrame()']:
         assert 'RunPresenter(' in block(dc,fn)
-    return 8
+    return 9
+
+
+def producer_dependency(source: Path):
+    """Compile the real Liverpool class and the presenter's producer expression.
+
+    Only unrelated containers and assertion logging are shims. Liverpool's
+    class, accessors, visibility and scalar/extent/function headers are real.
+    The behavior fixture defines Liverpool itself, so it cannot catch a native
+    TU accidentally depending on the texture cache's forward declaration.
+    """
+    src=source/'src'
+    pc=(src/'video_core/renderer_vulkan/vk_presenter.cpp').read_text()
+    include='#include "video_core/amdgpu/liverpool.h"'
+    assert include in pc.splitlines()
+    frame=block(pc,'Frame* Presenter::GetRenderFrame(')
+    owner=re.search(r'    const bool gpu_owner\s*=[^;]+;',frame)
+    assert owner, 'missing real producer expression'
+    prefix='#include <array>\n#include <atomic>\n#include <thread>\nnamespace AmdGpu { struct Liverpool; }\n'
+    probe=prefix+include+'\nbool Producer(AmdGpu::Liverpool* liverpool) {\n'+owner.group(0)+'\nreturn gpu_owner;\n}\n'
+    with tempfile.TemporaryDirectory(prefix='present-liverpool-dependency-') as tmp:
+        work=Path(tmp)
+        shims={
+            'common/assert.h':'#pragma once\n#define ASSERT_MSG(...) ((void)0)\n#define UNREACHABLE_MSG(...) ((void)0)\n',
+            'common/slot_vector.h':'#pragma once\n#include <cstddef>\nnamespace Common { template<class T> struct SlotVector { explicit SlotVector(std::size_t) {} }; }\n',
+            'video_core/amdgpu/regs.h':'#pragma once\n#include "common/types.h"\nnamespace AmdGpu { constexpr u32 NUM_COLOR_BUFFERS=8; struct Buffer {}; struct ComputeProgram {}; struct Regs { static constexpr u32 NumRegs=32; std::array<u32,NumRegs> reg_array{}; }; }\n',
+            'shader_recompiler/info.h':'#pragma once\n#include <cstddef>\nnamespace Shader { struct Info {}; constexpr std::size_t MaxStageTypes=6; }\n',
+            'video_core/amdgpu/bachata_draw_snapshot.h':'#pragma once\n#include <cstddef>\nnamespace BachataDrawPipe { template<class T,std::size_t N> struct Snapshots {}; }\n',
+        }
+        for rel,text in shims.items():
+            path=work/rel;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(text)
+        cpp=work/'producer.cpp'
+        for name,text,android,success in (
+            ('android_complete_header',probe,True,True),
+            ('host_complete_header',probe,False,True),
+            ('missing_include',probe.replace(include,''),True,False),
+        ):
+            cpp.write_text(text)
+            command=['g++','-std=c++20','-pthread','-fsyntax-only','-I',str(work),'-I',str(src)]
+            if android: command+=['-D__ANDROID__','-DSHADPS4_ENABLE_FEX_GUEST_CPU']
+            result=subprocess.run([*command,str(cpp)],capture_output=True,text=True)
+            assert (result.returncode==0)==success,(name,result.stderr)
+            if not success:
+                assert 'incomplete type' in result.stderr and 'Liverpool' in result.stderr,result.stderr
+                assert 'OnDrawThread' in result.stderr and 'GetGpuCommandProcessorThread' in result.stderr,result.stderr
+        print('PASS: real Liverpool header and producer expression, Android/host, missing-include negative')
 
 
 def run(source: Path, positive_only=False):
-    n=source_contract(source);text=fixture(source)
+    n=source_contract(source);producer_dependency(source);text=fixture(source)
     with tempfile.TemporaryDirectory(prefix='present-progress-') as tmp:
         work=Path(tmp)
         headers={'common/debug.h':'#pragma once\n','common/polyfill_thread.h':'#pragma once\n#include <thread>\n',
@@ -732,4 +778,10 @@ def run(source: Path, positive_only=False):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--source',type=Path,required=True);p.add_argument('--positive-only',action='store_true')
-    a=p.parse_args();run(a.source.resolve(),a.positive_only)
+    p.add_argument('--dependency-only',action='store_true',help='Check only native source contracts and the Liverpool include regression')
+    a=p.parse_args()
+    if a.dependency_only:
+        n=source_contract(a.source.resolve());producer_dependency(a.source.resolve())
+        print(f'PASS: {n} source contracts; existing runtime negatives unchanged')
+    else:
+        run(a.source.resolve(),a.positive_only)
