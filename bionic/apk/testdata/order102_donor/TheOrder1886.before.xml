@@ -1,0 +1,145 @@
+<?xml version='1.0' encoding='utf-8'?>
+<Patch>
+    <TitleID>
+        <ID>CUSA00035</ID>
+        <ID>CUSA00070</ID>
+        <ID>CUSA00076</ID>
+        <ID>CUSA00100</ID>
+        <ID>CUSA00670</ID>
+        <ID>CUSA00785</ID>
+    </TitleID>
+    <Metadata Title="The Order 1886" Name="60 FPS Unlock" Note="Softlocks will occur in Chapter 6 and 9 during Quick Time Events.\nDisable patch to progress." Author="illusion" PatchVer="1.0" AppVer="01.02" AppElf="eboot.bin">
+        <PatchList>
+            <Line Type="byte" Address="0x008507c4" Value="0x01" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="Resolution Patch (4K)" Author="illusion" Note="This patch doesn't seem to work currently." PatchVer="1.0" AppVer="01.02" AppElf="eboot.bin">
+        <PatchList>
+            <Line Type="byte" Address="0x0084cef5" Value="0x75" />
+            <Line Type="bytes32" Address="0x0084cefd" Value="0x00000F00" />
+            <Line Type="bytes32" Address="0x0084cf07" Value="0x00000870" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="Resolution Patch (1440p)" Note="This patch doesn't seem to work currently." Author="illusion" PatchVer="1.0" AppVer="01.02" AppElf="eboot.bin">
+        <PatchList>
+            <Line Type="byte" Address="0x0084cef5" Value="0x75" />
+            <Line Type="bytes32" Address="0x0084cefd" Value="0x00000A00" />
+            <Line Type="bytes32" Address="0x0084cf07" Value="0x000005A0" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="Resolution Patch (900p)" Author="illusion" PatchVer="1.0" AppVer="01.02" AppElf="eboot.bin">
+        <PatchList>
+            <Line Type="byte" Address="0x0084cef5" Value="0x75" />
+            <Line Type="bytes32" Address="0x0084cefd" Value="0x00000640" />
+            <Line Type="bytes32" Address="0x0084cf07" Value="0x00000384" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="Resolution Patch (720p)" Author="illusion" PatchVer="1.0" AppVer="01.02" AppElf="eboot.bin">
+        <PatchList>
+            <Line Type="byte" Address="0x0084cef5" Value="0x75" />
+            <Line Type="bytes32" Address="0x0084cefd" Value="0x00000500" />
+            <Line Type="bytes32" Address="0x0084cf07" Value="0x000002d0" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="16:9 Aspect Ratio (Full Screen)" Note="Native 1080p will cause visual issues, 900p or below must be used." Author="illusion" PatchVer="1.0" AppVer="01.02" AppElf="eboot.bin">
+        <PatchList>
+            <Line Type="bytes32" Address="0x0084ce8c" Value="0x3fe38e39" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="Resolution: 540p (extreme performance)" Note="Takes the game's own 720p display path and sets its render size to 960x540. Original bytes are checked, so other builds are left unchanged. Select one resolution patch only." Author="Bachata S4" PatchVer="0.1" AppVer="01.02" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x0084cef5" Expected="74" Value="75" />
+            <Line Type="bytes" Address="0x0084cefd" Expected="00050000" Value="c0030000" />
+            <Line Type="bytes" Address="0x0084cf07" Expected="d0020000" Value="1c020000" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="Resolution: 360p (ultra performance)" Note="Takes the game's own 720p display path and sets its render size to 640x360. Softest image, most GPU headroom. Original bytes are checked, so other builds are left unchanged. Select one resolution patch only." Author="Bachata S4" PatchVer="0.1" AppVer="01.02" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x0084cef5" Expected="74" Value="75" />
+            <Line Type="bytes" Address="0x0084cefd" Expected="00050000" Value="80020000" />
+            <Line Type="bytes" Address="0x0084cf07" Expected="d0020000" Value="68010000" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="Disable Cloth Simulation" Note="Turns on the game's own -disablecloth startup option, which disables cloth simulation on all characters. Coats and capes stop moving. Original bytes are checked, so other builds are left unchanged." Author="Bachata S4" PatchVer="0.1" AppVer="01.02" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x0084c768" Expected="00000000" Value="00200000" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="60 FPS Unlock" Note="Softlocks will occur in Chapter 6 and 9 during Quick Time Events.\nDisable patch to progress." Author="illusion" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x0083d674" Expected="02" Value="01" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="Resolution Patch (4K)" Author="illusion" Note="This patch doesn't seem to work currently." PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x00839cf5" Expected="74" Value="75" />
+            <Line Type="bytes" Address="0x00839cfd" Expected="00050000" Value="000f0000" />
+            <Line Type="bytes" Address="0x00839d07" Expected="d0020000" Value="70080000" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="Resolution Patch (1440p)" Note="This patch doesn't seem to work currently." Author="illusion" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x00839cf5" Expected="74" Value="75" />
+            <Line Type="bytes" Address="0x00839cfd" Expected="00050000" Value="000a0000" />
+            <Line Type="bytes" Address="0x00839d07" Expected="d0020000" Value="a0050000" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="Resolution Patch (900p)" Author="illusion" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x00839cf5" Expected="74" Value="75" />
+            <Line Type="bytes" Address="0x00839cfd" Expected="00050000" Value="40060000" />
+            <Line Type="bytes" Address="0x00839d07" Expected="d0020000" Value="84030000" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="Resolution Patch (720p)" Author="illusion" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x00839cf5" Expected="74" Value="75" />
+            <Line Type="bytes" Address="0x00839cfd" Expected="00050000" Value="00050000" />
+            <Line Type="bytes" Address="0x00839d07" Expected="d0020000" Value="d0020000" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="16:9 Aspect Ratio (Full Screen)" Note="Native 1080p will cause visual issues, 900p or below must be used." Author="illusion" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x00839c8c" Expected="9a991940" Value="398ee33f" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="Resolution: 540p (extreme performance)" Note="Takes the game's own 720p display path and sets its render size to 960x540. Original bytes are checked, so other builds are left unchanged. Select one resolution patch only." Author="Bachata S4" PatchVer="0.1" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x00839cf5" Expected="74" Value="75" />
+            <Line Type="bytes" Address="0x00839cfd" Expected="00050000" Value="c0030000" />
+            <Line Type="bytes" Address="0x00839d07" Expected="d0020000" Value="1c020000" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="Resolution: 360p (ultra performance)" Note="Takes the game's own 720p display path and sets its render size to 640x360. Softest image, most GPU headroom. Original bytes are checked, so other builds are left unchanged. Select one resolution patch only." Author="Bachata S4" PatchVer="0.1" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x00839cf5" Expected="74" Value="75" />
+            <Line Type="bytes" Address="0x00839cfd" Expected="00050000" Value="80020000" />
+            <Line Type="bytes" Address="0x00839d07" Expected="d0020000" Value="68010000" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="Disable Cloth Simulation" Note="Turns on the game's own -disablecloth startup option, which disables cloth simulation on all characters. Coats and capes stop moving. Original bytes are checked, so other builds are left unchanged." Author="Bachata S4" PatchVer="0.1" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x00839568" Expected="00000000" Value="00200000" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="Disable Motion Blur" Note="Forces the renderer onto its native motion-blur bypass/pass-through path before the Motion Blur pass chain." Author="erickmendes22" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x010906f1" Expected="488b058884" Value="e91b000000" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="Disable Depth of Field" Note="Forces the renderer onto its native depth-of-field bypass/pass-through path before the Depth of Field renderer." Author="erickmendes22" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x010907cf" Expected="488b055a51" Value="e96d000000" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="Disable Bloom" Note="Skips the Bloom render block and resumes at its native end-of-pass marker/cleanup path." Author="erickmendes22" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x01090874" Expected="488b1db550" Value="e943010000" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Order 1886" Name="Disable Lens Flares" Note="Skips the lens-flare render block and resumes at the following native post-process path." Author="erickmendes22" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x010909c5" Expected="488b05644f" Value="e9a5000000" />
+        </PatchList>
+    </Metadata>
+</Patch>
