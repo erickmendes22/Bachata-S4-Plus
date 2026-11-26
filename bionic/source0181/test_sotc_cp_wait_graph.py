@@ -514,6 +514,56 @@ int main(){
         "INTERNAL": block(vc, "void VideoOutDriver::SubmitFlipInternal("),
         "FLIP": block(vc, "void VideoOutDriver::Flip("),
     }
+    if "BACHATA_PRESENT_QUEUE_PROGRESS" in vc:
+        # Keep the real acceptance/activation/FIFO/flip methods in the CP wait
+        # graph. WSI execution is immediate at this boundary; its independent
+        # worker, backpressure and close lifetime have their own real-method gate.
+        src = src.replace("#include <future>", "#include <future>\n#include <memory>\n#include <deque>")
+        src = src.replace("    bool is_hdr=false;", "    bool is_hdr=false;\n    bool is_open=true;\n    u64 generation=1;")
+        src = src.replace("void SetHDR(bool){} void Present(Vulkan::Frame*){}",
+                          "void SetHDR(bool){} bool Present(Vulkan::Frame*){return true;}\n"
+                          "    void DiscardFrame(Vulkan::Frame*){assert(false);}")
+        old_driver = block(src, "struct VideoOutDriver {")
+        src = src.replace(old_driver, r'''struct VideoOutDriver {
+    struct Request {
+        Vulkan::Frame* frame{}; VideoOutPort* port{}; s64 flip_arg{}; s32 index{}; bool eop{};
+        Group attribute{}; VAddr address{}; bool hdr{}; u64 sequence{},port_generation{};
+        bool activated{};
+        operator bool()const{return frame!=nullptr;}
+    };
+    Liverpool* liverpool; Presenter* presenter;
+    std::mutex mutex; std::deque<Request> requests; std::condition_variable request_cv;
+    struct Lifetime{std::recursive_mutex mutex;VideoOutDriver* owner{};};
+    std::shared_ptr<Lifetime> callback_lifetime=std::make_shared<Lifetime>();
+    bool present_progress_enabled{},prepare_queued{},preparing_frame{};
+    std::atomic<bool> stopping{false};
+    u64 next_request_sequence{};
+    std::atomic<u64> frames_accepted{},frames_prepared{},frames_presented{};
+    VideoOutDriver(Liverpool* cp,Presenter* p):liverpool(cp),presenter(p){
+        callback_lifetime->owner=this;
+        const auto serial=Common::ElfInfo::Instance().serial;
+        present_progress_enabled=serial=="CUSA08809"||serial=="CUSA08034"||serial=="CUSA00785";
+    }
+    bool SubmitFlip(VideoOutPort*,s32,s64,bool=false);
+    bool SubmitFlipLegacyProducer(VideoOutPort*,s32,s64,bool);
+    void SubmitFlipLegacy(VideoOutPort*,s32,s64,bool);
+    void SubmitFlipInternal(u64);
+    void PrepareFrontRequest(bool); void QueueFramePreparation();
+    Request ReceiveRequest();
+    bool RunPresenter(std::function<void()> work,bool=false){work();return true;}
+    void QueueFrameRetirement(Vulkan::Frame*){assert(false);}
+    void Flip(const Request&); void FlipPrepared(const Request&);
+}''', 1)
+        replacements["INTERNAL"] += "\n" + "\n".join(block(vc, anchor) for anchor in (
+            "bool VideoOutDriver::SubmitFlipLegacyProducer(", "void VideoOutDriver::SubmitFlipLegacy(",
+            "void VideoOutDriver::PrepareFrontRequest(", "void VideoOutDriver::QueueFramePreparation(",
+            "VideoOutDriver::Request VideoOutDriver::ReceiveRequest("))
+        replacements["FLIP"] += "\n" + block(vc, "void VideoOutDriver::FlipPrepared(")
+        src = src.replace("assert(driver.requests.empty());",
+                          "assert(driver.requests.empty() || !driver.requests.front().frame);")
+        src = src.replace("return !driver.requests.empty();",
+                          "return !driver.requests.empty() && driver.requests.front().frame;")
+        src = src.replace("driver.requests.pop();", "driver.requests.pop_front();")
     for key, value in replacements.items():
         src = src.replace("@@" + key + "@@", value)
     assert "@@" not in src

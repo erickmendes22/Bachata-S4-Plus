@@ -322,6 +322,62 @@ def audit(root: Path) -> None:
     }
     for rel, markers in stall_progress_contracts.items():
         required[rel] = (*required.get(rel, ()), *markers)
+    shared_io_contracts = {
+        "src/core/libraries/libs.cpp": (
+            "sym->SetFios2PreferGuestExports(!fios_force_hle);",
+            "BACHATA_SHARED_IO_FIOS_POLICY prefer_guest={}",),
+        "src/core/loader/symbols_resolver.h": (
+            "std::atomic_bool m_fios2_prefer_guest_exports{true};",
+            "bool Fios2PreferGuestExports() const noexcept",),
+        "src/core/linker.cpp": (
+            'sr.library == "libSceFios2"', "m_hle_symbols.Fios2PreferGuestExports()",
+            "BACHATA_SHARED_IO_FIOS_PROVISIONAL", "*return_info = *hle_record;",
+            "const auto* const guest_record = mod->export_sym.FindSymbol(sr);",),
+    }
+    for rel, markers in shared_io_contracts.items():
+        required[rel] = (*required.get(rel, ()), *markers)
+    parity_flow_contracts = {'src/common/present_queue_progress.h': ('namespace Common::PresentQueueProgress',
+                                             'CUSA00785',
+                                             'CUSA08809',
+                                             'CUSA08034'),
+     'src/core/libraries/videoout/driver.h': ('std::recursive_mutex mutex;',
+                                              'std::deque<Request> requests;',
+                                              'u64 port_generation{};',
+                                              'std::jthread swap_thread;'),
+     'src/core/libraries/videoout/driver.cpp': ('BACHATA_PRESENT_QUEUE_PROGRESS enabled FIFO CP+Draw '
+                                                'swap_worker',
+                                                'BACHATA_GPU_WAIT phase=present_progress accepted={}',
+                                                'void VideoOutDriver::SubmitFlipInternal(u64 sequence)',
+                                                'void VideoOutDriver::QueueFramePreparation()',
+                                                'void VideoOutDriver::PrepareFrontRequest(bool queued)',
+                                                'if (presented) '
+                                                'Platform::Bachata::ReportPresentedFrame();',
+                                                'req.port_generation != port->generation',
+                                                'callback_lifetime->owner = nullptr;',
+                                                'presenter->DiscardFrame(frame);'),
+     'src/video_core/renderer_vulkan/vk_presenter.cpp': ('const bool poll = progress && (gpu_owner || '
+                                                         '!allow_wait);',
+                                                         'liverpool->OnDrawThread()',
+                                                         'void Presenter::DiscardFrame(Frame* frame)',
+                                                         'frame_fence_pending.fetch_add(1, '
+                                                         'std::memory_order_relaxed);'),
+     'src/video_core/renderer_vulkan/vk_ahb_present.h': ('BACHATA_AHB_PRESENT_PROTOCOL',
+                                                         'state->WaitForCommit(deadline)',
+                                                         'state->Begin(fifo)',
+                                                         'ASurfaceTransaction_setOnCommit(txn,commit.release(),Commit);',
+                                                         'ctx->state->Committed(ctx->sequence);',
+                                                         'state->Retire("destroyed");',
+                                                         'static ARect FitDestination(',
+                                                         'RemainingMs(deadline)'),
+     'src/video_core/renderer_vulkan/vk_swapchain.cpp': ('BACHATA_AHB_SELECTION decision={}',
+                                                         'BACHATA_AHB_FALLBACK stage=create reason={}',
+                                                         'BACHATA_AHB_FALLBACK stage=acquire reason={}',
+                                                         'BACHATA_AHB_FALLBACK stage=present reason={}',
+                                                         'static const char* '
+                                                         'BachataAhbPolicyBlockReason()',
+                                                         'if(!opt)return nullptr;')}
+    for rel, markers in parity_flow_contracts.items():
+        required[rel] = (*required.get(rel, ()), *markers)
     required["src/core/libraries/fios2/fios2.cpp"] += (
         "constexpr u8 FiosOpEventComplete = 1;",
         "s32 PS4_SYSV_ABI (*)(void* context, s32 op, u8 event, s32 error)",
