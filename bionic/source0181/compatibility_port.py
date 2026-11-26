@@ -833,6 +833,9 @@ void GameController::PollState() {
     from port_guarded_patch_groups import apply as apply_guarded_patch_groups
     result["guardedPatchGroups"] = apply_guarded_patch_groups(root)
 
+    from port_sotc_texture_find_memo import apply as apply_sotc_texture_find_memo
+    result["sotcTextureFindMemo"] = apply_sotc_texture_find_memo(root)
+
     from port_shader_stall_progress import apply as apply_shader_stall_progress
     result["shaderStallProgress"] = apply_shader_stall_progress(root)
 

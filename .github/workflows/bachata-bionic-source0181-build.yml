@@ -101,6 +101,7 @@ jobs:
           python3 bionic/source0181/test_readconst_addr64.py --source generic-upstream
           python3 bionic/source0181/test_donor_draw_pipeline.py --source generic-upstream
           python3 bionic/source0181/test_indirect_submission_protocol.py --source generic-upstream
+          python3 bionic/source0181/test_sotc_texture_find_memo.py --source generic-upstream
           python3 bionic/source0181/test_shader_stall_progress.py --source generic-upstream
           python3 bionic/source0181/test_pending_gpu_callbacks.py --source generic-upstream
           python3 bionic/source0181/test_sotc_readback_completion.py --source generic-upstream
@@ -337,6 +338,7 @@ jobs:
           python3 bionic/source0181/test_readconst_addr64.py --source generic-upstream
           python3 bionic/source0181/test_donor_draw_pipeline.py --source generic-upstream
           python3 bionic/source0181/test_indirect_submission_protocol.py --source generic-upstream
+          python3 bionic/source0181/test_sotc_texture_find_memo.py --source generic-upstream
           python3 bionic/source0181/test_shader_stall_progress.py --source generic-upstream
           python3 bionic/source0181/test_pending_gpu_callbacks.py --source generic-upstream
           python3 bionic/source0181/test_sotc_readback_completion.py --source generic-upstream
