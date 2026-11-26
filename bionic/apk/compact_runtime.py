@@ -27,17 +27,31 @@ GLIBC_DROP = {
 }
 
 
+def runtime_identity(core_sha256: str, extra_updates: dict[str, bytes] | None = None) -> str:
+    """Invalidate extraction when either the native core or bundled patches change."""
+    if not re.fullmatch(r"[0-9a-f]{64}", core_sha256):
+        raise ValueError("Invalid core ELF SHA-256 for runtime manifest")
+    identity = "bachata-s4-plus-0.2.7-bionic-" + core_sha256[:16]
+    if extra_updates:
+        digest = hashlib.sha256()
+        for path, data in sorted(extra_updates.items()):
+            digest.update(path.encode("utf-8") + b"\0")
+            digest.update(hashlib.sha256(data).digest())
+        identity += "-patch-" + digest.hexdigest()[:12]
+    return identity
+
+
 def compact_runtime(
     outer: zipfile.ZipFile, *, runtime_version: str,
-    core_revision: str, core_sha256: str,
+    core_revision: str, core_sha256: str, extra_updates: dict[str, bytes] | None = None,
 ) -> tuple[bytes, bytes]:
     """Change the *installer's* runtime identity when the native core changes.
 
     Otherwise a same-name APK install can retain the old extracted root and
     its old GUEST_RUNTIME_BUILD marker even if the APK contains a newer .so.
     """
-    if not re.fullmatch(r"bachata-s4-plus-0\.2\.7-bionic-[0-9a-f]{16}", runtime_version):
-        raise ValueError("Bionic runtime name must contain the native ELF digest")
+    if runtime_version != runtime_identity(core_sha256, extra_updates):
+        raise ValueError("Bionic runtime name must identify the native ELF and bundled updates")
     if not re.fullmatch(r"[0-9a-f]{40}", core_revision):
         raise ValueError("Invalid core source revision for runtime manifest")
     if not re.fullmatch(r"[0-9a-f]{64}", core_sha256):
@@ -56,6 +70,10 @@ def compact_runtime(
     if not isinstance(files, list) or not all(isinstance(x, dict) for x in files):
         raise ValueError("Unsupported runtime manifest files schema")
     recorded = {x.get("path") for x in files}
+    extra_updates = extra_updates or {}
+    if (not set(extra_updates).issubset(recorded) or
+            set(extra_updates) & (GLIBC_DROP | {GUEST_BUILD_JSON, GUEST_BUILD_TXT})):
+        raise ValueError("Runtime catalogue updates must replace independently tracked files")
     if not GLIBC_DROP.issubset(recorded) or GLIBC_KEEP not in recorded:
         raise ValueError("All 4 original glibc variants must be in runtime manifest")
     source = io.BytesIO(contents)
@@ -68,6 +86,8 @@ def compact_runtime(
             raise ValueError("All 4 original glibc executables must be in runtime ZIP")
         if not {GUEST_BUILD_JSON, GUEST_BUILD_TXT}.issubset(names):
             raise ValueError("Official guest-runtime identity metadata missing")
+        if not set(extra_updates).issubset(names):
+            raise ValueError("Runtime catalogue update references a missing archive entry")
         guest_info = json.loads(z_in.read(GUEST_BUILD_JSON))
         # Preserve the original 'built' schema used by Kotlin diagnostics;
         # only its identity fields change to describe the active native core.
@@ -85,6 +105,7 @@ def compact_runtime(
                 f"label={new_label}\n"
             ).encode("utf-8"),
         }
+        changed_metadata.update(extra_updates)
         for info in z_in.infolist():
             if info.filename in GLIBC_DROP:
                 print("GLIBC_OLD_BINARY_REMOVED", info.filename,
@@ -125,7 +146,7 @@ def compact_runtime(
     with zipfile.ZipFile(io.BytesIO(result)) as check:
         for path, data in changed_metadata.items():
             if check.read(path) != data:
-                raise ValueError("Updated guest runtime marker missing from archive: " + path)
+                raise ValueError("Updated runtime file missing from archive: " + path)
     print("BIONIC_RUNTIME_REEXTRACTION_REQUIRED", "old", old_runtime_version,
           "new", runtime_version, "core", guest_revision)
     print("SINGLE_GLIBC_025_READY", "originalZIP", len(contents),
