@@ -22,11 +22,9 @@ def block(text, anchor):
     return text[start:end]
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--source", type=pathlib.Path, required=True)
-    args = ap.parse_args()
-    root = args.source / "src"
+def build_fixture(source):
+    """Return the actual-method fixture for graph and local-episode gates."""
+    root = source / "src"
     cp = (root / "video_core/amdgpu/liverpool.cpp").read_text()
     ch = (root / "video_core/amdgpu/liverpool.h").read_text()
     vc = (root / "core/libraries/videoout/driver.cpp").read_text()
@@ -519,6 +517,44 @@ int main(){
     for key, value in replacements.items():
         src = src.replace("@@" + key + "@@", value)
     assert "@@" not in src
+    local_episode = "BACHATA_SOTC_WAIT_EPISODE" in cp
+    if local_episode:
+        src = src.replace("std::atomic<unsigned> warning_count{0};",
+                          "std::atomic<u64> diagnostic_clock_offset_ns{0};\n"
+                          "std::atomic<unsigned> diagnostic_clock_reads{0};\n"
+                          "std::atomic<unsigned> warning_count{0};")
+        src = src.replace(
+            "void NoteCommandWait(const char*,VAddr,u64,u64,u64,u32,bool&,u32);",
+            "void NoteCommandWait(const char*,VAddr,u64,u64,u64,u32,bool&,u32,CommandWaitEpisode&);")
+        # Mock only the monotonic clock boundary. Production identity/elapsed
+        # comparisons, false predicate and coroutine lifetime stay verbatim.
+        clock = block(src, "static u64 SotcCommandWaitNowNs()")
+        new_clock = clock.replace("{\n", "{\n    ++diagnostic_clock_reads;\n", 1).replace(
+            ".count();", ".count() + diagnostic_clock_offset_ns.load();")
+        src = src.replace(clock, new_clock, 1)
+        src = src.replace("    bool first=true;\n    cp.cp_progress=false;",
+                          "    bool first=true;\n    Liverpool::CommandWaitEpisode episode{};\n"
+                          "    cp.curr_qid=2;\n    cp.cp_progress=false;")
+        src = src.replace('first,0);', 'first,0,episode);')
+        src = src.replace(
+            "    const auto old=warning_count.load();\n    cp.BackoffCommandWait({});",
+            "    const auto old=warning_count.load();\n"
+            "    episode.since_ns=SotcCommandWaitNowNs()-2'001'000'000ULL;\n"
+            "    for(unsigned i=0;i<32;++i)\n"
+            "        cp.NoteCommandWait(\"wait_reg_mem_memory\",0x1234,2,0xff,9,3,first,0,episode);\n"
+            "    assert(warning_qid==0);\n"
+            "    cp.BackoffCommandWait({});", 1)
+        # The multi-queue case now ages the coroutine-owned episode instead of
+        # the separate functional backoff timer. Wait until its 32-poll sample.
+        multi = block(src, "void MultiQueueBreadcrumbCase(")
+        new_multi = multi.replace(
+            "cp.cp_stall_since_ns=SotcCommandWaitNowNs()-2'001'000'000ULL;",
+            "diagnostic_clock_offset_ns.fetch_add(2'001'000'000ULL);")
+        new_multi = new_multi.replace("        } else if(phase==2) {\n",
+                                    "        } else if(phase==2) {\n"
+                                    "            if(warning_count==old)return;\n", 1)
+        new_multi = new_multi.replace("    assert(phase==3", "    diagnostic_clock_offset_ns=0;\n    assert(phase==3", 1)
+        src = src.replace(multi, new_multi, 1)
     controls = {
         "restore_vo_sleep": (
             "if (!SotcCommandWaitEnabled() && vo_port->IsVoLabel(wait_addr) &&",
@@ -542,6 +578,22 @@ int main(){
             "cp_wait.reason, cp_wait.qid, cp_wait.address",
             "cp_wait.reason, curr_qid, cp_wait.address"),
     }
+    if local_episode:
+        del controls["forget_wait_on_empty_queue"]
+        controls["forget_coroutine_episode_on_reentry"] = (
+            "    const auto& old = episode.state;",
+            "    episode.state.active = false;\n    const auto& old = episode.state;")
+        controls["report_poll_queue_instead_of_wait_queue"] = (
+            "wait.reason, wait.qid, wait.address",
+            "wait.reason, curr_qid, wait.address")
+    return src, controls
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--source", type=pathlib.Path, required=True)
+    args = ap.parse_args()
+    src, controls = build_fixture(args.source)
     with tempfile.TemporaryDirectory(prefix="sotc-cp-wait-") as temporary:
         output = pathlib.Path(temporary)
         def run(name, code, negative=False):

@@ -854,6 +854,12 @@ void GameController::PollState() {
     from port_sotc_stall_progress import apply as apply_sotc_stall_progress
     result["sotcStallProgress"] = apply_sotc_stall_progress(root)
 
+    from port_sotc_wait_episode import apply as apply_sotc_wait_episode
+    result["sotcWaitEpisode"] = apply_sotc_wait_episode(root)
+
+    from port_sotc_lod_pool import apply as apply_sotc_lod_pool
+    result["sotcLodPool"] = apply_sotc_lod_pool(root)
+
     from port_runtime_cache_generation import apply as apply_runtime_cache_generation
     result["finalShaderCacheGeneration"] = apply_runtime_cache_generation(root)
     result["portedInterfaces"].append(
@@ -868,6 +874,8 @@ void GameController::PollState() {
     # Correct false-success queries for a failed FIOS async operation.
     from port_release026_fios_async_errors import apply as apply_fios_async_errors
     result["release026FiosAsyncErrorSemantics"] = apply_fios_async_errors(root)
+    from port_fios_callback_abi import apply as apply_fios_callback_abi
+    result["fiosCompletionCallbackAbi"] = apply_fios_callback_abi(root)
     result["portedInterfaces"].append(
         "Official 0.2.6/0.2.7 FIOS2 MountAlias guest backend parity: "
         "SAF/updates/mods preserved; no host-mount/PSARC alternate code")

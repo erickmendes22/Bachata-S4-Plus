@@ -322,6 +322,26 @@ def audit(root: Path) -> None:
     }
     for rel, markers in stall_progress_contracts.items():
         required[rel] = (*required.get(rel, ()), *markers)
+    required["src/core/libraries/fios2/fios2.cpp"] += (
+        "constexpr u8 FiosOpEventComplete = 1;",
+        "s32 PS4_SYSV_ABI (*)(void* context, s32 op, u8 event, s32 error)",
+        "BACHATA_FIOS_COMPLETION event={}",
+        "context, op, FiosOpEventComplete, err",
+        "const s32 op = CompleteAsyncOp(op_attr, written);",
+        "return CompleteAsyncOp(op_attr, result < 0 ? result : 0);",
+    )
+    required["src/core/memory.h"] = (*required.get("src/core/memory.h", ()),
+        "struct DirectTailMapping {", "bool QueryDirectTailMapping(DirectTailMapping& result);")
+    required["src/core/memory.cpp"] += (
+        "bool MemoryManager::QueryDirectTailMapping(DirectTailMapping& result)",
+        "result = {address, physical, size, mapping_generation.Load(), memory_type};")
+    required["src/video_core/sotc_lod_stats.h"] = (*required.get("src/video_core/sotc_lod_stats.h", ()),
+        "memory->QueryDirectTailMapping(mapping)", "constexpr u64 PoolOffset = 0x140;",
+        "memory->MappingGeneration() != mapping.generation", "BACHATA_SOTC_LOD_POOL status={}")
+    required["src/video_core/amdgpu/liverpool.h"] += ("struct CommandWaitEpisode {",)
+    required["src/video_core/amdgpu/liverpool.cpp"] += (
+        "BACHATA_SOTC_WAIT_EPISODE", "CommandWaitEpisode wait_episode{};",
+        "episode.state.observed = observed;", "episode.reported || (++episode.polls & 31u) != 0")
     for rel, markers in required.items():
         path = root / rel
         if not path.is_file():
