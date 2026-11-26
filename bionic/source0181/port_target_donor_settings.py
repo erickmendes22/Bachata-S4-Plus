@@ -130,6 +130,50 @@ void Swapchain::Recreate(u32 width_, u32 height_) {""")
     const auto serial=Common::ElfInfo::Instance().GameSerial();
     const bool native=serial=="CUSA08809"||serial=="CUSA08034";
     Frame* frame=GetRenderFrame(native?attribute.attrib.width:0,native?attribute.attrib.height:0);""")
+    # Fit content in AHB pixels, then transform back to ImGui coordinates.
+    edit(v+"vk_presenter.cpp","[[nodiscard]] vk::ImageBlit MakeImageBlitFit(",
+         """static std::pair<float,float> BachataFitAhbContent(float game_w,float game_h,
+                                                     float content_w,float content_h,
+                                                     float scale_x,float scale_y) {
+    const float fit = std::min(content_w*scale_x/game_w,content_h*scale_y/game_h);
+    return {std::min(content_w,game_w*fit/scale_x),
+            std::min(content_h,game_h*fit/scale_y)};
+}
+
+[[nodiscard]] vk::ImageBlit MakeImageBlitFit(""")
+    edit(v+"vk_presenter.cpp",'''                const auto imgRect =
+                    FitImage(game_width, game_height, (s32)contentArea.x, (s32)contentArea.y);
+                ImVec2 offset{
+                    static_cast<float>(imgRect.offset.x),
+                    static_cast<float>(imgRect.offset.y),
+                };
+                ImVec2 size{
+                    static_cast<float>(imgRect.extent.width),
+                    static_cast<float>(imgRect.extent.height),
+                };''',
+         '''                // BACHATA_AHB_CONTENT_FIT: fit in the actual framebuffer pixels.
+                // SurfaceControl performs the one remaining fit to the output.
+                ImVec2 offset{}, size{};
+                const auto display_size = ImGui::GetIO().DisplaySize;
+                const auto physical_extent = swapchain.GetExtent();
+                if (swapchain.PresentLayout() == vk::ImageLayout::eGeneral &&
+                    display_size.x > 0 && display_size.y > 0 &&
+                    physical_extent.width && physical_extent.height &&
+                    game_width && game_height && contentArea.x > 0 && contentArea.y > 0) {
+                    const auto fitted = BachataFitAhbContent(
+                        game_width,game_height,contentArea.x,contentArea.y,
+                        physical_extent.width/display_size.x,
+                        physical_extent.height/display_size.y);
+                    size = ImVec2{fitted.first,fitted.second};
+                    offset = ImVec2{(contentArea.x-size.x)*0.5f,(contentArea.y-size.y)*0.5f};
+                } else {
+                    const auto imgRect =
+                        FitImage(game_width, game_height, (s32)contentArea.x, (s32)contentArea.y);
+                    offset = ImVec2{static_cast<float>(imgRect.offset.x),
+                                    static_cast<float>(imgRect.offset.y)};
+                    size = ImVec2{static_cast<float>(imgRect.extent.width),
+                                  static_cast<float>(imgRect.extent.height)};
+                }''')
     edit("imgui/renderer/imgui_core.cpp","    ImDrawData* draw_data = GetDrawData();",
          """    ImDrawData* draw_data = GetDrawData();
     // Vulkan viewport/scissors must use the allocated AHB extent, while
@@ -137,6 +181,31 @@ void Swapchain::Recreate(u32 width_, u32 height_) {""")
     if(draw_data->DisplaySize.x>0&&draw_data->DisplaySize.y>0)
         draw_data->FramebufferScale=ImVec2(extent.width/draw_data->DisplaySize.x,
                                            extent.height/draw_data->DisplaySize.y);""")
+    if sotc:
+        # Match the donor's 5056 MiB standard direct-memory pool only when the
+        # existing backing has room and the user has not selected extra DMEM.
+        mp=root/"src/core/memory.cpp"
+        text=mp.read_text()
+        if '#include "common/elf_info.h"' not in text:
+            at=text.index("#include")
+            mp.write_text(text[:at]+'#include "common/elf_info.h"\n'+text[at:])
+        edit("core/memory.cpp","void MemoryManager::SetupMemoryRegions(",
+             """static u64 BachataSotcDirectSize(u64 current,u64 reserved,bool eligible) {
+    constexpr u64 base=4736ull*1024*1024, target=5056ull*1024*1024;
+    return eligible&&current==base&&reserved>=target?target:current;
+}
+
+void MemoryManager::SetupMemoryRegions(""")
+        edit("core/memory.cpp","    total_direct_size = total_size - flexible_size;",
+             """    total_direct_size = total_size - flexible_size;
+    const auto serial=Common::ElfInfo::Instance().GameSerial();
+    const auto donor_size=BachataSotcDirectSize(total_direct_size,old_direct_size,
+        !is_neo&&!EmulatorSettings.IsDevKit()&&extra_dmem==0&&extra_fmem==0&&
+        (serial=="CUSA08809"||serial=="CUSA08034"));
+    if(donor_size!=total_direct_size) {
+        LOG_INFO(Kernel_Vmm,"BACHATA_SOTC_DMEM_PARITY old={} new={}",total_direct_size,donor_size);
+        total_direct_size=donor_size;
+    }""")
     return {"specialization":"directional live binding compatibility, cube/FMask class, cache ABI increment",
             "presentation":"guest-sized AHB and scaled UI draw data, physical output geometry",
             "orderAccuracy":"synchronous no draw drops, exact light guard, opaque PP no-clear and verified engine arguments" if not sotc else None}

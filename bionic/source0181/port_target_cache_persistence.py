@@ -87,6 +87,20 @@ def apply(root, order):
                     """const auto it = std::ranges::find_if(it_pgm.value()->modules, [&](const auto& m) {
             return bool(m.module) && m.spec == spec;
         });""")
+    if not order:
+        anchor="const auto& it = std::ranges::find(it_pgm.value()->modules, spec, &Program::Module::spec);"
+        assert s.count(anchor)==1
+        s=s.replace(anchor, """auto& saved_modules=it_pgm.value()->modules;
+        auto it=saved_modules.end();
+        if (perm_idx<saved_modules.size() && saved_modules[perm_idx].module) {
+            auto& saved=saved_modules[perm_idx];
+            if (saved.spec.bitset != spec.bitset ||
+                !(saved.spec==spec) || !(spec==saved.spec)) return false;
+            it=saved_modules.begin()+perm_idx;
+        }""")
+        anchor="    it_pgm.value()->InsertPermut(module, std::move(spec), perm_idx);"
+        assert s.count(anchor)==1
+        s=s.replace(anchor,"    spec.info = &it_pgm.value()->info;\n"+anchor)
     p.write_text(s)
     return {"drain_cache_writes": True, "atomic_blob_publication":True,
             "order_independent_shader_restore": order}
