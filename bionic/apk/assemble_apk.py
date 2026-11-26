@@ -17,14 +17,19 @@ import sys
 import zipfile
 from pathlib import Path
 
-from compact_runtime import compact_runtime, GLIBC_DROP, GLIBC_KEEP, RUNTIME_ZIP, RUNTIME_MANIFEST
+from compact_runtime import (
+    compact_runtime, runtime_identity, GLIBC_DROP, GLIBC_KEEP, RUNTIME_ZIP, RUNTIME_MANIFEST,
+)
+from order102_patch_catalog import CATALOG_VERSION, catalogue_identity, runtime_updates
 
 EXPECTED_BASE_SHA256 = "35c6fad39430e54aba561877953323e03b322a589a44442931317450e0b952d8"
 BASE_RELEASE = "0.2.7"
+HELPER_DEX = "classes16.dex"
+BASE_DEX_NAMES = frozenset({"classes.dex", *(f"classes{n}.dex" for n in range(2, 16))})
 NATIVE_DIR = "lib/arm64-v8a/"
 NATIVE_MANIFEST = "assets/runtime/native-runtime.json"
 SOTC_CORE = "libbachata_sotc_core.so"
-SOTC_REV = "81aa7c1ae4c9dcb16123306bf1733921d3984b4a"
+SOTC_REV = "1dce219fa03518a24bd3e7327c5fa3b2b8b1ab14"
 REQUIRED_LIBRARIES = {"libbachata_native_runtime.so", "libbachata_bionic_core.so"}
 CRITICAL_PRESERVED = {
     "AndroidManifest.xml",
@@ -41,14 +46,40 @@ def die(message: str) -> None:
     raise SystemExit(f"BIONIC APK ASSEMBLY FAILED: {message}")
 
 
+def validate_base_dex_layout(original: zipfile.ZipFile) -> None:
+    names = original.namelist()
+    if HELPER_DEX in names:
+        die(f"Unexpected base DEX layout; helper would overwrite {HELPER_DEX}")
+    dex_names = [name for name in names if re.fullmatch(r"classes[0-9]*\.dex", name)]
+    if set(dex_names) != BASE_DEX_NAMES or len(dex_names) != len(BASE_DEX_NAMES):
+        die("Unexpected base DEX layout; pinned 0.2.7 requires exactly classes.dex through classes15.dex")
+
+
+def write_apk_entries(original: zipfile.ZipFile, output: zipfile.ZipFile,
+                      changed: dict[str, bytes]) -> None:
+    for info in original.infolist():
+        if info.filename in changed:
+            data = changed.pop(info.filename)
+        else:
+            data = original.read(info.filename)
+        output.writestr(copy.copy(info), data)
+    for name, data in sorted(changed.items()):
+        output.writestr(name, data, compress_type=zipfile.ZIP_DEFLATED,
+                        compresslevel=6)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", type=Path, required=True)
     parser.add_argument("--stage", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--revision", required=True)
-    parser.add_argument("--patched-classes8", type=Path, required=False,
-                        help="Only the 0.2.7 native bridge SDL JNI loading fix")
+    parser.add_argument("--patched-classes8", type=Path, required=True,
+                        help="Native bridge loading and current patch catalogue preparation")
+    parser.add_argument("--patched-classes4", type=Path, required=True,
+                        help="Patch selector installing the current verified runtime")
+    parser.add_argument("--catalogue-helper-dex", type=Path, required=True,
+                        help="Selection migration helper, including all inner classes")
     args = parser.parse_args()
 
     base_bytes_sha256 = hashlib.file_digest(args.base.open("rb"), "sha256").hexdigest()
@@ -86,10 +117,14 @@ def main() -> None:
     # reusing its extracted directory. The previous packaging script did
     # not update runtimeVersion, so every new APK reused the old 9ceb...
     # extracted root and old GUEST_RUNTIME_BUILD name.
-    runtime_version = f"bachata-s4-plus-{BASE_RELEASE}-bionic-{core_sha[:16]}"
+    with zipfile.ZipFile(args.base) as original:
+        validate_base_dex_layout(original)
+        catalogue_updates = runtime_updates(original)
+    runtime_version = runtime_identity(core_sha, catalogue_updates)
     parity_marker = "BACHATA_CORE_PARITY=20261123-SRT4-GPUPAGE1-CTYPE3-CE1-OWNEDCB-FIBER1-RUNTIME1-RELEASEFIOS2-SAFDIRECT2-GPUCLAMP1-BUDGET1-RCSNAP1-IFILE1-FIOSERR1"
     revision_marker = f"BACHATA_CORE_REVISION={core_source_revision}"
     for marker in (b"BIONIC_MANAGED_USER_PATH_READY", b"SDL_VULKAN_LIBRARY",
+                   b"BACHATA_PATCH_GROUP_APPLIED",
                    b"Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run",
                    parity_marker.encode("ascii"), revision_marker.encode("ascii")):
         if marker not in core_binary:
@@ -101,25 +136,36 @@ def main() -> None:
     if not sotc or f"BACHATA_CORE_REVISION={SOTC_REV}".encode() not in sotc.read_bytes():
         die("Missing corrected SotC core")
     sotc_sha=sha256(sotc.read_bytes())
+    if b"BACHATA_PATCH_GROUP_APPLIED" not in sotc.read_bytes():
+        die("SotC core lacks the shared guarded patch group contract")
 
-    # Preserve all of the v0.2.7 UI, settings, DEX, drivers, patches,
-    # icons and managed glibc runtime; overwrite ONLY compiled native libs
-    # and the native-runtime checksum manifest.
+    # Preserve the 0.2.7 frontend; replace the two reviewed integration DEX,
+    # add the isolated selection helper, and install the verified catalogue.
     changed = {NATIVE_DIR + name: file.read_bytes() for name, file in staged.items()}
-    if args.patched_classes8 is not None:
-        patched_dex = args.patched_classes8.read_bytes()
+    patched_dex_files = {
+        "classes4.dex": args.patched_classes4,
+        "classes8.dex": args.patched_classes8,
+        HELPER_DEX: args.catalogue_helper_dex,
+    }
+    helper_descriptor = b"Lcom/bachatas4/android/patches/OrderPatchCatalog;"
+    for dex_name, dex_file in patched_dex_files.items():
+        patched_dex = dex_file.read_bytes()
         if not patched_dex.startswith(b"dex\n") or len(patched_dex) < 1024:
-            die("Patched classes8.dex is invalid")
-        if b"bachata_bionic_core" not in patched_dex or b"bachata_sotc_core" not in patched_dex:
+            die(f"Patched {dex_name} is invalid")
+        if helper_descriptor not in patched_dex:
+            die(f"Current catalogue preparation missing from {dex_name}")
+        if dex_name == "classes8.dex" and (
+                b"bachata_bionic_core" not in patched_dex or b"bachata_sotc_core" not in patched_dex):
             die("Rebuilt classes8.dex does not register the real Bionic core JNI library")
-        changed["classes8.dex"] = patched_dex
+        changed[dex_name] = patched_dex
     with zipfile.ZipFile(args.base) as original:
         names = set(original.namelist())
         if not (CRITICAL_PRESERVED | {RUNTIME_ZIP, RUNTIME_MANIFEST}).issubset(names) or NATIVE_MANIFEST not in names:
             die("APK 0.2.7 missing the expected Android frontend files")
         compact_zip, compact_manifest = compact_runtime(
             original, runtime_version=runtime_version,
-            core_revision=core_source_revision, core_sha256=core_sha)
+            core_revision=core_source_revision, core_sha256=core_sha,
+            extra_updates=catalogue_updates)
         changed[RUNTIME_ZIP] = compact_zip
         changed[RUNTIME_MANIFEST] = compact_manifest
         original_manifest = json.loads(original.read(NATIVE_MANIFEST))
@@ -149,13 +195,24 @@ def main() -> None:
                 "backend": "generic-shadps4-fex-android-bionic",
                 "nativeCoreSha256": core_sha,
                 "runtimeVersion": runtime_version,
-                "runtimeExtractionIdentity": "native-core-sha256",
+                "runtimeExtractionIdentity": "native-core-sha256+bundled-patch-catalog-sha256",
                 "nativeCoreMarker": parity_marker,
                 "nativeCoreRevisionMarker": revision_marker,
                 "nativeCoreSourceRevision": core_source_revision,
                 "legacyFallback": False,
                 "titleCoreOverrides":{"CUSA08809":SOTC_REV,"CUSA08034":SOTC_REV},
                 "sotcCoreSha256":sotc_sha,
+                "bundledPatchCatalog": {
+                    "version": CATALOG_VERSION,
+                    "files": {name: catalogue_identity(data)
+                              for name, data in catalogue_updates.items()},
+                },
+                "frontendIntegration": {
+                    "catalogueHelperMinApi": 31,
+                    "catalogueHelperDex": HELPER_DEX,
+                    "dexSha256": {name: sha256(path.read_bytes())
+                                  for name, path in patched_dex_files.items()},
+                },
                 "glibcFallback": "025",
                 "removedGlibcVariants": ["020", "023", "024"],
                 "deviceTested": False,
@@ -163,15 +220,7 @@ def main() -> None:
         ).encode("utf-8")
         args.output.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(args.output, "w", allowZip64=True) as output:
-            for info in original.infolist():
-                if info.filename in changed:
-                    data = changed.pop(info.filename)
-                else:
-                    data = original.read(info.filename)
-                output.writestr(copy.copy(info), data)
-            for name, data in sorted(changed.items()):
-                output.writestr(name, data, compress_type=zipfile.ZIP_DEFLATED,
-                                compresslevel=6)
+            write_apk_entries(original, output, changed)
 
     # Re-open generated archive: detect corruption and verify complete
     # replacement without silently building a partial or stale APK.
@@ -201,11 +250,13 @@ def main() -> None:
                 die("Text guest runtime marker still describes the old core")
             recorded = {x["path"]: x for x in new_runtime_manifest["files"]}
             for path in ("usr/share/bachata/guest-runtime.json",
-                         "usr/share/bachata/guest-runtime.txt"):
+                         "usr/share/bachata/guest-runtime.txt", *catalogue_updates):
                 entry = recorded.get(path)
                 data = packaged_runtime.read(path)
                 if not entry or entry.get("sha256") != sha256(data) or entry.get("size") != len(data):
                     die(f"Runtime re-extraction file integrity mismatch: {path}")
+                if path in catalogue_updates and data != catalogue_updates[path]:
+                    die(f"Bundled performance catalogue mismatch: {path}")
         build_identity = json.loads(result.read("assets/bachata-bionic-build.json"))
         if (build_identity.get("runtimeVersion") != runtime_version or
                 build_identity.get("nativeCoreSha256") != core_sha or
@@ -219,11 +270,15 @@ def main() -> None:
         for filename in CRITICAL_PRESERVED:
             if sha256(original.read(filename)) != sha256(result.read(filename)):
                 die(f"Unexpected frontend change: {filename}")
-        if args.patched_classes8 is not None:
-            if result.read("classes8.dex") == original.read("classes8.dex"):
-                die("Native runtime SDL3 JNI loader DEX was NOT updated")
-            if result.read("classes8.dex") != args.patched_classes8.read_bytes():
-                die("Patched classes8.dex did not match assembled DEX")
+        for name, file in patched_dex_files.items():
+            if name in original.namelist() and result.read(name) == original.read(name):
+                die(f"Required frontend integration was NOT updated: {name}")
+            if result.read(name) != file.read_bytes():
+                die(f"Patched {name} did not match assembled DEX")
+        for name in original.namelist():
+            if re.fullmatch(r"classes[0-9]*\.dex", name) and name not in patched_dex_files:
+                if result.read(name) != original.read(name):
+                    die(f"Unrelated frontend DEX changed: {name}")
         for filename, staged_file in staged.items():
             if sha256(result.read(NATIVE_DIR + filename)) != sha256(staged_file.read_bytes()):
                 die(f"Native .so not injected correctly: {filename}")
