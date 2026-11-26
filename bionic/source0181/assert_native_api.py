@@ -142,6 +142,7 @@ def audit(root: Path) -> None:
                                                           "BACHATA_RELEASE026_GPU_LIVE_BUDGET",
                                                           "vmaGetHeapBudgets("),
         "src/video_core/renderer_vulkan/vk_rasterizer.cpp": (
+            "scheduler.PopPendingOperationsHot();",
             "BACHATA_RELEASE026_IMAGE_SWIZZLE_GUARD",
             "!swizzle_selector_valid",
             "BACHATA_RELEASE026_SRT_GPU_PAGE_READBACK",
@@ -192,10 +193,13 @@ def audit(root: Path) -> None:
         "src/shader_recompiler/info.h": ("RunSrtWalker(srt_info.walker_func,",
                                        "srt_guest_sources.assign(", "srt_guest_sources.data()"),
         "src/video_core/amdgpu/liverpool.h": (
+            "void WriteFenceValue(void* address, u64 data, u32 num_bytes);",
             "using CmdBuffer = std::pair<std::vector<u32>, std::vector<u32>>;",
             "std::shared_ptr<CmdBuffer> owned_buffers = {}",
             "std::queue<Task::Handle> ce_submits"),
         "src/video_core/amdgpu/liverpool.cpp": (
+            "void Liverpool::WriteFenceValue(", "WriteFenceValue(address, data, num_bytes);",
+            "rasterizer->InvalidateMemory(std::bit_cast<VAddr>(address), num_bytes, true);",
             "BACHATA_RELEASE026_OWNED_DCB_CCB",
             "BACHATA_RELEASE026_CE_QUEUE_PARITY",
             "owned.first.assign(dcb.begin(), dcb.end());",
@@ -246,6 +250,13 @@ def audit(root: Path) -> None:
                                  "BIONIC_GUEST_CRASH_MODULE",
                                  "FindByAddress(guest_rip)",),
     }
+    required.setdefault("src/video_core/renderer_vulkan/vk_scheduler.h", tuple())
+    required["src/video_core/renderer_vulkan/vk_scheduler.h"] += (
+        "void PopPendingOperationsHot();", "u32 pending_hot_polls = 0;")
+    required.setdefault("src/video_core/renderer_vulkan/vk_scheduler.cpp", tuple())
+    required["src/video_core/renderer_vulkan/vk_scheduler.cpp"] += (
+        "BACHATA_PENDING_POLL", "void Scheduler::PopPendingOperationsHot()",
+        "front_tick > RecordedSubmitTick()", "PopPendingOperations(false);")
     forbidden = {
         "src/core/module.cpp": ("elf.Open(file);",),
         "src/core/linker.cpp": (

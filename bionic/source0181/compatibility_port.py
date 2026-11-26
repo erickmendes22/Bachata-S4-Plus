@@ -845,6 +845,12 @@ void GameController::PollState() {
     from port_shader_stall_progress import apply as apply_shader_stall_progress
     result["shaderStallProgress"] = apply_shader_stall_progress(root)
 
+    from port_pending_poll import apply as apply_pending_poll
+    result["pendingPollHotPath"] = apply_pending_poll(root)
+
+    from port_sotc_fence_publication import apply as apply_sotc_fence_publication
+    result["sotcFencePublication"] = apply_sotc_fence_publication(root)
+
     from port_runtime_cache_generation import apply as apply_runtime_cache_generation
     result["finalShaderCacheGeneration"] = apply_runtime_cache_generation(root)
     result["portedInterfaces"].append(

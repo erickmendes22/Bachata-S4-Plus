@@ -209,7 +209,9 @@ struct Scheduler {
     u64 current{1},completed{};u32 barriers{},copies{},fills{},updates{};
     u64 stages{};
     void EndRendering(){}
-    void PopPendingOperations(){}
+    // Timeline completion policy is executed by test_pending_poll; this probe
+    // isolates the real indirect preparation and resource-state ordering.
+    void PopPendingOperationsHot(){}
     struct Commands {
         Scheduler& s;
         void pipelineBarrier2(const vk::DependencyInfo& info) const {
