@@ -82,7 +82,8 @@ template<class T>void ConsumeOne(const T& value){
     }
 }
 template<class... T>void Consume(const T&... values){(ConsumeOne(values),...);}
-constexpr int Lib_SysModule=1,Core_Linker=2;
+constexpr int Lib_SysModule=1;
+[[maybe_unused]] constexpr int Core_Linker=2;
 #define LOG_INFO(...) Consume(__VA_ARGS__)
 #define LOG_WARNING(...) Consume(__VA_ARGS__)
 #define LOG_ERROR(...) Consume(__VA_ARGS__)
@@ -292,6 +293,7 @@ def run_case(tmp, name, source, fex=1, expect_pass=True):
     if not compiler:
         raise RuntimeError("C++ compiler required for FIOS ABI gate")
     build = subprocess.run([compiler, "-std=c++20", "-O1", "-pthread", "-Wall", "-Wextra",
+                            "-Wunused-const-variable",
                             "-Werror", f"-DFIOS_TEST_FEX={fex}", str(cpp), "-o", str(exe)],
                            text=True, capture_output=True, timeout=60)
     if build.returncode:
