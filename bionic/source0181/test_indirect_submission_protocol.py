@@ -71,6 +71,92 @@ assert "WarnMetadataTexture() && texture_cache.IsMeta(tsharp.Address())" in rast
 shader_main = block(shader, "void main()").replace("void main()", "void ShaderMain()", 1)
 push_fields = re.search(r"uniform Push\s*\{([^}]+)\}\s*push", shader)[1]
 warning_policy = block(rasterizer, "static bool WarnMetadataTexture()")
+title_policy = block(rasterizer, "static bool UsesOrderIndirectProtocol()")
+assert '#include "common/elf_info.h"' in rasterizer.splitlines()
+assert "BachataCompat::" not in warning_policy and "BachataCompat::" not in prepare
+assert "UsesOrderIndirectProtocol()" in warning_policy and "UsesOrderIndirectProtocol()" in prepare
+
+# Only the mutable game identity is a fixture in the behavior tests. The
+# declaration probe below separately compiles the actual ElfInfo header and
+# actual generated helper, without any BachataCompat or ElfInfo substitute.
+TITLE_PROVIDER = r'''
+namespace Common {
+struct ElfInfo {
+    std::string serial="CUSA00785";
+    static ElfInfo& Instance(){static ElfInfo value;return value;}
+    std::string_view GameSerial()const{return serial;}
+};
+}
+'''
+
+
+def check_title_dependency(folder):
+    # The native header's logging dependency is isolated here because the
+    # preflight runs before fmt submodules/host packages are installed. ElfInfo,
+    # Singleton, BitField, types and ASSERT are the actual source headers.
+    shim = folder / "policy-header-probe/common/logging/log.h"
+    shim.parent.mkdir(parents=True)
+    shim.write_text(r'''#pragma once
+namespace fmt {
+template<class... T> using format_string=const char*;
+struct format_args{};
+template<class... T> format_args make_format_args(T&...){return {};}
+}
+namespace Common::Log {
+enum class Class{Debug};enum class Level{Critical};
+void VLog(Class,Level,const char*,int,const char*,const char*,fmt::format_args);
+}
+''')
+    prefix = '#include <cstdlib>\n#include "common/elf_info.h"\n'
+    probe = 'bool ProbeIndirectTitle(bool indexed){return indexed && UsesOrderIndirectProtocol();}\n'
+    native = prefix + title_policy + '\n' + warning_policy + '\n' + probe
+    for name, source, expect_success, android in (
+        ("android_header", native, True, True),
+        ("host_header", native, True, False),
+        ("missing_helper", native.replace(title_policy, ""), False, True),
+        ("missing_include", native.replace('#include "common/elf_info.h"', ""), False, True),
+        ("old_order_namespace", native.replace('UsesOrderIndirectProtocol()',
+              'BachataCompat::Order1886()').replace(
+              title_policy.replace('UsesOrderIndirectProtocol()', 'BachataCompat::Order1886()'), ""),
+              False, True),
+    ):
+        path = folder / (name + '.cpp'); path.write_text(source)
+        command = ['c++', '-std=c++23', '-fsyntax-only', '-I', str(shim.parents[2]),
+                   '-I', str(src)]
+        if android: command.append('-D__ANDROID__')
+        result = subprocess.run([*command, str(path)], capture_output=True, text=True)
+        assert (result.returncode == 0) == expect_success, (name, result.stderr)
+        if not expect_success:
+            assert any(token in result.stderr for token in (
+                'UsesOrderIndirectProtocol', 'Common', 'ElfInfo', 'BachataCompat')), (name,result.stderr)
+    # Execute the real policy for both platform branches and serial changes.
+    policy_main = r'''
+int main(){
+    for(const char* serial:{"CUSA00785","CUSA08809","CUSA08034","OTHER"}){
+        Common::ElfInfo::Instance().serial=serial;
+#ifdef __ANDROID__
+        const bool expected=std::string_view(serial)=="CUSA00785";
+#else
+        const bool expected=false;
+#endif
+        assert(UsesOrderIndirectProtocol()==expected);
+        const char* value=std::getenv("ORDER1886_WARN_META_TEXTURE");
+        assert(WarnMetadataTexture()==(!expected || (value && value[0]=='1')));
+    }
+}
+'''
+    policy = '#include <cassert>\n#include <cstdlib>\n#include <string>\n#include <string_view>\n'
+    policy += TITLE_PROVIDER + title_policy + warning_policy + policy_main
+    for android in (False,True):
+        path=folder / ('policy_android.cpp' if android else 'policy_host.cpp')
+        executable=path.with_suffix('');path.write_text(policy)
+        command=['c++','-std=c++23','-O1']
+        if android:command.append('-D__ANDROID__')
+        subprocess.run([*command,str(path),'-o',str(executable)],check=True)
+        for value in ('0','1'):
+            subprocess.run([str(executable)],check=True,
+                env={**os.environ,'ORDER1886_WARN_META_TEXTURE':value})
+    print('BACHATA_INDIRECT_TITLE_DEPENDENCY_PASS real-ElfInfo/header/helper/platform/serial/3-negative-controls')
 
 HARNESS = r'''
 #include <algorithm>
@@ -87,6 +173,8 @@ HARNESS = r'''
 #include <optional>
 #include <random>
 #include <span>
+#include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 #include "common/types.h"
@@ -194,7 +282,8 @@ public:
 };
 @STREAM@
 }
-namespace BachataCompat {static bool order=true;bool Order1886(){return order;}}
+@TITLE_PROVIDER@
+@TITLE_POLICY@
 @WARNING@
 namespace AmdGpu {enum class IndexType {Index16,Index32};}
 struct VkDrawIndexedIndirectCommand {u32 words[5];};
@@ -271,9 +360,9 @@ int main(){
      assert(p.prepared==1 && p.index_bytes==128 && p.index_limit==32);}
     {PreparationProbe p;p.backing.ranges[1].second=50;p.Prepare(true,0x1000,0,20,1,0);
      assert(p.prepared==1 && p.index_bytes==48 && p.index_limit==12);}
-    {PreparationProbe p;BachataCompat::order=false;p.registers.regs.index_base_address.value=0x7000;
+    {PreparationProbe p;Common::ElfInfo::Instance().serial="CUSA08809";p.registers.regs.index_base_address.value=0x7000;
      p.Prepare(true,0x1000,0,20,1,0);assert(p.prepared==1 && !p.index_bytes);
-     BachataCompat::order=true;}
+     Common::ElfInfo::Instance().serial="CUSA00785";}
 
     // Real AccessBuffer -> real Copy/Fill/Inline paths. An indirect read must
     // participate in WAR dependencies even when no shader-resource read exists.
@@ -367,24 +456,26 @@ int main(){
     }
     const char*flag=std::getenv("ORDER1886_WARN_META_TEXTURE");
     assert(WarnMetadataTexture()==bool(flag && flag[0]=='1'));
-    BachataCompat::order=false;assert(WarnMetadataTexture());
+    Common::ElfInfo::Instance().serial="CUSA08809";assert(WarnMetadataTexture());
     std::cout<<"BACHATA_INDIRECT_SUBMISSION_PROTOCOL_PASS records="<<records<<" batches="<<batches
              <<" real-WAR/args+count/vertex+index/mapped-bounds/GPU-produced/stride/count/fenced-reuse/early-reject-state\n";
 }
 '''
 with tempfile.TemporaryDirectory() as name:
     folder = Path(name)
+    check_title_dependency(folder)
     cpp = folder / "indirect.cpp"
     exe = folder / "indirect"
     program = HARNESS
     for marker, value in (("RUNTIME", runtime_methods), ("STREAM", stream_methods),
                           ("DRAW_READS", draw_reads), ("DISPATCH_READS", dispatch_reads),
                           ("FIXED_READS", fixed_reads), ("WARNING", warning_policy),
+                          ("TITLE_PROVIDER", TITLE_PROVIDER), ("TITLE_POLICY", title_policy),
                           ("PREPARE", prepare),
                           ("SHADER", shader_main), ("PUSH_FIELDS", push_fields)):
         program = program.replace(f"@{marker}@", value)
     cpp.write_text(program)
-    subprocess.run(["c++", "-std=c++23", "-O2", "-Wall", "-Wextra", "-Werror",
+    subprocess.run(["c++", "-std=c++23", "-D__ANDROID__", "-O2", "-Wall", "-Wextra", "-Werror",
                     "-I", str(src), str(cpp),
                     str(src / "video_core/renderer_vulkan/vk_barrier_tracker.cpp"),
                     "-o", str(exe)], check=True)

@@ -40,6 +40,14 @@ def apply(root):
          '#include "video_core/renderer_vulkan/indirect_submission_limits.h"\n'
          '#include "video_core/renderer_vulkan/vk_shader_util.h"\n'
          '#include "video_core/host_shaders/indirect_index_clamp_comp.h"\n#include <cstdlib>')
+    # This shared overlay also runs in SotC, which does not define the Order
+    # profile namespace. Declare the exact Android/title predicate in this TU
+    # and make its ElfInfo dependency explicit instead of borrowing that profile.
+    path = src / rp
+    text = path.read_text()
+    title_header = '#include "common/elf_info.h"'
+    if title_header not in text.splitlines():
+        path.write_text(title_header + '\n' + text)
     edit(rh, "    void BindIndexBuffer(u32 index_offset = 0);", """    void BindIndexBuffer(u32 index_offset = 0, u32 indirect_bytes = 0,
                          u32 indirect_limit = ~u32{0});
     struct ClampedIndirectBatch {
@@ -167,7 +175,7 @@ def apply(root):
          "        vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eIndirectCommandRead;")
 
     # The donor makes this hot warning opt-in. Preserve other titles' diagnostics.
-    edit(rp, "namespace Vulkan {", "namespace Vulkan {\n" + META_WARNING_POLICY)
+    edit(rp, "namespace Vulkan {", "namespace Vulkan {\n" + ORDER_TITLE_POLICY + META_WARNING_POLICY)
     edit(rp, "        if (texture_cache.IsMeta(tsharp.Address())) {",
          "        if (WarnMetadataTexture() && texture_cache.IsMeta(tsharp.Address())) {")
     return {"indirectHazards": "args/count reads participate in WAR barriers for draws and dispatches",
@@ -177,7 +185,7 @@ def apply(root):
             "metadataWarning": "Order opt-in ORDER1886_WARN_META_TEXTURE, other titles preserved"}
 
 
-INDIRECT_RECORD_BOUNDS = r'''    const bool order_indexed = is_indexed && BachataCompat::Order1886();
+INDIRECT_RECORD_BOUNDS = r'''    const bool order_indexed = is_indexed && UsesOrderIndirectProtocol();
     BachataGpu::IndirectIndexRequest index_request{};
     u32 argument_bytes = stride * max_count;
     if (order_indexed) {
@@ -207,8 +215,18 @@ INDIRECT_RECORD_BOUNDS = r'''    const bool order_indexed = is_indexed && Bachat
 
 '''
 
+ORDER_TITLE_POLICY = r'''static bool UsesOrderIndirectProtocol() {
+#ifdef __ANDROID__
+    return Common::ElfInfo::Instance().GameSerial() == "CUSA00785";
+#else
+    return false;
+#endif
+}
+
+'''
+
 META_WARNING_POLICY = r'''static bool WarnMetadataTexture() {
-    if (!BachataCompat::Order1886()) return true;
+    if (!UsesOrderIndirectProtocol()) return true;
     static const bool enabled = [] {
         const char* value = std::getenv("ORDER1886_WARN_META_TEXTURE");
         return value && value[0] == '1';
