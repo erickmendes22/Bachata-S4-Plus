@@ -114,6 +114,12 @@ jobs:
           python3 bionic/source0181/test_pending_gpu_callbacks.py --source generic-upstream
           python3 bionic/source0181/test_pending_poll.py --source generic-upstream
           python3 bionic/source0181/test_fios_callback_abi.py --source generic-upstream
+          python3 bionic/source0181/test_shared_io_fios_exports.py --source generic-upstream
+          python3 bionic/source0181/test_present_queue_progress.py --source generic-upstream
+          python3 bionic/source0181/test_ahb_present_protocol.py --source generic-upstream
+          python3 bionic/source0181/test_order_image_alias.py --source generic-upstream
+          python3 bionic/source0181/test_order_alias_download.py --source generic-upstream
+          python3 bionic/source0181/test_order_pass_end_reasons.py --source generic-upstream
           python3 bionic/source0181/test_order_readconst_pool.py --source generic-upstream
           python3 bionic/source0181/test_order_readconst_reuse.py --source generic-upstream
           python3 bionic/source0181/test_order_frame_pacing.py --source generic-upstream
@@ -336,6 +342,12 @@ jobs:
           python3 bionic/source0181/test_pending_gpu_callbacks.py --source generic-upstream
           python3 bionic/source0181/test_pending_poll.py --source generic-upstream
           python3 bionic/source0181/test_fios_callback_abi.py --source generic-upstream
+          python3 bionic/source0181/test_shared_io_fios_exports.py --source generic-upstream
+          python3 bionic/source0181/test_present_queue_progress.py --source generic-upstream
+          python3 bionic/source0181/test_ahb_present_protocol.py --source generic-upstream
+          python3 bionic/source0181/test_order_image_alias.py --source generic-upstream
+          python3 bionic/source0181/test_order_alias_download.py --source generic-upstream
+          python3 bionic/source0181/test_order_pass_end_reasons.py --source generic-upstream
           python3 bionic/source0181/test_order_readconst_pool.py --source generic-upstream
           python3 bionic/source0181/test_order_readconst_reuse.py --source generic-upstream
           python3 bionic/source0181/test_order_frame_pacing.py --source generic-upstream

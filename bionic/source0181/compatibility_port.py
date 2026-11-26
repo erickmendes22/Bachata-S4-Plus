@@ -863,6 +863,21 @@ void GameController::PollState() {
     from port_order_render_pass_coalescing import apply as apply_order_render_pass_coalescing
     result["orderRenderPassCoalescing"] = apply_order_render_pass_coalescing(root)
 
+    from port_order_image_alias import apply as apply_order_image_alias
+    result["orderImageAlias"] = apply_order_image_alias(root)
+
+    from port_order_pass_end_reasons import apply as apply_order_pass_end_reasons
+    result["orderPassEndReasons"] = apply_order_pass_end_reasons(root)
+
+    from port_present_queue_progress import apply as apply_present_queue_progress
+    result["presentQueueProgress"] = apply_present_queue_progress(root)
+
+    from port_order_present_end_reasons import apply as apply_order_present_end_reasons
+    result["orderPresentEndReasons"] = apply_order_present_end_reasons(root)
+
+    from port_ahb_present_protocol import apply as apply_ahb_present_protocol
+    result["ahbPresentProtocol"] = apply_ahb_present_protocol(root)
+
     from port_runtime_cache_generation import apply as apply_runtime_cache_generation
     result["finalShaderCacheGeneration"] = apply_runtime_cache_generation(root)
     result["portedInterfaces"].append(
@@ -879,6 +894,8 @@ void GameController::PollState() {
     result["release026FiosAsyncErrorSemantics"] = apply_fios_async_errors(root)
     from port_fios_callback_abi import apply as apply_fios_callback_abi
     result["fiosCompletionCallbackAbi"] = apply_fios_callback_abi(root)
+    from port_shared_io_fios_exports import apply as apply_shared_io_fios_exports
+    result["sharedIoFiosExports"] = apply_shared_io_fios_exports(root)
     result["portedInterfaces"].append(
         "Official 0.2.6/0.2.7 FIOS2 MountAlias guest backend parity: "
         "SAF/updates/mods preserved; no host-mount/PSARC alternate code")

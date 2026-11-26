@@ -11,6 +11,9 @@ PREFIX=r"""
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <condition_variable>
+#include <deque>
+#include <functional>
 #include <mutex>
 #include <queue>
 #include <vector>
@@ -95,12 +98,17 @@ struct Presenter {
     Vulkan::Frame* PrepareFrame(const int&,std::uintptr_t){return PrepareBlankFrame(false);}
 };
 static auto presenter=std::make_unique<Presenter>();
+// CP scheduling and Vulkan readiness are controlled boundaries in this clock
+// test. The companion present-queue gate exercises actual CP callbacks/fences.
+struct Liverpool {void SendCommand(std::function<void()> work){work();}};
+static auto liverpool=std::make_unique<Liverpool>();
 namespace Libraries::VideoOut {
 s32 sceVideoOutSetFlipRate(s32,s32);
 enum class OrbisVideoOutInternalEventId {Vblank};
 struct VideoOutDriver {
     struct Port;
     struct Request {Vulkan::Frame* frame{};Port* port{};s64 flip_arg{};s32 index{};bool eop{};
+        int attribute{};std::uintptr_t address=1;u64 sequence{};bool activated{};
         operator bool()const{return frame!=nullptr;}};
     struct Port {
         struct Status {u64 count{},process_time{},tsc{};} vblank_status;
@@ -109,11 +117,28 @@ struct VideoOutDriver {
         std::array<Slot,1> buffer_slots{};std::array<int,1> groups{};
         std::vector<int> vblank_events;std::mutex vo_mutex;FakeCV vblank_cv;
     } main_port;
-    std::mutex mutex;std::queue<Request> requests;FakeCV request_cv{true};
+    std::mutex mutex;std::deque<Request> requests;FakeCV request_cv{true};
+    struct CallbackLifetime {std::recursive_mutex mutex;VideoOutDriver* owner{};};
+    std::shared_ptr<CallbackLifetime> callback_lifetime=std::make_shared<CallbackLifetime>();
+    bool present_progress_enabled=true,preparing_frame=false,prepare_queued=false;
+    std::atomic<bool> stopping{false};std::atomic<u64> frames_prepared{};
+    u64 next_sequence=0;
+    std::mutex swap_mutex;std::condition_variable_any swap_cv;std::jthread swap_thread;
     std::jthread present_thread;
+    VideoOutDriver(){callback_lifetime->owner=this;}
     ~VideoOutDriver();
+    void Close(int){} // Close/reopen and retirement are covered by the queue gate.
     Port* GetPort(int){return &main_port;}
-    void SubmitFlipInternal(Port*,s32,s64,bool);
+    void SubmitFlipInternal(u64);
+    void PrepareFrontRequest(bool);
+    void QueueFramePreparation();
+    Request ReceiveRequest();
+    void NotePresentProgress(){}
+    void EnqueueFrame(s64 arg){
+        const auto sequence=++next_sequence;
+        requests.push_back({.port=&main_port,.flip_arg=arg,.sequence=sequence});
+        SubmitFlipInternal(sequence);
+    }
     void Flip(const Request& request){
         assert(request.frame->id==presented.size()+1);
         presented.push_back(TestClock::now());
@@ -134,7 +159,7 @@ void AdvanceTo(Time deadline){
     if(deadline<TestClock::now())return;
     if(!ready_queued && ready_at<=deadline){
         TestClock::value=ready_at;
-        active->SubmitFlipInternal(&active->main_port,0,next_id+1,false);
+        active->EnqueueFrame(next_id+1);
         ready_queued=true;ready_at=Time::max();
     }
     TestClock::value=deadline;
@@ -158,7 +183,7 @@ int main(int argc,char** argv){
     Libraries::VideoOut::VideoOutDriver instance;active=&instance;Libraries::VideoOut::driver=&instance;
     Libraries::VideoOut::sceVideoOutSetFlipRate(1,requested_rate);
     for(unsigned i=0;i<(switch_mode==3?360u:1u);++i)
-        instance.SubmitFlipInternal(&instance.main_port,0,i+1,false);
+        instance.EnqueueFrame(i+1);
     ready_queued=true;
     instance.PresentThread({});
     assert(presented.size()==360);
@@ -238,10 +263,12 @@ LIFETIME_PREFIX = r'''
 #include <cassert>
 #include <condition_variable>
 #include <latch>
+#include <memory>
 #include <mutex>
 #include <thread>
 namespace Libraries::VideoOut {
 struct VideoOutDriver {
+    @@DESTRUCTOR_MEMBERS@@
     std::mutex mutex;
     std::condition_variable request_cv;
     std::latch waiting{1};
@@ -274,6 +301,7 @@ LOST_WAKE_PREFIX = r'''
 #include <condition_variable>
 #include <cstdio>
 #include <latch>
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -290,6 +318,7 @@ struct PredicateWindow {
 
 namespace Libraries::VideoOut {
 struct VideoOutDriver {
+    @@DESTRUCTOR_MEMBERS@@
     PredicateWindow& schedule;
     struct Mutex {
         PredicateWindow& schedule;
@@ -371,6 +400,22 @@ int main() {
 }
 '''
 
+# Exercise the complete production destructor in the existing deterministic
+# stop/predicate tests. The independent swap worker and CP callback lifetime
+# have their own real-thread tests in test_present_queue_progress.py.
+DESTRUCTOR_MEMBERS = r'''
+    struct CallbackLifetime {std::recursive_mutex mutex;VideoOutDriver* owner{};};
+    std::shared_ptr<CallbackLifetime> callback_lifetime=std::make_shared<CallbackLifetime>();
+    std::atomic<bool> stopping{false};
+    bool present_progress_enabled=false;
+    std::mutex swap_mutex;
+    std::condition_variable_any swap_cv;
+    std::jthread swap_thread;
+    void Close(int){}
+'''
+LIFETIME_PREFIX=LIFETIME_PREFIX.replace('@@DESTRUCTOR_MEMBERS@@',DESTRUCTOR_MEMBERS)
+LOST_WAKE_PREFIX=LOST_WAKE_PREFIX.replace('@@DESTRUCTOR_MEMBERS@@',DESTRUCTOR_MEMBERS)
+
 def method(text,signature):
     start=text.index(signature);end=text.index('\n}\n',start)+3
     return text[start:end]
@@ -380,7 +425,11 @@ api=(root/'src/core/libraries/videoout/video_out.cpp').read_text()
 patcher=(root/'src/common/memory_patcher.cpp').read_text()
 header=(root/'src/common/order_frame_pacing.h').read_text()
 present=method(driver,'void VideoOutDriver::PresentThread(').replace('std::chrono::steady_clock','TestClock').replace('std::this_thread::sleep_until','AdvanceTo').replace('std::stop_token','StopToken')
-producer=method(driver,'void VideoOutDriver::SubmitFlipInternal(')
+producer='\n'.join(method(driver,signature) for signature in (
+    'void VideoOutDriver::SubmitFlipInternal(',
+    'void VideoOutDriver::QueueFramePreparation(',
+    'void VideoOutDriver::PrepareFrontRequest(',
+    'VideoOutDriver::Request VideoOutDriver::ReceiveRequest('))
 destructor=method(driver,'VideoOutDriver::~VideoOutDriver() {')
 set_rate=method(api,'s32 PS4_SYSV_ABI sceVideoOutSetFlipRate(')
 refresh=method(patcher,'void RefreshOrderFramePacing() {')
@@ -435,6 +484,7 @@ with tempfile.TemporaryDirectory(prefix='order-frame-pacing-') as temporary:
     if not a.positive_only:
         locked_stop='''    {
         std::scoped_lock lock{mutex};
+        stopping.store(true, std::memory_order_release);
         present_thread.request_stop();
     }'''
         assert destructor.count(locked_stop)==1
@@ -446,7 +496,7 @@ with tempfile.TemporaryDirectory(prefix='order-frame-pacing-') as temporary:
         print('ORDER_FRAME_PACING_NEGATIVE_PASS unsynchronized_stop_predicate')
         variants={
             'vblank_only':(present.replace('if (!frame_limit || main_port.flip_rate.load(std::memory_order_relaxed) != 0)', 'if (true || !frame_limit || main_port.flip_rate.load(std::memory_order_relaxed) != 0)'),producer),
-            'missing_notify':(present,producer.replace('request_cv.notify_one();','')),
+            'missing_notify':(present,producer.replace('request_cv.notify_one();','(void)0;')),
             'missing_cap':(present.replace('1000000000 / frame_limit','1').replace('1000000000 / limit','1'),producer),
             'ignore_guest_rate':(present.replace('(main_port.flip_rate.load(std::memory_order_relaxed) + 1)','1').replace('main_port.flip_rate.load(std::memory_order_relaxed) != 0','false').replace('main_port.flip_rate.load(std::memory_order_relaxed) == 0','true'),producer),
             'wrong_vblank_clock':(present.replace('EmulatorSettings.GetVblankFrequency()', '(2 * EmulatorSettings.GetVblankFrequency())'),producer),

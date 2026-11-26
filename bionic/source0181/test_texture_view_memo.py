@@ -498,6 +498,15 @@ def program(root):
             'void Rasterizer::RememberImageViewToken(', 'bool Rasterizer::IsViewMemoTokenCurrent(',
             'VideoCore::ImageView& Rasterizer::FindTextureWithViewMemo('))
     code = PREAMBLE
+    if 'void RegisterAlias(ImageId image_id);' in header:
+        # The view fixture has no image-memory aliases. Their independent gate
+        # covers the real authority, while these real view/lifetime methods run.
+        code = code.replace('    void RegisterImage(ImageId);',
+            '    void RegisterAlias(ImageId){}\n'
+            '    void UnregisterAlias(ImageId){}\n'
+            '    void SynchronizeAlias(ImageId){}\n'
+            '    void PublishAliasWrite(ImageId){}\n'
+            '    void RegisterImage(ImageId);', 1)
     for token, value in values.items():
         assert code.count(token) == 1, token
         code = code.replace(token, value)

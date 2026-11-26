@@ -38,6 +38,7 @@ PRELUDE = r'''
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 #include "common/types.h"
@@ -576,6 +577,10 @@ def program(source: Path, scheduler_override: str | None = None) -> str:
         "@META_METHODS@": "\n".join(function(cache, f) for f in ("    bool IsMetaCleared(", "    bool TouchMeta(")),
     }
     code = PRELUDE + RESOURCE_FIXTURE + TESTS
+    if (root / "video_core/renderer_vulkan/order_render_pass_reasons.h").exists():
+        code = '#include "video_core/renderer_vulkan/order_render_pass_reasons.h"\n' + code
+        code = code.replace('    void EndRendering();',
+            '    void EndRendering(OrderPassEndReason reason = OrderPassEndReason::Unspecified);', 1)
     for key, value in replacements.items():
         assert code.count(key) == 1, key
         code = code.replace(key, value)
@@ -613,13 +618,25 @@ def compile_run(directory: Path, code: str, name: str, *, android: bool = True,
 def application_guards(directory: Path, source: Path) -> None:
     rel = Path("src/video_core/renderer_vulkan/vk_scheduler.cpp")
     text = (source / rel).read_text()
+    header = (source / rel.with_suffix(".h")).read_text()
+    if 'BACHATA_ORDER_PASS_END_REASON' in text:
+        # Undo only the subsequent diagnostic decoration before checking the
+        # unchanged coalescing patch and its six incompatible-state negatives.
+        from port_order_pass_end_reasons import COUNTER
+        assert text.count(COUNTER) == 1
+        text = text.replace(COUNTER, '')
+        text = text.replace('void Scheduler::EndRendering(OrderPassEndReason reason)',
+                            'void Scheduler::EndRendering()')
+        text = text.replace('EndRendering(Vulkan::OrderPassEndReason::RenderState);', 'EndRendering();')
+        text = text.replace('    if (UsesOrderRenderPassCoalescing()) CountOrderPassEndReason(this, reason);\n', '')
+        header = header.replace('void EndRendering(OrderPassEndReason reason = OrderPassEndReason::Unspecified);',
+                                'void EndRendering();')
     assert text.count(HELPERS) == 1 and text.count(NEW_BEGIN) == 1
     original = text.replace(HELPERS, "").replace(NEW_BEGIN, OLD_BEGIN)
     original = original.replace("void Scheduler::BeginRendering(const RenderState& new_state, bool metadata_clear_consumed) {",
                                 "void Scheduler::BeginRendering(const RenderState& new_state) {")
     original = original.replace(
         "    if (UsesOrderRenderPassCoalescing()) CountOrderRenderPass(OrderRenderPassEvent::End);\n", "")
-    header = (source / rel.with_suffix(".h")).read_text()
     validate_contract(original, header)
     mutations = (
         (original.replace(".storeOp = vk::AttachmentStoreOp::eStore,", ".storeOp = vk::AttachmentStoreOp::eDontCare,", 1), header),

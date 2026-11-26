@@ -302,6 +302,14 @@ def run(root):
     bc = (root/'src/video_core/buffer_cache/buffer_cache.cpp').read_text()
     members = rh[rh.index('    // Runtime-only caches:'):rh.index('    using ImageBindingInfo =')]
     preamble = PREAMBLE
+    if 'void RegisterAlias(ImageId image_id);' in th:
+        # This fixture has no same-address image groups. The alias gate executes
+        # the real authority/copy protocol; retain real registry/memo bodies here.
+        preamble = preamble.replace('    void RegisterImage(ImageId);',
+            '    void RegisterAlias(ImageId){}\n'
+            '    void SynchronizeAlias(ImageId){}\n'
+            '    void PublishAliasWrite(ImageId){}\n'
+            '    void RegisterImage(ImageId);', 1)
     if 'BACHATA_ORDER_TEXTURE_VIEW_MEMO_V1' in th:
         # This gate exercises the lookup family with no view-memo argument.
         # The separate view-memo gate compiles its real backing/view protocol.

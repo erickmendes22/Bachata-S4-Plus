@@ -208,7 +208,7 @@ namespace Vulkan {
 struct Scheduler {
     u64 current{1},completed{};u32 barriers{},copies{},fills{},updates{};
     u64 stages{};
-    void EndRendering(){}
+    template<class... A>void EndRendering(A&&...){}
     // Timeline completion policy is executed by test_pending_poll; this probe
     // isolates the real indirect preparation and resource-state ordering.
     void PopPendingOperationsHot(){}
@@ -469,6 +469,8 @@ with tempfile.TemporaryDirectory() as name:
     cpp = folder / "indirect.cpp"
     exe = folder / "indirect"
     program = HARNESS
+    if (src / "video_core/renderer_vulkan/order_render_pass_reasons.h").exists():
+        program = '#include "video_core/renderer_vulkan/order_render_pass_reasons.h"\n' + program
     for marker, value in (("RUNTIME", runtime_methods), ("STREAM", stream_methods),
                           ("DRAW_READS", draw_reads), ("DISPATCH_READS", dispatch_reads),
                           ("FIXED_READS", fixed_reads), ("WARNING", warning_policy),

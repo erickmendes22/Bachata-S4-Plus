@@ -173,7 +173,7 @@ struct Scheduler {
     u64 CurrentTick()const{return current;}
     bool IsFree(u64 tick)const{return tick<=completed;}
     void DrainDrawPipe(){}
-    void EndRendering(){}
+    template<class... A>void EndRendering(A&&...){}
     void Flush(SubmitInfo&){for(auto&op:commands)op();commands.clear();submitted=current++;}
     void WaitSubmitted(u64 tick){assert(tick<=submitted);}
     void Wait(u64 tick);
@@ -597,6 +597,8 @@ def main() -> None:
         "BOUND": bound, "SELECTION": selection,
     }
     program = PROGRAM
+    if (src / "video_core/renderer_vulkan/order_render_pass_reasons.h").exists():
+        program = '#include "video_core/renderer_vulkan/order_render_pass_reasons.h"\n' + program
     for name, value in values.items():
         program = program.replace("@" + name + "@", value)
     # Counting at the copy boundary leaves the real sparse-alias implementation intact.
