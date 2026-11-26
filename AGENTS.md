@@ -50,6 +50,10 @@ funcionais. Corrigir os grupos de diferenças completos, não apenas logs ou
 workarounds isolados. Preservar o comportamento dos demais jogos.
 
 Não aceitar equivalência por número de patches, compilação bem-sucedida ou
-presença de símbolos. Exigir comparação funcional em gameplay e estabilidade
-com o mesmo driver, resolução, patches, cenas e cache frio/quente. Não exigir
+presença de símbolos. A confirmação de equivalência funcional exige comparação em gameplay e estabilidade
+com o mesmo driver, resolução, patches, cenas e cache frio/quente. Conforme a
+instrução do usuário de 2026-11-25, essa confirmação NÃO é condição para a
+entrega do APK: entregue a build assinada, com a implementação e testes disponíveis,
+e identifique o que ainda precisa ser confirmado no aparelho. Não encerrar a
+execução por falta de testes em gameplay. Não exigir
 AOT como condição de equivalência ou como solução de desempenho. 

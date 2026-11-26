@@ -3,7 +3,7 @@ on:
   # The user requested an actual Android APK to test the fixed launch.
   # New commits supersede earlier builds; only the latest complete core runs.
   push:
-    branches: [work/bionic-fps-baseline-20261125, work/bionic-order-parity-recovery-20261125]
+    branches: [work/bionic-wsi-fex-async-package-20261125]
     paths:
       - '.github/workflows/bachata-bionic-generic-source.yml'
       - 'bionic/generic/**'
@@ -21,7 +21,7 @@ on:
 # One complete Bionic APK build per branch. New source revisions supersede old builds.
 concurrency:
   group: bachata-bionic-full-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   bionic-source-preflight:
-    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.core_run_id == '') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[apk-only]')) }}
+    if: false
     name: Fast Bionic/FEX source and ABI audit (no APK)
     runs-on: ubuntu-24.04
     timeout-minutes: 12
@@ -91,23 +91,6 @@ jobs:
           grep -Fq 'BIONIC_CPP_FAIL_FAST_START' bionic/generic/build-generic.sh
           ! grep -Fq -- '-- -k 0' bionic/generic/build-generic.sh
           python3 bionic/source0181/assert_native_api.py --source generic-upstream
-          python3 bionic/source0181/test_memory_transaction.py --source generic-upstream
-          python3 bionic/source0181/test_donor_barrier_tree.py --source generic-upstream
-          python3 bionic/source0181/test_present_boot_ownership.py --source generic-upstream
-          python3 bionic/source0181/test_wsi_fex_guard.py --source generic-upstream
-          python3 bionic/source0181/test_fex_fault_evidence.py --source generic-upstream
-          python3 bionic/source0181/test_fex_clock_protocol.py --source generic-upstream
-          python3 bionic/source0181/test_frame_protocol.py --source generic-upstream
-          python3 bionic/source0181/test_donor_alu_semantics.py --source generic-upstream
-          python3 bionic/source0181/test_donor_wave64_lds.py --source generic-upstream
-          python3 bionic/source0181/test_donor_shader_inputs.py --source generic-upstream
-          python3 bionic/source0181/test_donor_early_depth.py --source generic-upstream
-          python3 bionic/source0181/test_donor_nan_clamp.py --source generic-upstream
-          python3 bionic/source0181/test_readconst_addr64.py --source generic-upstream
-          python3 bionic/source0181/test_donor_draw_pipeline.py --source generic-upstream
-          python3 bionic/source0181/test_pending_gpu_callbacks.py --source generic-upstream
-          python3 bionic/source0181/test_surface_metadata_protocol.py --source generic-upstream
-          python3 bionic/source0181/test_donor_pipeline_key.py --source generic-upstream
           # Fail the cheap preflight if the host protobuf generator can again
           # become a cached /usr/bin/protoc after restoring CMakeCache.txt.
           grep -Fq 'BACHATA_HOST_PROTOC_EXECUTABLE:FILEPATH' bionic/generic/build-generic.sh
@@ -219,363 +202,11 @@ jobs:
           path: out/generic/android_native_core.o
           retention-days: 14
 
-  full-ps4-bionic:
-    # Do not spend ~20 minutes compiling for each speculative source change.
-    # Full core and P36 APK build only on explicit workflow_dispatch or
-    # an intentional commit message carrying [build-apk].
-    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.core_run_id == '') || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[build-apk]') || contains(github.event.head_commit.message, '[validate-native]'))) }}
-    needs: [bionic-source-preflight]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 180
-    env:
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: 3G
-      CCACHE_COMPILERCHECK: content  # NDK binary timestamp changes on fresh runners; hash actual compiler
-      CCACHE_BASEDIR: ${{ github.workspace }}
-      CCACHE_COMPRESS: "true"
-      CMAKE_C_COMPILER_LAUNCHER: ccache
-      CMAKE_CXX_COMPILER_LAUNCHER: ccache
-      CCACHE_NOHASHDIR: "true"
-    steps:
-      - name: Stop older concurrent Bionic builds (pre-concurrency runs)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          endpoint="/repos/${GITHUB_REPOSITORY}/actions/workflows/bachata-bionic-generic-source.yml/runs?branch=feature%2Fbionic-shadps4-0181-source-port-20261121&per_page=100"
-          previous_ids="$(gh api "$endpoint" --jq '.workflow_runs[] | select(.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "pending") | .id')"
-          for previous_id in $previous_ids; do
-            if (( previous_id < GITHUB_RUN_ID )); then
-              echo "Cancel superseded Bionic build #${previous_id} (current #${GITHUB_RUN_ID})"
-              if ! gh api -X POST "/repos/${GITHUB_REPOSITORY}/actions/runs/${previous_id}/cancel" >/dev/null; then
-                current_status="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${previous_id}" --jq '.status')"
-                if [[ "$current_status" != "completed" ]]; then
-                  echo "::error::Failed to cancel concurrent Bionic run #${previous_id}; refusing to start another costly build"
-                  exit 1
-                fi
-              fi
-            fi
-          done
-
-      - name: Bachata S4+ Android JNI integration
-        uses: actions/checkout@v4
-
-      - name: Native Android FEX/Vulkan reference source
-        uses: actions/checkout@v4
-        with:
-          repository: erickmendes22/uncharted-android
-          ref: 148656bc7ae1b8b482d95e33d49f0729421ff477
-          path: port
-          submodules: recursive
-          persist-credentials: false
-
-      - name: Reconstruct REAL upstream shadPS4 0.18.1 Android/FEX source for full build
-        run: |
-          set -euo pipefail
-          git clone --quiet --filter=blob:none --no-checkout https://github.com/zenithblue-oss/shadps4-arm64.git generic-upstream
-          git -C generic-upstream checkout --quiet be6bc2e9c60799e071dd2fafa6216e8d80ec619c
-          git -C generic-upstream config user.name 'Bachata Source Port CI'
-          git -C generic-upstream config user.email 'source-port@users.noreply.github.com'
-          git -C generic-upstream remote add shadps4 https://github.com/shadps4-emu/shadPS4.git
-          git -C generic-upstream fetch --quiet --filter=blob:none shadps4 3912336fdfffbd5c99b59d92e997ea6ebd62216c
-          python3 bionic/source0181/rebase_arm64.py --source generic-upstream --output out/source0181
-          python3 bionic/source0181/port_0181.py --source generic-upstream --report out/source0181/bionic-0181-parity.json
-          grep -Fq 'set(EMULATOR_VERSION_MINOR "18")' generic-upstream/CMakeLists.txt
-          # Upstream 0.18.1 introduces imgui/protobuf/zstd/zarchive/abseil.
-          # Preserve the FEX/Bachata host submodules AND register every
-          # gitlink introduced by the newer PS4 core.
-          git -C generic-upstream show FETCH_HEAD:.gitmodules > out/source0181/upstream-0181.gitmodules
-          python3 - <<'PY'
-          import configparser
-          from pathlib import Path
-          old=Path("generic-upstream/.gitmodules")
-          upstream=Path("out/source0181/upstream-0181.gitmodules")
-          left=configparser.ConfigParser(interpolation=None)
-          right=configparser.ConfigParser(interpolation=None)
-          left.read(old)
-          right.read(upstream)
-          added=[]
-          for sec in right.sections():
-              if sec in left:
-                  continue
-              left.add_section(sec)
-              for key,value in right.items(sec):
-                  left.set(sec,key,value)
-              added.append(sec)
-          with old.open("w") as out:
-              left.write(out)
-          # configparser writes an extra empty line at EOF; diff --check
-          # rejects it even though the actual gitlinks are valid.
-          old.write_text(old.read_text().rstrip() + "\n")
-          print("REGISTERED_0181_SUBMODULES",added)
-          assert any("externals/imgui" in sec for sec in left.sections())
-          PY
-          git -C generic-upstream submodule sync
-          git -C generic-upstream submodule update --init --recursive --jobs 4
-          test -s generic-upstream/externals/sdl3/CMakeLists.txt
-          test -s generic-upstream/src/core/fex/fex_guest_engine.cpp
-          test -s generic-upstream/src/shader_recompiler/recompiler.cpp
-          echo REAL_SHADPS4_0181_SOURCE_AND_BIONIC_HOST_ASSEMBLED
-
-      - name: Enforce diagnosed 0.16/0.18 C++ API contracts before NDK
-        run: |
-          set -euo pipefail
-          python3 bionic/source0181/assert_native_api.py --source generic-upstream
-          python3 bionic/source0181/test_memory_transaction.py --source generic-upstream
-          python3 bionic/source0181/test_donor_barrier_tree.py --source generic-upstream
-          python3 bionic/source0181/test_present_boot_ownership.py --source generic-upstream
-          python3 bionic/source0181/test_wsi_fex_guard.py --source generic-upstream
-          python3 bionic/source0181/test_fex_fault_evidence.py --source generic-upstream
-          python3 bionic/source0181/test_fex_clock_protocol.py --source generic-upstream
-          python3 bionic/source0181/test_frame_protocol.py --source generic-upstream
-          python3 bionic/source0181/test_donor_alu_semantics.py --source generic-upstream
-          python3 bionic/source0181/test_donor_wave64_lds.py --source generic-upstream
-          python3 bionic/source0181/test_donor_shader_inputs.py --source generic-upstream
-          python3 bionic/source0181/test_donor_early_depth.py --source generic-upstream
-          python3 bionic/source0181/test_donor_nan_clamp.py --source generic-upstream
-          python3 bionic/source0181/test_readconst_addr64.py --source generic-upstream
-          python3 bionic/source0181/test_donor_draw_pipeline.py --source generic-upstream
-          python3 bionic/source0181/test_pending_gpu_callbacks.py --source generic-upstream
-          python3 bionic/source0181/test_surface_metadata_protocol.py --source generic-upstream
-          python3 bionic/source0181/test_donor_pipeline_key.py --source generic-upstream
-          python3 - <<'PY'
-          import json
-          data = json.load(open("out/source0181/bionic-0181-parity.json"))
-          assert data["auditPassed"]
-          api = data["modern0181ApiReconciliation"]
-          assert api and len(api["restoredMatchingImplementations"]) >= 13
-          assert len(api["portedInterfaces"]) >= 9
-          assert any("FEX pthread semaphores" in item for item in api["fexAdaptersKept"])
-          print("FULL_BIONIC_0181_SUBSYSTEM_API_COHERENCE_VERIFIED")
-          print(json.dumps(api, indent=2))
-          PY
-
-      - name: Android NDK r30
-        uses: android-actions/setup-android@v3
-        with:
-          packages: >-
-            platform-tools
-            ndk;30.0.14904198
-
-      - name: Host dependencies for full cross-compilation
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential clang lld llvm git cmake ninja-build python3-venv \
-            bison flex pkg-config curl unzip zip glslang-tools binutils ccache spirv-tools
-          # Public protoc 36.0 generates incompatible code for the pinned
-          # shadexternals/protobuf fork; build the matching host compiler.
-          bash -n bionic/build-core.sh
-          bash -n bionic/generic/build-generic.sh
-
-      - name: Validate actual donor atomic and LDS SPIR-V with pinned Sirit
-        run: |
-          python3 bionic/source0181/test_donor_spirv_emission.py \
-            --source generic-upstream --sirit generic-upstream/externals/sirit \
-            --out out/spirv-validation
-
-      - name: Restore cross-build and compiler caches (pinned NDK and sources)
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            .ccache
-            out/bionic/deps
-            out/bionic/fex
-            out/bionic/fex-android
-            out/bionic/libadrenotools
-            out/bionic/adrenotools-android
-            out/bionic/gpu-build
-            out/bionic/shadps4-generic-android
-            out/bionic/host-absl-build
-            out/bionic/host-protoc-build
-            out/bionic/host-protoc-prefix
-          key: bachata-full-bionic-r30-${{ github.sha }}
-          restore-keys: |
-            bachata-full-bionic-r30-
-
-      # A separate stage archive preserves the old 1.39-GB native/ccache
-      # cache version; adding stage to its path list would invalidate it.
-      - name: Restore native stage separately from incremental C++ cache
-        uses: actions/cache/restore@v4
-        with:
-          path: out/bionic/stage
-          key: bachata-0181-native-stage-r30-${{ github.sha }}
-          restore-keys: |
-            bachata-0181-native-stage-r30-
-
-      # Restore the previous checkout timestamps ONLY for byte-identical
-      # inputs. Without this step a fresh git clone makes all sources newer
-      # than the restored .o files, forcing a false ~400-file rebuild.
-      - name: Restore identical C++ source timestamps for real Ninja incremental builds
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 bionic/source0181/incremental_inputs.py restore
-          # Stats since this execution, not the cumulative cache archive.
-          ccache --zero-stats
-
-      - name: Check reusable FEX/Vulkan binaries and pinned dependencies
-        id: native-prereq-cache
-        shell: bash
-        run: |
-          set -euo pipefail
-          mode="$(NDK="$ANDROID_HOME/ndk/30.0.14904198" bash bionic/source0181/native_cache.sh check)"
-          case "$mode" in ready|restage|repair_fex|repair_ffmpeg|rebuild) ;; *) exit 2;; esac
-          echo "mode=$mode" >> "$GITHUB_OUTPUT"
-          echo "BIONIC_NATIVE_CACHE_MODE=$mode"
-
-      - name: Reuse, restage or rebuild native FEXCore/Vulkan prerequisites
-        shell: bash
-        run: |
-          set -euo pipefail
-          mode="${{ steps.native-prereq-cache.outputs.mode }}"
-          if [[ "$mode" == "ready" ]]; then
-            echo BIONIC_FEX_VULKAN_CACHE_HIT
-          elif [[ "$mode" == "restage" ]]; then
-            NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 \
-              BACHATA_REUSE_NATIVE_BUILD=1 bash bionic/build-core.sh
-          elif [[ "$mode" == "repair_fex" ]]; then
-            echo "BACHATA_REPAIR_FEXCORE_AND_VERIFY_FFMPEG_DEV_PREFIX"
-            NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 \
-              BACHATA_REPAIR_FEX_ONLY=1 bash bionic/build-core.sh
-          elif [[ "$mode" == "repair_ffmpeg" ]]; then
-            echo "BACHATA_REPAIR_FFMPEG_DEV_PREFIX_ONLY_NO_FEX_REBUILD"
-            NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 \
-              BACHATA_REPAIR_FFMPEG_ONLY=1 bash bionic/build-core.sh
-          elif [[ "$mode" == "rebuild" ]]; then
-            NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 bash bionic/build-core.sh
-          else
-            echo "::error::Unrecognized prerequisite cache mode"
-            exit 2
-          fi
-          # Restore cross-compiler FFmpeg and SDL linker inputs even when the
-          # separately cached APK-stage .so files already appear complete.
-          NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 \
-            bash bionic/source0181/native_cache.sh restore_deps
-          NDK="$ANDROID_HOME/ndk/30.0.14904198" \
-            bash bionic/source0181/native_cache.sh stamp
-
-      - name: Build host protoc from matching pinned protobuf source and test ABI
-        id: host_protoc
-        run: |
-          set -euo pipefail
-          BACHATA_HOST_JOBS=6 bash bionic/source0181/build_host_protoc.sh
-          echo "$GITHUB_WORKSPACE/out/bionic/host-protoc-build" >> "$GITHUB_PATH"
-          test -s out/bionic/host-protoc-smoketest/shadnet.pb.cc
-          ! grep -Fq 'TcParser::MpUnknownFields' out/bionic/host-protoc-smoketest/shadnet.pb.cc
-
-      - name: Cache native prerequisites immediately before full C++ compilation
-        uses: actions/cache/save@v4
-        with:
-          path: out/bionic/stage
-          key: bachata-0181-native-stage-r30-${{ github.sha }}
-
-      - name: Audit full class of FEX libc NIDs without hiding missing functions
-        run: |
-          set -euo pipefail
-          python3 bionic/generic/audit_fex_libc.py --upstream generic-upstream
-          python3 bionic/generic/audit_fex_libc.py --upstream generic-upstream >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Audit FEX libc heap and guest printf entrypoints
-        run: |
-          set -euo pipefail
-          for nid in 'gQX+4GDQjpM' 'tIhsqj0qsFE' 'Y7aJ1uydPMo' '2X5agFjKxMc' 'Q2V+iqvjgC0'; do
-            grep -Fq "$nid" bionic/generic/android_libc_boot.cpp || { echo "::error::missing FEX libc NID $nid"; exit 2; }
-          done
-          grep -Fq 'Core::VMAType::Flexible' bionic/generic/android_libc_boot.cpp
-
-      - name: Compile FULL shadPS4 with Android Vulkan loader + Turnip ICD recovery
-        run: |
-          python3 -m py_compile bionic/generic/port_generic.py
-          NDK="$ANDROID_HOME/ndk/30.0.14904198" BACHATA_JOBS=2 \
-            BIONIC_SOURCE0181_PREPATCHED=1 GENERIC_SHADPS4_SOURCE="$GITHUB_WORKSPACE/generic-upstream" \
-            bash bionic/generic/build-generic.sh
-          grep -aFq "0.18.1 WIP" out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so
-          grep -aFq 'BIONIC_VULKAN_LOADER_READY' out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so
-          grep -aFq 'BIONIC_VULKAN_CUSTOM_BRIDGE_READY' out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so
-          echo 'BIONIC_VULKAN_LOADER_RESOLVER_INCLUDED_IN_CORE'
-          # Cache hit/miss counts determine whether a future native build can
-          # be reduced further without dropping required emulator components.
-          ccache --show-stats || true
-
-      - name: Build original Bachata JNI ABI adapter for integrated core
-        run: |
-          set -euo pipefail
-          cmake -S bionic/jni -B out/bionic/jni-build -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_HOME/ndk/30.0.14904198/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=33 -DCMAKE_BUILD_TYPE=Release
-          cmake --build out/bionic/jni-build -j2
-          cp out/bionic/jni-build/libbachata_native_runtime.so out/bionic/stage/lib/arm64-v8a/
-          readelf -Ws out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so \
-            | grep -F Java_com_bachatas4_android_runtime_process_NativeRuntimeBridge_run > /dev/null
-          readelf -d out/bionic/stage/lib/arm64-v8a/libbachata_bionic_core.so \
-            | grep -q 'Shared library: \[libc.so\]'
-
-      - name: Upload completed native game-generic PS4 core
-        uses: actions/upload-artifact@v4
-        with:
-          name: Bachata-S4Plus-REAL-shadPS4-0181-FEX-Bionic-core
-          path: out/bionic/stage/
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Preserve source reconciliation and emitted SPIR-V validation
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Bachata-functional-parity-validation
-          path: |
-            out/source0181/
-            out/spirv-validation/*.spv
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Keep full-core CMake diagnostics on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Bachata-FULL-generic-build-failure-diagnostics
-          path: |
-            out/bionic/shadps4-generic-android/CMakeFiles/CMakeConfigureLog.yaml
-            out/bionic/shadps4-generic-android/CMakeCache.txt
-            out/bionic/host-protoc-build/CMakeCache.txt
-            out/bionic/host-absl-build/CMakeCache.txt
-            out/bionic/ndk-errors-summary.txt
-            out/bionic/deps/build/*.log
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Snapshot source hashes and timestamps for the next incremental build
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 bionic/source0181/incremental_inputs.py snapshot
-
-      - name: Cache successfully compiled objects even after an unrelated link error
-        if: ${{ !cancelled() && steps.host_protoc.outcome == 'success' }}
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            .ccache
-            out/bionic/deps
-            out/bionic/fex
-            out/bionic/fex-android
-            out/bionic/libadrenotools
-            out/bionic/adrenotools-android
-            out/bionic/gpu-build
-            out/bionic/shadps4-generic-android
-            out/bionic/host-absl-build
-            out/bionic/host-protoc-build
-            out/bionic/host-protoc-prefix
-          key: bachata-full-bionic-r30-${{ github.sha }}
-
   assemble-bionic-apk:
-    needs: [full-ps4-bionic]
-    if: ${{ always() && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[validate-native]')) && !cancelled() && (needs.full-ps4-bionic.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.core_run_id != '') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[apk-only]'))) }}
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[apk-only]') }}
     name: Assemble and sign Bachata S4+ 0.2.7 actual source 0.18.1 Bionic APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 180
     env:
       BACHATA_P36_PRIVATE_KEY: ${{ secrets.BACHATA_P36_PRIVATE_KEY }}
       BACHATA_P36_CERT: ${{ secrets.BACHATA_P36_CERT }}
@@ -612,6 +243,23 @@ jobs:
             echo "run=${MANUAL_CORE_RUN:-$GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Wait for completed native validation of both exact FEX revisions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for pair in "45726588225 887d05d3c8afbb42e67510ed51ef45037e3a7bdd" "45726610527 36f6301f91b2c8fd49084ebae97bd5c8254992f1"; do
+            read -r run revision <<< "$pair"
+            for attempt in $(seq 1 360); do
+              state="$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$run)"
+              test "$(jq -r .head_sha <<< "$state")" = "$revision"
+              [[ "$(jq -r .status <<< "$state")" == completed ]] && break
+              sleep 15
+            done
+            test "$(jq -r .head_sha <<< "$state")" = "$revision"
+            test "$(jq -r .status <<< "$state")" = completed
+            test "$(jq -r .conclusion <<< "$state")" = success
+          done
       - name: Retrieve successful updated Bionic core from pinned build
         uses: actions/download-artifact@v4
         with:
@@ -628,28 +276,12 @@ jobs:
           set -euo pipefail
           test "$(cat out/bionic/stage/BIONIC_SOURCE_REVISION.txt)" = "$EXPECTED_REVISION"
 
-      - name: Wait for corrected SotC artifact
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          for attempt in $(seq 1 100); do
-            state="$(gh api repos/$GITHUB_REPOSITORY/actions/runs/45616445093)"
-            test "$(jq -r .head_sha <<< "$state")" = "81aa7c1ae4c9dcb16123306bf1733921d3984b4a"
-            if [[ "$(jq -r .status <<< "$state")" == completed ]]; then
-              test "$(jq -r .conclusion <<< "$state")" = success
-              exit 0
-            fi
-            sleep 30
-          done
-          exit 2
-
-      - name: Retrieve corrected SotC APK
+      - name: Retrieve dedicated validated Bachata SotC FEX core (not a port APK)
         uses: actions/download-artifact@v4
         with:
-          name: Bachata-S4Plus-REAL-shadPS4-0181-FEX-Bionic-P36-APK
-          path: out/sotc608
-          run-id: 45616445093
+          name: Bachata-S4Plus-REAL-shadPS4-0181-FEX-Bionic-core
+          path: out/sotc-stage
+          run-id: 45726610527
           github-token: ${{ github.token }}
 
       - name: Android build tools and ELF patching
@@ -737,14 +369,15 @@ jobs:
             --strip "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
           echo "BIONIC_NATIVE_DEBUG_STRIPPED; GLIBC_025_COMPACTED_DURING_ASSEMBLY"
 
-      - name: Import revised SotC core, verify P36 signature and shared dependencies
+      - name: Normalize, strip and import the second validated Bachata FEX core
         run: |
           set -euo pipefail
-          old=out/sotc608/Bachata-S4Plus-v0.2.7-shadPS4-0.18.1-SOURCE-Bionic-P36.apk
-          test -s "$old"
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$old" > out/sotc608/signer.txt
-          grep -Fq 'd04ef2a865f8ed5ab8f98321be93ed2881eaa64f844fbaf480e18a8336620a72' out/sotc608/signer.txt
-          python3 bionic/apk/import_sotc_core.py "$old" out/bionic/stage/lib/arm64-v8a
+          test "$(cat out/sotc-stage/BIONIC_SOURCE_REVISION.txt)" = "36f6301f91b2c8fd49084ebae97bd5c8254992f1"
+          bash bionic/apk/normalize_elf.sh out/sotc-stage/lib/arm64-v8a
+          NDK="$ANDROID_HOME/ndk/30.0.14904198"
+          python3 bionic/apk/prepare_slim_native.py out/sotc-stage \
+            --strip "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+          python3 bionic/apk/import_sotc_core.py out/sotc-stage out/bionic/stage/lib/arm64-v8a
 
       - name: Integrate newly compiled native runtime into 0.2.7 APK
         run: |
