@@ -412,6 +412,9 @@ def apply(root: Path):
         ph = one(ph, '#pragma once', '#pragma once\n#include <atomic>', 'presenter atomics')
     pc = one(pc, '#include "common/debug.h"',
              '#include "common/debug.h"\n#include "common/present_queue_progress.h"', 'presenter policy')
+    pc = one(pc, '#include "video_core/buffer_cache/buffer.h"',
+             '#include "video_core/amdgpu/liverpool.h"\n#include "video_core/buffer_cache/buffer.h"',
+             'complete Liverpool type for producer accessors')
     dc = one(dc, '#include "common/assert.h"',
              '#include "common/assert.h"\n#include "common/present_queue_progress.h"', 'driver policy')
     ph = one(ph, '    void Present(Frame* frame,', '    bool Present(Frame* frame,', 'present result')

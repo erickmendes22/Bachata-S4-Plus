@@ -377,7 +377,8 @@ def audit(root: Path) -> None:
                                                 'req.port_generation != port->generation',
                                                 'callback_lifetime->owner = nullptr;',
                                                 'presenter->DiscardFrame(frame);'),
-     'src/video_core/renderer_vulkan/vk_presenter.cpp': ('const bool poll = progress && (gpu_owner || '
+     'src/video_core/renderer_vulkan/vk_presenter.cpp': ('#include "video_core/amdgpu/liverpool.h"',
+                                                         'const bool poll = progress && (gpu_owner || '
                                                          '!allow_wait);',
                                                          'liverpool->OnDrawThread()',
                                                          'void Presenter::DiscardFrame(Frame* frame)',
