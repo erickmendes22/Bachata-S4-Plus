@@ -962,5 +962,9 @@ void GameController::PollState() {
     result["issAppContentAbi"] = apply_iss_appcontent_abi(root)
     from port_main_runtime_parity import apply as apply_main_runtime_parity
     result["mainRuntimeParity"] = apply_main_runtime_parity(root)
+    from port_order_texture_set import apply as apply_order_texture_set
+    result["orderTextureSet"] = apply_order_texture_set(root)
+    from port_order_selective_vrs import apply as apply_order_selective_vrs
+    result["orderSelectiveVrs"] = apply_order_selective_vrs(root)
 
     return result
