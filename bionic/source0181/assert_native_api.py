@@ -319,6 +319,31 @@ def audit(root: Path) -> None:
     if not re.fullmatch(r"[0-9a-f]{40}", git_sha) or (
             f"BACHATA_CORE_REVISION={git_sha}" not in emulator_source):
         issues.append("Native ELF marker does not match the actual source Git revision")
+    # New contracts are checked on the fully overlaid source, not just scripts.
+    pacing_reuse_contracts = {
+        "src/common/order_frame_pacing.h": (
+            "InstructionRva = 0x4507be", "PatchedInstruction", 'version == "01.02"',
+            "profile.store(next, std::memory_order_release)"),
+        "src/common/memory_patcher.cpp": (
+            "void RefreshOrderFramePacing()", "memory->TryReadBacking(address, instruction.data()",
+            "BACHATA_ORDER_FRAME_PACING patch60_verified={}"),
+        "src/core/libraries/videoout/driver.h": ("std::atomic<int> flip_rate{0};", "std::condition_variable request_cv;"),
+        "src/core/libraries/videoout/driver.cpp": (
+            "request_cv.notify_one();", "request_cv.wait_until(lk, tick_deadline",
+            "if (now >= tick_deadline) break;", "present_thread.request_stop();",
+            "if (present_thread.joinable()) present_thread.join();"),
+        "src/core/libraries/videoout/video_out.cpp": ("BACHATA_ORDER_FLIP_RATE guest_rate={}",),
+        "src/video_core/renderer_vulkan/vk_rasterizer.cpp": (
+            "BACHATA_ORDER_READCONST_REUSE", "VideoCore::BufferCache::ReadConstStreamThreshold()",
+            "readconst || shadow || order_readconst", "readconst_reuse.snapshot = pooled.buffer != nullptr;"),
+        "src/video_core/buffer_cache/buffer_cache.h": (
+            "ReadConstStreamThreshold() noexcept", "cpu_upload_bytes.load(std::memory_order_relaxed)",
+            "std::atomic<u64> cpu_upload_bytes{};"),
+        "src/video_core/buffer_cache/buffer_cache.cpp": (
+            "cpu_upload_bytes.fetch_add(total_size_bytes, std::memory_order_relaxed);",),
+    }
+    for rel, markers in pacing_reuse_contracts.items():
+        required[rel] = (*required.get(rel, ()), *markers)
     for rel, markers in required.items():
         path = root / rel
         if not path.is_file():

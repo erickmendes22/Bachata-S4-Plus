@@ -854,6 +854,12 @@ void GameController::PollState() {
     from port_order_readconst_pool import apply as apply_order_readconst_pool
     result["orderReadConstPool"] = apply_order_readconst_pool(root)
 
+    from port_order_readconst_reuse import apply as apply_order_readconst_reuse
+    result["orderReadConstReuse"] = apply_order_readconst_reuse(root)
+
+    from port_order_frame_pacing import apply as apply_order_frame_pacing
+    result["orderFramePacing"] = apply_order_frame_pacing(root)
+
     from port_runtime_cache_generation import apply as apply_runtime_cache_generation
     result["finalShaderCacheGeneration"] = apply_runtime_cache_generation(root)
     result["portedInterfaces"].append(

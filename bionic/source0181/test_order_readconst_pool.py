@@ -62,6 +62,18 @@ def main() -> None:
     assert "!buffer_cache.IsRegionGpuModified" in selection
     assert "buffer = pooled.buffer;" in selection and "offset = pooled.offset;" in selection
     assert "scheduler.DeferOperation" in selection
+    cache_limit_interface = ""
+    if "VideoCore::BufferCache::ReadConstStreamThreshold()" in selection:
+        cache_h = (src / "video_core/buffer_cache/buffer_cache.h").read_text()
+        public_start = cache_h.index("\npublic:\n", cache_h.index("class BufferCache {"))
+        private_start = cache_h.index("\nprivate:\n", public_start)
+        declaration = "static constexpr u64 STREAM_THRESHOLD = 16_KB;"
+        assert cache_h.index(declaration) < public_start
+        assert public_start < cache_h.index("ReadConstStreamThreshold()") < private_start
+        accessor = block(cache_h, "[[nodiscard]] static constexpr u64 ReadConstStreamThreshold()")
+        # Preserve the real access boundary; the binding must use the public
+        # accessor instead of making the private constant visible in a fixture.
+        cache_limit_interface = "class BufferCache {\n    " + declaration + "\npublic:\n    " + accessor + "\n};"
     assert "ClampGpuRangeSize" in bind and "const u64 bounded = std::min(mapped, limit);" in bind
     costs = block(rasterizer, "struct OrderReadConstCostWindow") + ";\n"
     costs += block(rasterizer, "struct OrderReadConstCostSample") + ";\n"
@@ -203,6 +215,7 @@ struct MemoryManager {
 };
 }
 namespace VideoCore {
+@CACHE_LIMIT@
 enum class MemoryType:u8{DeviceLocal,HostUncached,HostCached,Stream,Sparse};
 struct Buffer {
     static inline u64 allocations{},destructions{},next_id{};
@@ -595,6 +608,7 @@ int main(int argc,char**) {
 '''
     values = {
         "POLICY": block(profile, "inline bool Order1886()"),
+        "CACHE_LIMIT": cache_limit_interface,
         "STREAM": stream_methods, "POOL": pool_methods,
         "COST": costs, "OLD": old, "NEW": new, "SELECTION": selection,
         "ARENA": arena, "SCOPE": scope, "WAIT": block(scheduler, "void Scheduler::Wait(u64 tick)"),
