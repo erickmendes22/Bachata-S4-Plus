@@ -111,7 +111,12 @@ def apply(root: Path):
          '#include "common/assert.h"\n#include "common/order_frame_pacing.h"')
     edit(driver, 'VideoOutDriver::~VideoOutDriver() = default;', '''VideoOutDriver::~VideoOutDriver() {
     // Join before requests, ports and the new condition variable are destroyed.
-    present_thread.request_stop();
+    // The stop flag is a request_cv predicate. Publish it under the same
+    // mutex so notify cannot pass between a false predicate and atomic wait.
+    {
+        std::scoped_lock lock{mutex};
+        present_thread.request_stop();
+    }
     request_cv.notify_all();
     if (present_thread.joinable()) present_thread.join();
 }''')
@@ -177,4 +182,4 @@ def apply(root: Path):
     return {'scope': 'Android CUSA00785 01.02 with complete patched instruction verified',
             'pacing': 'notify on FIFO request; separate 60-FPS slots between guest vblanks',
             'guest': 'unchanged vblank clock, explicit nonzero flip rates respected',
-            'lifetime': 'join presentation thread before queue/condition-variable destruction'}
+            'lifetime': 'publish stop under queue mutex; notify and join before member destruction'}

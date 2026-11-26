@@ -268,6 +268,109 @@ LIFETIME_MAIN = r'''
 int main(){for(unsigned i=0;i<100;++i){Libraries::VideoOut::VideoOutDriver instance;}}
 '''
 
+LOST_WAKE_PREFIX = r'''
+#include <atomic>
+#include <cassert>
+#include <condition_variable>
+#include <cstdio>
+#include <latch>
+#include <mutex>
+#include <thread>
+
+// The actual std::mutex/condition_variable and the scheduling gates outlive
+// the driver, so the old implementation can be rescued without touching an
+// object being destroyed. No timed sleep chooses this interleaving.
+struct PredicateWindow {
+    std::mutex native_mutex;
+    std::condition_variable native_cv;
+    std::latch false_predicate{1}, destructor_boundary{1}, continue_predicate{1};
+    std::atomic<bool> stop_lock_attempted{false}, early_notification{false};
+    std::atomic<bool> finished{false};
+};
+
+namespace Libraries::VideoOut {
+struct VideoOutDriver {
+    PredicateWindow& schedule;
+    struct Mutex {
+        PredicateWindow& schedule;
+        void lock() {
+            // Called by the real destructor; the waiter still holds native_mutex.
+            schedule.stop_lock_attempted=true;
+            schedule.destructor_boundary.count_down();
+            schedule.native_mutex.lock();
+        }
+        void unlock(){schedule.native_mutex.unlock();}
+    } mutex{schedule};
+    struct Condition {
+        PredicateWindow& schedule;
+        void notify_all() {
+            if (!schedule.stop_lock_attempted.load()) {
+                // The old destructor has already set stop. Complete its real
+                // notify before allowing the cached false predicate to return.
+                schedule.early_notification=true;
+                schedule.native_cv.notify_all();
+                schedule.destructor_boundary.count_down();
+            } else {
+                schedule.native_cv.notify_all();
+            }
+        }
+    } request_cv{schedule};
+    std::jthread present_thread;
+    struct QueueLifetime {
+        VideoOutDriver* owner;
+        ~QueueLifetime(){assert(!owner->present_thread.joinable() && owner->schedule.finished);}
+    } requests{this};
+    explicit VideoOutDriver(PredicateWindow& state):schedule(state) {
+        present_thread=std::jthread([this](std::stop_token token){
+            std::unique_lock lock{schedule.native_mutex};
+            bool first=true;
+            schedule.native_cv.wait(lock,[&]{
+                const bool stopped=token.stop_requested();
+                if (first) {
+                    first=false;
+                    assert(!stopped);
+                    schedule.false_predicate.count_down();
+                    schedule.continue_predicate.wait();
+                }
+                return stopped;
+            });
+            schedule.finished=true;
+        });
+        schedule.false_predicate.wait();
+    }
+    ~VideoOutDriver();
+};
+'''
+
+LOST_WAKE_MAIN = r'''
+}
+int main() {
+    PredicateWindow schedule;
+    auto* driver=new Libraries::VideoOut::VideoOutDriver(schedule);
+    const auto token=driver->present_thread.get_stop_token();
+    std::thread destructor([&]{delete driver;});
+    schedule.destructor_boundary.wait();
+    const bool synchronized=schedule.stop_lock_attempted.load();
+    // With the fix, request_stop cannot run while the false predicate owns
+    // the mutex. Without it, stop and notify have both already happened.
+    assert(token.stop_requested()!=synchronized);
+    schedule.continue_predicate.count_down();
+    if (!synchronized) {
+        // Taking the same mutex proves the waiter reached wait's atomic
+        // unlock-and-wait boundary. Only then rescue the old lost notification.
+        std::scoped_lock after_wait{schedule.native_mutex};
+        schedule.native_cv.notify_all();
+    }
+    destructor.join();
+    assert(schedule.finished);
+    if (schedule.early_notification) {
+        std::puts("ORDER_FRAME_PACING_LOST_WAKE_REPRODUCED notify-before-wait");
+        return 2;
+    }
+    std::puts("ORDER_FRAME_PACING_PREDICATE_WINDOW_PASS mutex-stop/atomic-wait/notify/join");
+}
+'''
+
 def method(text,signature):
     start=text.index(signature);end=text.index('\n}\n',start)+3
     return text[start:end]
@@ -327,7 +430,20 @@ with tempfile.TemporaryDirectory(prefix='order-frame-pacing-') as temporary:
     lifetime=build('lifetime',LIFETIME_PREFIX+destructor+LIFETIME_MAIN)
     subprocess.run([str(lifetime)],check=True,timeout=5)
     print('ORDER_FRAME_PACING_LIFETIME_PASS stopped/woken/joined-before-queue-destruction cases=100')
+    predicate_window=build('predicate_window',LOST_WAKE_PREFIX+destructor+LOST_WAKE_MAIN)
+    subprocess.run([str(predicate_window)],check=True,timeout=5)
     if not a.positive_only:
+        locked_stop='''    {
+        std::scoped_lock lock{mutex};
+        present_thread.request_stop();
+    }'''
+        assert destructor.count(locked_stop)==1
+        unprotected_stop=destructor.replace(locked_stop,'    present_thread.request_stop();',1)
+        mutant=build('unsynchronized_stop',LOST_WAKE_PREFIX+unprotected_stop+LOST_WAKE_MAIN)
+        result=subprocess.run([str(mutant)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                              text=True,timeout=5)
+        assert result.returncode==2 and 'LOST_WAKE_REPRODUCED notify-before-wait' in result.stdout
+        print('ORDER_FRAME_PACING_NEGATIVE_PASS unsynchronized_stop_predicate')
         variants={
             'vblank_only':(present.replace('if (!frame_limit || main_port.flip_rate.load(std::memory_order_relaxed) != 0)', 'if (true || !frame_limit || main_port.flip_rate.load(std::memory_order_relaxed) != 0)'),producer),
             'missing_notify':(present,producer.replace('request_cv.notify_one();','')),

@@ -48,8 +48,12 @@ changed and `Flip`, including its actual-present frame counter, is retained.
 The presentation loop stops consuming at the current tick deadline, even
 when a queued request makes `wait_until` return immediately. This avoids
 starving vblank updates if `Flip` itself is expensive and the queue has a
-backlog. Thread shutdown requests stop, notifies the wait and joins before
-the queue, ports and condition variable are destroyed. `flip_rate` is atomic
+backlog. Thread shutdown publishes the stop request while holding the same
+mutex used by the request condition-variable predicate, releases it, notifies
+the wait and joins before the queue, ports and condition variable are destroyed.
+The mutex closes the false-predicate-to-atomic-wait window: an atomic stop flag
+alone does not prevent its notification from being lost in that interval.
+`flip_rate` is atomic
 because the guest setter and presentation thread access it concurrently.
 
 Two bounded diagnostics separate the questions in the user's report:
@@ -81,10 +85,18 @@ FPS improvements.
 The patch probe checks all ten bytes independently, title/version/platform,
 VMA validation, image/overflow limits, failed reads and post-patch ordering.
 One hundred actual-thread shutdowns verify stop/wake/join before destruction.
+A deterministic interleaving additionally holds the waiter's false predicate
+under the real mutex. The old destructor completes stop and notification before
+that predicate returns, so its notification precedes the actual wait. The test
+rescues that old wait only after its atomic unlock boundary and rejects the old
+body explicitly; it does not count a timeout as a passing reproduction. With
+the fix, the destructor cannot publish stop until the waiter enters that boundary.
+This uses the real destructor, `std::mutex`, condition variable and `std::jthread`;
+no sleep chooses the interleaving and the existing timeout limits are unchanged.
 Negative controls reject the old vblank-only path, missing notification,
 missing cap, ignored guest cadence, a changed vblank clock, backlog starvation,
 unsafe guest-span probing, probing before patches, premature queue destruction
-and shutdown without notification.
+shutdown without notification and unsynchronized stop publication.
 
 Compilation and these checks establish the implementation contracts. A fresh
 capture with this native revision is still required to measure the device's
