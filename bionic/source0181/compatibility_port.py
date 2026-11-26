@@ -956,4 +956,9 @@ void GameController::PollState() {
     from port_order_barrier_census import apply as apply_order_barrier_census
     result["orderBarrierCensus"] = apply_order_barrier_census(root)
 
+    from port_dmem_exact_ranges import apply as apply_dmem_exact_ranges
+    result["dmemExactRanges"] = apply_dmem_exact_ranges(root)
+    from port_iss_appcontent_abi import apply as apply_iss_appcontent_abi
+    result["issAppContentAbi"] = apply_iss_appcontent_abi(root)
+
     return result
