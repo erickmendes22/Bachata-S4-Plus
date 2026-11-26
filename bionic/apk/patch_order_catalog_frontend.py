@@ -20,7 +20,10 @@ RUNTIME = Path("smali_classes8/com/bachatas4/android/service/GlibcSessionRuntime
 
 
 def method_range(body: str, name: str) -> tuple[int, int, str]:
-    pattern = re.compile(r"(?m)^\.method[^\n]*\b" + re.escape(name) + r"\([^\n]*\n[\s\S]*?^\.end method$")
+    # Smali method names are whitespace-delimited tokens. A word boundary also
+    # matches Kotlin's access$validateRequest accessor, which coexists with the
+    # private validateRequest method in the real 0.2.7 frontend.
+    pattern = re.compile(r"(?m)^\.method[^\n]*[ \t]" + re.escape(name) + r"\([^\n]*\n[\s\S]*?^\.end method$")
     matches = list(pattern.finditer(body))
     if len(matches) != 1:
         raise ValueError(f"Expected exactly one {name} method")

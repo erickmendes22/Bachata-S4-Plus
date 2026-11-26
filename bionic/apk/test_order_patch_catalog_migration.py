@@ -96,8 +96,17 @@ def test_hooks():
     return-object v0
 .end method
 """
-    launcher = """.class public LLauncher;
-.method private final validateRequest(Lcom/bachatas4/android/runtime/process/RuntimeProcessRequest;Z)LLaunch;
+    # The real 0.2.7 DEX includes this synthetic accessor and the private method.
+    # Keep the accessor's descriptor/register flow faithful to that DEX; a word
+    # boundary before validateRequest incorrectly accepts both declarations.
+    launcher = """.class public Lcom/bachatas4/android/runtime/process/NativeRuntimeProcessLauncher;
+.method public static final synthetic access$validateRequest(Lcom/bachatas4/android/runtime/process/NativeRuntimeProcessLauncher;Lcom/bachatas4/android/runtime/process/RuntimeProcessRequest;Z)Lcom/bachatas4/android/runtime/process/NativeRuntimeProcessLauncher$NativeLaunch;
+    .locals 0
+    invoke-direct {p0, p1, p2}, Lcom/bachatas4/android/runtime/process/NativeRuntimeProcessLauncher;->validateRequest(Lcom/bachatas4/android/runtime/process/RuntimeProcessRequest;Z)Lcom/bachatas4/android/runtime/process/NativeRuntimeProcessLauncher$NativeLaunch;
+    move-result-object p0
+    return-object p0
+.end method
+.method private final validateRequest(Lcom/bachatas4/android/runtime/process/RuntimeProcessRequest;Z)Lcom/bachatas4/android/runtime/process/NativeRuntimeProcessLauncher$NativeLaunch;
     .locals 9
     const/4 v1, 0x0
     invoke-virtual {p1}, Lcom/bachatas4/android/runtime/process/RuntimeProcessRequest;->getRuntimeRoot()Ljava/nio/file/Path;
@@ -171,6 +180,18 @@ def test_hooks():
     assert execute_selector(True) == (["install"], None)
     assert unchanged(b) == unchanged(launcher)
     assert b.index(hooks.HELPER) < b.index("->toRealPath")
+    _, _, accessor = hooks.method_range(launcher, "access$validateRequest")
+    assert hooks.method_range(b, "access$validateRequest")[2] == accessor
+    start, end, original = hooks.method_range(launcher, "validateRequest")
+    # An accessor alone must never satisfy the private entry point, and two
+    # complete declarations must still fail before any file can be modified.
+    for broken in (launcher[:start] + launcher[end:], launcher + original + "\n"):
+        try:
+            hooks.hook_launcher(broken)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Accepted a missing or duplicate exact launcher method")
     for fn, body in ((hooks.hook_selector, a), (hooks.hook_launcher, b)):
         try:
             fn(body)
