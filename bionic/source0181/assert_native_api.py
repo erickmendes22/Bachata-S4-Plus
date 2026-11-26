@@ -344,6 +344,27 @@ def audit(root: Path) -> None:
     }
     for rel, markers in pacing_reuse_contracts.items():
         required[rel] = (*required.get(rel, ()), *markers)
+    required["src/core/libraries/fios2/fios2.cpp"] += (
+        "constexpr u8 FiosOpEventComplete = 1;",
+        "s32 PS4_SYSV_ABI (*)(void* context, s32 op, u8 event, s32 error)",
+        "BACHATA_FIOS_COMPLETION event={}",
+        "context, op, FiosOpEventComplete, err",
+        "const s32 op = CompleteAsyncOp(op_attr, written);",
+        "return CompleteAsyncOp(op_attr, result < 0 ? result : 0);",
+    )
+    required["src/video_core/renderer_vulkan/vk_scheduler.h"] += (
+        "bool metadata_clear_consumed = false",)
+    required["src/video_core/renderer_vulkan/vk_scheduler.cpp"] += (
+        "BACHATA_ORDER_RENDER_PASS wall_ms={}", "OrderInlineClearLayoutCompatible",
+        "RecordDeferred([clears, count, rect](vk::CommandBuffer cmdbuf)",
+        "cmdbuf.clearAttachments(count, clears.data(), 1, &rect);",
+        "bool metadata_clear_consumed)")
+    required["src/video_core/renderer_vulkan/vk_rasterizer.h"] = (
+        *required.get("src/video_core/renderer_vulkan/vk_rasterizer.h", ()),
+        "bool& metadata_clear_consumed")
+    required["src/video_core/renderer_vulkan/vk_rasterizer.cpp"] += (
+        "metadata_clear_consumed |= texture_cache.TouchMeta",
+        "scheduler.BeginRendering(state, metadata_clear_consumed);")
     for rel, markers in required.items():
         path = root / rel
         if not path.is_file():
