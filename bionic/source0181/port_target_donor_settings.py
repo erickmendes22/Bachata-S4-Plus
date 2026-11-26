@@ -130,6 +130,50 @@ void Swapchain::Recreate(u32 width_, u32 height_) {""")
     const auto serial=Common::ElfInfo::Instance().GameSerial();
     const bool native=serial=="CUSA08809"||serial=="CUSA08034";
     Frame* frame=GetRenderFrame(native?attribute.attrib.width:0,native?attribute.attrib.height:0);""")
+    # Fit content in AHB pixels, then transform back to ImGui coordinates.
+    edit(v+"vk_presenter.cpp","[[nodiscard]] vk::ImageBlit MakeImageBlitFit(",
+         """static std::pair<float,float> BachataFitAhbContent(float game_w,float game_h,
+                                                     float content_w,float content_h,
+                                                     float scale_x,float scale_y) {
+    const float fit = std::min(content_w*scale_x/game_w,content_h*scale_y/game_h);
+    return {std::min(content_w,game_w*fit/scale_x),
+            std::min(content_h,game_h*fit/scale_y)};
+}
+
+[[nodiscard]] vk::ImageBlit MakeImageBlitFit(""")
+    edit(v+"vk_presenter.cpp",'''                const auto imgRect =
+                    FitImage(game_width, game_height, (s32)contentArea.x, (s32)contentArea.y);
+                ImVec2 offset{
+                    static_cast<float>(imgRect.offset.x),
+                    static_cast<float>(imgRect.offset.y),
+                };
+                ImVec2 size{
+                    static_cast<float>(imgRect.extent.width),
+                    static_cast<float>(imgRect.extent.height),
+                };''',
+         '''                // BACHATA_AHB_CONTENT_FIT: fit in the actual framebuffer pixels.
+                // SurfaceControl performs the one remaining fit to the output.
+                ImVec2 offset{}, size{};
+                const auto display_size = ImGui::GetIO().DisplaySize;
+                const auto physical_extent = swapchain.GetExtent();
+                if (swapchain.PresentLayout() == vk::ImageLayout::eGeneral &&
+                    display_size.x > 0 && display_size.y > 0 &&
+                    physical_extent.width && physical_extent.height &&
+                    game_width && game_height && contentArea.x > 0 && contentArea.y > 0) {
+                    const auto fitted = BachataFitAhbContent(
+                        game_width,game_height,contentArea.x,contentArea.y,
+                        physical_extent.width/display_size.x,
+                        physical_extent.height/display_size.y);
+                    size = ImVec2{fitted.first,fitted.second};
+                    offset = ImVec2{(contentArea.x-size.x)*0.5f,(contentArea.y-size.y)*0.5f};
+                } else {
+                    const auto imgRect =
+                        FitImage(game_width, game_height, (s32)contentArea.x, (s32)contentArea.y);
+                    offset = ImVec2{static_cast<float>(imgRect.offset.x),
+                                    static_cast<float>(imgRect.offset.y)};
+                    size = ImVec2{static_cast<float>(imgRect.extent.width),
+                                  static_cast<float>(imgRect.extent.height)};
+                }''')
     edit("imgui/renderer/imgui_core.cpp","    ImDrawData* draw_data = GetDrawData();",
          """    ImDrawData* draw_data = GetDrawData();
     // Vulkan viewport/scissors must use the allocated AHB extent, while
