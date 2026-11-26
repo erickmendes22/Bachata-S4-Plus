@@ -56,4 +56,9 @@ app=(root/"core/libraries/app_content/app_content.cpp").read_text()
 if "BACHATA_ISS_APPCONTENT_BOOT" in app:
     assert "*bootParam=OrbisAppContentBootParam{};" in app
     assert "BACHATA_ISS_APPCONTENT_ABSENT returning NOT_FOUND" in app
+    assert "BACHATA_MAIN_DMEM_PARITY" in s
+    assert "old_direct_size>=donor_dmem" in s and "extra_dmem==0" in s
+    engine=(root/"core/fex/fex_guest_engine.cpp").read_text()
+    assert 'FEXCore::Config::Set(FEXCore::Config::CONFIG_DYNAMICL1CACHE, "0")' in engine
+    assert 'std::getenv("FEX_DYNAMICL1CACHE")==nullptr' in engine
 print("BACHATA_DMEM_EXACT_RANGE_PASS")

@@ -960,5 +960,7 @@ void GameController::PollState() {
     result["dmemExactRanges"] = apply_dmem_exact_ranges(root)
     from port_iss_appcontent_abi import apply as apply_iss_appcontent_abi
     result["issAppContentAbi"] = apply_iss_appcontent_abi(root)
+    from port_main_runtime_parity import apply as apply_main_runtime_parity
+    result["mainRuntimeParity"] = apply_main_runtime_parity(root)
 
     return result
