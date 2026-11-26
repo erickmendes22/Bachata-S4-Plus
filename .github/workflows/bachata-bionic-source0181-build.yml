@@ -102,6 +102,7 @@ jobs:
           python3 bionic/source0181/test_donor_wave64_lds.py --source generic-upstream
           python3 bionic/source0181/test_donor_shader_inputs.py --source generic-upstream
           python3 bionic/source0181/test_donor_early_depth.py --source generic-upstream
+          python3 bionic/source0181/test_donor_nan_clamp.py --source generic-upstream
           python3 bionic/source0181/test_readconst_addr64.py --source generic-upstream
           python3 bionic/source0181/test_donor_draw_pipeline.py --source generic-upstream
           python3 bionic/source0181/test_pending_gpu_callbacks.py --source generic-upstream
@@ -331,6 +332,7 @@ jobs:
           python3 bionic/source0181/test_donor_wave64_lds.py --source generic-upstream
           python3 bionic/source0181/test_donor_shader_inputs.py --source generic-upstream
           python3 bionic/source0181/test_donor_early_depth.py --source generic-upstream
+          python3 bionic/source0181/test_donor_nan_clamp.py --source generic-upstream
           python3 bionic/source0181/test_readconst_addr64.py --source generic-upstream
           python3 bionic/source0181/test_donor_draw_pipeline.py --source generic-upstream
           python3 bionic/source0181/test_pending_gpu_callbacks.py --source generic-upstream

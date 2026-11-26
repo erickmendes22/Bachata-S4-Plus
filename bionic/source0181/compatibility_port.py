@@ -831,6 +831,8 @@ void GameController::PollState() {
     result["donorDrawPipeline"] = apply_donor_draw_pipeline(root)
     from port_pending_gpu_callbacks import apply as apply_pending_gpu_callbacks
     result["pendingGpuCallbacks"] = apply_pending_gpu_callbacks(root)
+    from port_donor_nan_clamp import apply as apply_donor_nan_clamp
+    result["donorNanClamp"] = apply_donor_nan_clamp(root)
     from port_runtime_cache_generation import apply as apply_runtime_cache_generation
     result["finalShaderCacheGeneration"] = apply_runtime_cache_generation(root)
     result["portedInterfaces"].append(

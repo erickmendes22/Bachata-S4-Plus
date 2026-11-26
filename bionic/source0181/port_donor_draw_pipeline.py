@@ -212,6 +212,11 @@ def apply(root):
          'LOG_INFO(Render_Vulkan, "cp_record_thread: thread {} takes over recording from {}",',
          'LOG_DEBUG(Render_Vulkan, "cp_record_thread: thread {} takes over recording from {}",')
 
+    # Supply the complete PM4/HLE family before routing it through the FIFO.
+    # API 0.18.1 lacks the non-indexed count packet, although the donor's
+    # asynchronous allowlist and dispatch both depend on it.
+    _adapt_indirect_count_family(src)
+
     # Direct, indirect and compute packets all go through the same ownership.
     text = (src / lp).read_text()
     begin = text.index("Liverpool::Task Liverpool::ProcessGraphics(")
@@ -264,6 +269,112 @@ def apply(root):
             "lifetime": "Info+V# snapshots, owned PM4 payloads, pipeline eviction/replacement drain",
             "recorder": "single producer, scheduler hook before state/lock access",
             "cpuBackend": "Bionic/FEX unchanged; UFFD remains serial"}
+
+
+def _adapt_indirect_count_family(src):
+    """Adapt the donor's non-indexed indirect-count PM4 and HLE producers."""
+    def edit(rel, old, new):
+        path = src / rel
+        text = path.read_text()
+        if text.count(old) != 1:
+            raise RuntimeError(f"indirect count family {rel}: expected one {old[:100]!r}, got {text.count(old)}")
+        path.write_text(text.replace(old, new))
+
+    edit("video_core/amdgpu/pm4_opcodes.h", "    DrawIndexIndirectCountMulti = 0x9d,",
+         "    DrawIndirectCountMulti = 0x9c,\n    DrawIndexIndirectCountMulti = 0x9d,")
+    # The count packet has the same nine-word wire payload as its indexed
+    # sibling. Keep every flag and the full 64-bit count address.
+    cmds = src / "video_core/amdgpu/pm4_cmds.h"
+    text = cmds.read_text()
+    first = text.index("struct PM4CmdDrawIndexIndirectCountMulti {")
+    last = text.index("\n};", first) + len("\n};")
+    packet = text[first:last].replace("PM4CmdDrawIndexIndirectCountMulti",
+                                     "PM4CmdDrawIndirectCountMulti")
+    cmds.write_text(text[:first] + packet +
+                   "\nstatic_assert(sizeof(PM4CmdDrawIndirectCountMulti) == 10 * sizeof(u32));\n\n" +
+                   text[first:])
+    edit("video_core/amdgpu/liverpool.cpp", "#include <boost/preprocessor/stringize.hpp>",
+         "#include <bit>\n#include <boost/preprocessor/stringize.hpp>")
+    edit("video_core/amdgpu/liverpool.cpp",
+         "            case PM4ItOpcode::DrawIndexIndirectCountMulti: {",
+         INDIRECT_COUNT_CASE + "            case PM4ItOpcode::DrawIndexIndirectCountMulti: {")
+    edit("core/libraries/gnmdriver/gnmdriver.h",
+         "int PS4_SYSV_ABI sceGnmDrawIndirectCountMulti();",
+         INDIRECT_COUNT_SIGNATURE + ";")
+    edit("core/libraries/gnmdriver/gnmdriver.cpp", """int PS4_SYSV_ABI sceGnmDrawIndirectCountMulti() {
+    LOG_ERROR(Lib_GnmDriver, "(STUBBED) called");
+    UNREACHABLE();
+    return ORBIS_OK;
+}""", INDIRECT_COUNT_SIGNATURE + INDIRECT_COUNT_BODY)
+    edit("core/libraries/gnmdriver/gnmdriver.cpp",
+         """        cmdbuf = WriteHeader<PM4ItOpcode::DrawIndirectMulti>(
+            cmdbuf, 4, PM4ShaderType::ShaderGraphics, predicate);""",
+         """        // The parser must skip all six payload words, including stride and initiator.
+        cmdbuf = WriteHeader<PM4ItOpcode::DrawIndirectMulti>(
+            cmdbuf, 6, PM4ShaderType::ShaderGraphics, predicate);""")
+    edit("core/libraries/gnmdriver/gnmdriver.cpp",
+         "cmdbuf[5] = sceKernelIsNeoMode() ? flags & 0xe0000000u | 2u : 2u;",
+         "cmdbuf[5] = sceKernelIsNeoMode() ? (flags & 0xe0000000u) | 2u : 2u;")
+
+
+INDIRECT_COUNT_SIGNATURE = """s32 PS4_SYSV_ABI sceGnmDrawIndirectCountMulti(u32* cmdbuf, u32 size, u32 data_offset,
+                                              u32 max_count, u64 count_addr, u32 shader_stage,
+                                              u32 vertex_sgpr_offset, u32 instance_sgpr_offset,
+                                              u32 flags)"""
+
+INDIRECT_COUNT_BODY = r''' {
+    LOG_TRACE(Lib_GnmDriver, "called");
+    if (!cmdbuf || size != 0x10 || shader_stage >= ShaderStages::Max ||
+        vertex_sgpr_offset >= 0x10 || instance_sgpr_offset >= 0x10) {
+        return -1;
+    }
+    cmdbuf = WriteTrailingNop<2>(cmdbuf);
+    const auto predicate = flags & 1 ? PM4Predicate::PredEnable : PM4Predicate::PredDisable;
+    // WriteHeader returns the first payload word, not the header address.
+    cmdbuf = WriteHeader<PM4ItOpcode::DrawIndirectCountMulti>(
+        cmdbuf, 9, PM4ShaderType::ShaderGraphics, predicate);
+    const auto sgpr_offset = indirect_sgpr_offsets[shader_stage];
+    cmdbuf[0] = data_offset;
+    cmdbuf[1] = vertex_sgpr_offset == 0 ? 0 : (vertex_sgpr_offset & 0xffffu) + sgpr_offset;
+    cmdbuf[2] = instance_sgpr_offset == 0 ? 0 : (instance_sgpr_offset & 0xffffu) + sgpr_offset;
+    cmdbuf[3] = (count_addr != 0 ? 1u : 0u) << 30;
+    cmdbuf[4] = max_count;
+    // PM4 buffers guarantee DWORD alignment, not host u64 alignment.
+    std::memcpy(&cmdbuf[5], &count_addr, sizeof(count_addr));
+    cmdbuf[7] = sizeof(DrawIndirectArgs);
+    cmdbuf[8] = sceKernelIsNeoMode() ? (flags & 0xe0000000u) | 2u : 2u;
+    WriteTrailingNop<2>(cmdbuf + 9);
+    return ORBIS_OK;
+}'''
+
+INDIRECT_COUNT_CASE = r'''            case PM4ItOpcode::DrawIndirectCountMulti: {
+                // The wire packet can be only DWORD-aligned, while count_addr
+                // gives its native struct 64-bit alignment. Decode by value.
+                std::array<u32, sizeof(PM4CmdDrawIndirectCountMulti) / sizeof(u32)> encoded;
+                std::memcpy(encoded.data(), header, sizeof(encoded));
+                const auto value = std::bit_cast<PM4CmdDrawIndirectCountMulti>(encoded);
+                const auto* draw_indirect = &value;
+                const auto offset = draw_indirect->data_offset;
+                if (DebugState.DumpingCurrentReg()) {
+                    DebugState.PushRegsDump(base_addr, reinterpret_cast<uintptr_t>(header), regs);
+                }
+                if (!rasterizer) {
+                    break;
+                }
+                const auto cmd_address = reinterpret_cast<const void*>(header);
+                rasterizer->ScopeMarker(
+                    "gfx:{}:DrawIndirectCountMulti", fmt::make_format_args(cmd_address), [&] {
+                        QueueIndirectDraw(
+                            false, indirect_args_addr, offset, draw_indirect->stride,
+                            draw_indirect->count,
+                            draw_indirect->count_indirect_enable.Value()
+                                ? draw_indirect->count_addr
+                                : 0,
+                            draw_indirect->base_vtx_loc, draw_indirect->start_inst_loc);
+                    });
+                break;
+            }
+'''
 
 
 def _queue_side_effects(path):
