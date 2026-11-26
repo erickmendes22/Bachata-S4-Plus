@@ -96,6 +96,7 @@ struct Equeue {template<class...A>void TriggerEvent(A...){++flip_events;}templat
 Equeue* GetEqueue(int id){static Equeue queue;return id==1?&queue:nullptr;}
 u64 sceKernelGetProcessTime(){return 1;}
 u64 sceKernelReadTsc(){return 1;}
+void ReportEventFlagWaits(){} // The event-flag gate exercises the real bounded census.
 }
 namespace Libraries::VideoOut {
 enum class OrbisVideoOutInternalEventId{Flip,Vblank};
@@ -120,13 +121,15 @@ struct Liverpool {
     std::thread::id gpu_id{};
     std::mutex submit_mutex;
     std::condition_variable submit_cv;
-    std::atomic<unsigned> num_commands{0};
+    std::atomic<unsigned> num_commands{0},num_submits{0};
+    std::atomic<bool> submit_done{false};
     std::queue<std::function<void()>> command_queue;
     bool cp_progress=false,draw_snapshot_valid=false;
     bool OnDrawThread()const{return draw;}
     std::thread::id GetGpuCommandProcessorThread()const{return cp?std::this_thread::get_id():std::thread::id{};}
     void DrainDrawQueue(){}
     void SetVoPort(Libraries::VideoOut::VideoOutPort*){}
+    @@PENDING_CP@@
     @@SEND@@
     void ProcessCommands();
     void Pump(){cp=true;gpu_id=std::this_thread::get_id();ProcessCommands();cp=false;gpu_id={};}
@@ -638,7 +641,11 @@ def fixture(source: Path):
     sc=(cp_base/'src/video_core/renderer_vulkan/vk_scheduler.cpp').read_text()
     desc=re.search(r'ImageDesc\(const Libraries::VideoOut::BufferAttributeGroup& group, VAddr cpu_address\)\s*:[^;]+?\{\}',tc)
     assert desc
+    pending_cp = ''
+    if '    struct PendingCommandProgress {' in ch:
+        pending_cp = block(ch,'    struct PendingCommandProgress {')+';\n'+block(ch,'    PendingCommandProgress GetPendingCommandProgress(')
     values={'PACING':pacing,'SEND':block(ch,'    template <bool wait_done = false>'),
+        'PENDING_CP':pending_cp,
         'COMMANDS':block(cp,'void Liverpool::ProcessCommands()'),
         'GET_FRAME':block(pc,'Frame* Presenter::GetRenderFrame('),
         'PREPARE_FRAME':prepare,'PREPARE_BLANK':blank,'METHODS':methods,

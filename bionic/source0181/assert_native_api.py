@@ -270,6 +270,99 @@ def audit(root: Path) -> None:
     required["src/video_core/renderer_vulkan/vk_scheduler.cpp"] += (
         "BACHATA_PENDING_POLL", "void Scheduler::PopPendingOperationsHot()",
         "front_tick > RecordedSubmitTick()", "PopPendingOperations(false);")
+    # EVENT_IO_RENDERSTATE_INTERFACE_CONTRACTS
+    round_required = {
+        'src/core/libraries/kernel/threads/event_flag.cpp': (
+            '#include "core/libraries/kernel/threads/pthread.h"',
+            '#include "core/libraries/kernel/threads/event_flag_delivery.h"',
+            'using Clock = std::chrono::steady_clock;',
+            'waiter->state = WaitState::Delivered;',
+            'return waiter.state != WaitState::Pending;',
+            'auto flag = RemoveEventFlag(ef);',
+            'auto flag = FindEventFlag(ef);',
+            'std::make_shared<EventFlagInternal>',
+            'g_curthread->attr.prio',
+            'BACHATA_GUEST_WAIT phase=event_flag name=',
+            'std::try_to_lock',
+        ),
+        'src/core/libraries/kernel/threads/event_flag_delivery.h': (
+            'void ReportEventFlagWaits();',
+        ),
+        'src/video_core/amdgpu/liverpool.h': (
+            'PendingCommandProgress GetPendingCommandProgress() const noexcept',
+        ),
+        'src/core/libraries/videoout/driver.cpp': (
+            'const auto cp = liverpool->GetPendingCommandProgress();',
+            'Kernel::ReportEventFlagWaits();',
+            'cp_commands={} cp_submits={} cp_submit_done={}',
+        ),
+        'src/core/linker.cpp': (
+            'const bool shared_io_libc_nid =',
+            'sr.type == Loader::SymbolType::Function && shared_io_libc_nid',
+            'candidate.library = "libc";',
+            'BACHATA_SHARED_IO_LIBC_BIND nid=',
+        ),
+        'src/core/linker.h': (
+            'BACHATA_SHARED_IO_LIBC_REBIND',
+            'const bool exports_libc =',
+        ),
+        'src/emulator.cpp': (
+            'BACHATA_SHARED_IO_LIBC_SDK_OBJECT address=',
+            'memory->ClampGpuRangeSize(address, sizeof(u32))',
+            'symbols.AddSymbol(marker, address);',
+        ),
+        'src/core/libraries/libc_internal/libc_internal_cxa.cpp': (
+            '#include "core/guest_cpu/guest_callback.h"',
+            'void PS4_SYSV_ABI fex_libc_cxa_finalize(void* dso_handle)',
+            'BACHATA_SHARED_IO_CXA_FINALIZE dso=',
+            'Core::GuestCpu::RunGuestFunctionOrAbort(',
+        ),
+        'src/core/libraries/libc_internal/libc_internal_cxa.h': (
+            'void PS4_SYSV_ABI fex_libc_cxa_finalize(void* dso_handle);',
+        ),
+        'src/core/libraries/disc_map/disc_map.cpp': (
+            'BACHATA_SHARED_IO_DISC_MAP query=7C980FFB0AA27E7A',
+        ),
+        'src/video_core/renderer_vulkan/vk_scheduler.h': (
+            'u64 RenderingSerial() const noexcept',
+            'u64 rendering_serial{};',
+        ),
+        'src/video_core/renderer_vulkan/vk_scheduler.cpp': (
+            '++rendering_serial;',
+        ),
+        'src/video_core/texture_cache/texture_cache.h': (
+            'struct RenderStateImageMemo',
+            'bool CheckRenderStateImages(',
+        ),
+        'src/video_core/texture_cache/texture_cache.cpp': (
+            'bool TextureCache::CheckRenderStateImages(',
+            'BACHATA_ORDER_RENDER_STATE_IMAGES',
+        ),
+        'src/video_core/renderer_vulkan/vk_rasterizer.h': (
+            'struct OrderBeginSignature',
+            'struct OrderBeginMemo',
+        ),
+        'src/video_core/renderer_vulkan/vk_rasterizer.cpp': (
+            'BACHATA_ORDER_RENDER_STATE_MEMO owner=',
+            'RenderState Rasterizer::BeginRenderingFull(',
+            'memo.rendering_serial != scheduler.RenderingSerial()',
+        ),
+    }
+    round_required["src/video_core/renderer_vulkan/vk_runtime.h"] = (
+        "OrderBarrierPending order_barrier_pending{};",
+        '#include "video_core/renderer_vulkan/order_resource_census.h"',
+    )
+    round_required["src/video_core/renderer_vulkan/vk_runtime.cpp"] = (
+        "NoteOrderBarrier(order_barrier_pending,this",
+        "CountOrderBarrierFlush(this,order_barrier_pending",
+        "order_barrier_pending={};",
+    )
+    round_required["src/video_core/renderer_vulkan/order_resource_census.h"] = (
+        "BACHATA_ORDER_BARRIER_CAUSE owner=", "BACHATA_ORDER_ALIAS_CENSUS owner=",
+    )
+    for relative, markers in round_required.items():
+        required[relative] = (*required.get(relative, ()), *markers)
+
     forbidden = {
         "src/core/module.cpp": ("elf.Open(file);",),
         "src/core/linker.cpp": (

@@ -71,6 +71,11 @@ def make_program(root):
     prefixes = "\n".join(prefixes)
     controls = prefixes.replace("Rasterizer::", "ControlRasterizer::").replace(
         "scheduler.PopPendingOperationsHot();", "scheduler.PopPendingOperations();")
+    census = src / "video_core/renderer_vulkan/order_resource_census.h"
+    # Keep the actual entry prefixes, including their observational scopes.
+    # The real header supplies the scope; this fixture only supplies an owner
+    # identity because it stops before recording resource or GPU operations.
+    census_include = '#include "video_core/renderer_vulkan/order_resource_census.h"' if census.exists() else ""
 
     program = r'''
 #include <algorithm>
@@ -92,6 +97,8 @@ using u16=uint16_t;using u32=uint32_t;using u64=uint64_t;using VAddr=u64;
 #define TRACY_GPU_ENABLED 0
 #define ASSERT_MSG(value,...) assert(value)
 #define LOG_WARNING(...) ((void)0)
+template<class... Args>void PendingPollDiscardLog(Args&&...){}
+#define LOG_INFO(category,...) PendingPollDiscardLog(__VA_ARGS__)
 #define RENDERER_TRACE ((void)0)
 #define WAIT_TIMEOUT 1000000000ULL
 namespace Common {
@@ -103,6 +110,7 @@ struct ElfInfo {
 }
 @UNIQUE@
 @POLICY@
+@CENSUS@
 namespace vk {
 enum class Result {eSuccess,eTimeout};
 using Semaphore=u64;using CommandBuffer=u64;
@@ -164,11 +172,13 @@ public:
 struct GraphicsPipeline{};struct ComputePipeline{};
 struct Rasterizer {
     Scheduler& scheduler;struct {bool valid=true;}bind_memo;
+    struct {} runtime;
     explicit Rasterizer(Scheduler& s):scheduler(s){}
 @DECLARATIONS@
 };
 struct ControlRasterizer {
     Scheduler& scheduler;struct {bool valid=true;}bind_memo;
+    struct {} runtime;
     explicit ControlRasterizer(Scheduler& s):scheduler(s){}
 @DECLARATIONS@
 };
@@ -315,7 +325,8 @@ int main(){
     Vulkan::TestTitleScope();std::cout<<"BACHATA_PENDING_POLL_PASS\n";
 }
 '''
-    replacements = {"UNIQUE": unique, "POLICY": policy, "SEM_INLINE": sem_inline,
+    replacements = {"UNIQUE": unique, "POLICY": policy, "CENSUS": census_include,
+                    "SEM_INLINE": sem_inline,
                     "SEM_REFRESH": function(semaphore, "void Semaphore::Refresh("),
                     "SEM_WAIT": function(semaphore, "void Semaphore::Wait("),
                     "SCHEDULER_INLINE": scheduler_inline, "FORCED": forced, "HOT": hot,
@@ -331,6 +342,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     args = parser.parse_args()
+    include_root = args.source / "src" if (args.source / "src").is_dir() else args.source
     program, hot, forced = make_program(args.source)
     # Regressions must fail executable contracts, not merely text checks.
     variants = [("actual", program, True)]
@@ -363,6 +375,7 @@ def main():
             source.write_text(content)
             compiled = subprocess.run(["c++", "-std=c++23", "-O1", "-pthread", "-Wall", "-Wextra", "-Werror",
                             "-Wno-unused-parameter", "-fsanitize=undefined", "-fno-sanitize-recover=all",
+                            "-I", str(include_root.resolve()),
                             str(source), "-o", str(binary)], capture_output=True, text=True)
             assert compiled.returncode == 0, (name, compiled.stderr[:6000])
             result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=20)

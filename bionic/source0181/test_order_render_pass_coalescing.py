@@ -576,7 +576,22 @@ def program(source: Path, scheduler_override: str | None = None) -> str:
         "@RASTERIZER@": function(rasterizer, "RenderState Rasterizer::BeginRendering("),
         "@META_METHODS@": "\n".join(function(cache, f) for f in ("    bool IsMetaCleared(", "    bool TouchMeta(")),
     }
+    if "RenderState Rasterizer::BeginRenderingFull(" in rasterizer:
+        # This gate owns the original clear/transition transaction. The later
+        # memo wrapper and its invalidations execute in test_order_render_state_memo.
+        replacements["@RASTERIZER@"] = function(
+            rasterizer, "RenderState Rasterizer::BeginRenderingFull(").replace(
+                "Rasterizer::BeginRenderingFull(", "Rasterizer::BeginRendering(", 1)
     code = PRELUDE + RESOURCE_FIXTURE + TESTS
+    if (root / "video_core/renderer_vulkan/order_resource_census.h").exists():
+        code = code.replace("#define LOG_INFO(...) ((void)0)",
+            '#define LOG_INFO(...) ((void)0)\n#include "video_core/renderer_vulkan/order_resource_census.h"', 1)
+        code = code.replace("    Scheduler&scheduler;", "    Scheduler&scheduler;\n    bool order_resource_census=false;\n    OrderBarrierPending order_barrier_pending{};", 1)
+        code = code.replace("    void Sync(){if(recorder)recorder->Sync();}",
+            "    bool RenderingActive()const{return is_rendering;}\n    void Sync(){if(recorder)recorder->Sync();}", 1)
+    if "u64 rendering_serial{};" in header:
+        code = code.replace("RenderState render_state{};bool is_rendering{};u64 drains{};",
+                            "RenderState render_state{};bool is_rendering{};u64 drains{},rendering_serial{};", 1)
     if (root / "video_core/renderer_vulkan/order_render_pass_reasons.h").exists():
         code = '#include "video_core/renderer_vulkan/order_render_pass_reasons.h"\n' + code
         code = code.replace('    void EndRendering();',
@@ -619,6 +634,9 @@ def application_guards(directory: Path, source: Path) -> None:
     rel = Path("src/video_core/renderer_vulkan/vk_scheduler.cpp")
     text = (source / rel).read_text()
     header = (source / rel.with_suffix(".h")).read_text()
+    if "u64 rendering_serial{};" in header:
+        assert text.count("    ++rendering_serial;\n") == 1
+        text = text.replace("    ++rendering_serial;\n", "", 1)
     if 'BACHATA_ORDER_PASS_END_REASON' in text:
         # Undo only the subsequent diagnostic decoration before checking the
         # unchanged coalescing patch and its six incompatible-state negatives.

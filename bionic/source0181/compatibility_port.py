@@ -946,4 +946,14 @@ void GameController::PollState() {
         "FEX fatal guest RIP mapped to PS4 eboot/prx module+offset; "
         "no speculative game-specific GPU or libc changes")
 
+    # Reviewed event/IO/render-state groups, applied after prior overlays.
+    from port_event_flag_delivery import apply as apply_event_flag_delivery
+    result["eventFlagDelivery"] = apply_event_flag_delivery(root)
+    from port_shared_io_dependencies import apply as apply_shared_io_dependencies
+    result["sharedIoDependencies"] = apply_shared_io_dependencies(root)
+    from port_order_render_state_memo import apply as apply_order_render_state_memo
+    result["orderRenderStateMemo"] = apply_order_render_state_memo(root)
+    from port_order_barrier_census import apply as apply_order_barrier_census
+    result["orderBarrierCensus"] = apply_order_barrier_census(root)
+
     return result

@@ -520,6 +520,9 @@ def make_program(src: Path) -> str:
         "void TextureCache::InvalidateMemory(", "void TextureCache::InvalidateMemoryFromGPU(",
         "ImageView& TextureCache::FindRenderTarget(", "ImageView& TextureCache::FindTexture(",
     )
+    census = (src / "video_core/renderer_vulkan/order_resource_census.h").exists()
+    if census:
+        method_signatures += ("Vulkan::OrderAliasProbe TextureCache::ProbeOrderAliasRegistration(",)
     methods = "\n".join(("template<class Func>\n" if "ForEachAlias" in sig else "") +
                         block(cache, sig) for sig in method_signatures)
     # Only the map iterator API is adapted to the standard-library fixture.
@@ -546,6 +549,11 @@ def make_program(src: Path) -> str:
         "RUNTIME": block(read("video_core/renderer_vulkan/vk_runtime.cpp"), "void Runtime::CopyAliasImage("),
     }
     program = PROGRAM
+    if census:
+        program = program.replace("#define LOG_INFO IgnoreLog",
+            '#define LOG_INFO IgnoreLog\n#include "video_core/renderer_vulkan/order_resource_census.h"', 1)
+        program = program.replace("auto*find(u64 i){auto it=values.find(i);return it==values.end()?nullptr:&it->second;}",
+            "auto*find(u64 i){auto it=values.find(i);return it==values.end()?nullptr:&it->second;}\n const auto*find(u64 i)const{auto it=values.find(i);return it==values.end()?nullptr:&it->second;}", 1)
     if (src / "video_core/renderer_vulkan/order_render_pass_reasons.h").exists():
         program = '#include "video_core/renderer_vulkan/order_render_pass_reasons.h"\n' + program
     for key, value in values.items():

@@ -469,6 +469,17 @@ with tempfile.TemporaryDirectory() as name:
     cpp = folder / "indirect.cpp"
     exe = folder / "indirect"
     program = HARNESS
+    if (src / "video_core/renderer_vulkan/order_resource_census.h").exists():
+        program = program.replace("namespace vk {", "template<class... T>void IgnoreCensusLog(T&&...){}\n"
+            "constexpr int Render_Vulkan=0;\n#define LOG_INFO IgnoreCensusLog\n"
+            '#include "video_core/renderer_vulkan/order_resource_census.h"\nnamespace vk {', 1)
+        program = program.replace("    bool donor_range_tracking{true};",
+            "    bool donor_range_tracking{true},order_resource_census{false};\n    OrderBarrierPending order_barrier_pending{};", 1)
+        program = program.replace("    u64 CurrentTick()const{return current;}",
+            "    bool RenderingActive()const{return false;}\n    u64 CurrentTick()const{return current;}", 1)
+        # This fixture ends before the resource transaction. The lexical census
+        # is covered separately; it has no preparation or validation side effect.
+        prepare = prepare.replace("    const OrderBarrierScope order_barrier_scope{&runtime,OrderBarrierOrigin::Indirect};", "")
     if (src / "video_core/renderer_vulkan/order_render_pass_reasons.h").exists():
         program = '#include "video_core/renderer_vulkan/order_render_pass_reasons.h"\n' + program
     for marker, value in (("RUNTIME", runtime_methods), ("STREAM", stream_methods),
