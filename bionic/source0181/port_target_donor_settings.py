@@ -200,7 +200,7 @@ void MemoryManager::SetupMemoryRegions(""")
              """    total_direct_size = total_size - flexible_size;
     const auto serial=Common::ElfInfo::Instance().GameSerial();
     const auto donor_size=BachataSotcDirectSize(total_direct_size,old_direct_size,
-        !is_neo&&!EmulatorSettings.IsDevKit()&&extra_dmem==0&&extra_fmem==0&&
+        !is_neo&&!EmulatorSettings.IsDevKit()&&extra_dmem==0&&
         (serial=="CUSA08809"||serial=="CUSA08034"));
     if(donor_size!=total_direct_size) {
         LOG_INFO(Kernel_Vmm,"BACHATA_SOTC_DMEM_PARITY old={} new={}",total_direct_size,donor_size);
