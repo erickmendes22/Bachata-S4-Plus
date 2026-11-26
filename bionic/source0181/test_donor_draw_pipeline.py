@@ -10,11 +10,14 @@ import argparse
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--source", required=True)
 args = parser.parse_args()
+subprocess.run([sys.executable, str(Path(__file__).with_name("test_donor_pm4_indirect.py")),
+                "--source", args.source], check=True)
 src = Path(args.source).resolve() / "src"
 lp = (src / "video_core/amdgpu/liverpool.cpp").read_text()
 lh = (src / "video_core/amdgpu/liverpool.h").read_text()
@@ -144,7 +147,11 @@ public:
     AmdGpu::Buffer vertex{17};
     bool markers{};
     std::atomic<bool> hold{false},entered{false};
-    struct Observation {u32 reg,word,flat,sharp,vertex,metadata,dispatch;VAddr address;};
+    struct Observation {
+        u32 reg,word,flat,sharp,vertex,metadata,dispatch;VAddr address;
+        u32 indirect_offset{},indirect_stride{},indirect_count{};
+        VAddr count_address{};u16 vertex_sgpr{},instance_sgpr{};
+    };
     std::vector<Observation> observations;
     std::vector<int> ordered;
     int guest_value{};
@@ -165,10 +172,15 @@ public:
         return c?static_cast<Pipeline*>(&compute):static_cast<Pipeline*>(&graphics);
     }
     void Draw(bool,u32,const GraphicsPipeline* pipeline=nullptr,bool selected=false);
-    void DrawIndirect(bool indexed,VAddr address,u32 offset,u32,u32,VAddr,u16,u16,
+    void DrawIndirect(bool indexed,VAddr address,u32 offset,u32 stride,u32 max_count,
+                      VAddr count_address,u16 vertex_sgpr,u16 instance_sgpr,
                       const GraphicsPipeline* pipeline=nullptr,bool selected=false){
         Draw(indexed,offset,pipeline,selected);
-        if(selected)observations.back().address=address;
+        if(selected){
+            auto& value=observations.back();value.address=address;
+            value.indirect_offset=offset;value.indirect_stride=stride;value.indirect_count=max_count;
+            value.count_address=count_address;value.vertex_sgpr=vertex_sgpr;value.instance_sgpr=instance_sgpr;
+        }
     }
     void DispatchDirect(const ComputePipeline* pipeline=nullptr,bool selected=false);
     void DispatchIndirect(VAddr address,u32,u32,const ComputePipeline* pipeline=nullptr,bool selected=false){
@@ -260,10 +272,13 @@ int main(){
         });
         assert(payload.empty());
         cp.regs.reg_array[0]=3;cp.MarkDrawWords(0,1);
-        cp.QueueIndirectDraw(false,0x123456,0,16,1,0,0,0);
+        cp.QueueIndirectDraw(false,0x123456,4,64,23,0x12345678abcdef00ull,3,5);
         cp.DrainDrawQueue();
         assert((renderer.ordered==std::vector<int>{1,2,11,3}));
         assert(renderer.prepared_after_write==81 && renderer.observations.back().address==0x123456);
+        const auto indirect=renderer.observations.back();
+        assert(indirect.indirect_offset==4 && indirect.indirect_stride==64 && indirect.indirect_count==23);
+        assert(indirect.count_address==0x12345678abcdef00ull && indirect.vertex_sgpr==3 && indirect.instance_sgpr==5);
 
         cp.cs_live.value=92;
         cp.QueueDispatchDirect();

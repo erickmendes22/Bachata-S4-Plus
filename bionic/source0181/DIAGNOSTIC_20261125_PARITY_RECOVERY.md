@@ -92,6 +92,9 @@ emissão SPIR-V, especialização e invalidação do cache:
 
 * Multiplicação legada e seus consumidores MUL/MAC/MAD, NaN nas comparações
   negadas e nas operações min/max/mediana, incluindo atualização de EXEC.
+  Min/max F32/F64, clamp e saturate seguem a política ativa de cada doador:
+  operações N por padrão no SotC e saturate com NaN→0 no Order. O opt-out
+  `SHADPS4_IEEE_MINMAX` mantém a semântica de presença da variável do doador.
 * Atômicos float min/max com ramos exclusivos: a emulação executa uma única
   operação atômica e devolve o valor anterior. O uso anterior de seleção de
   resultados podia executar os dois efeitos antes da seleção.
@@ -159,6 +162,14 @@ Há um único proprietário do recorder. O teste executa os métodos reais da fi
 com consumidor bloqueado, mutação dos dados originais após publicação, operações
 diretas/indiretas e milhares de voltas do buffer circular. O marcador
 `BACHATA_DRAW_PIPELINE` registra ativação e motivo, CPUs, FEX, tracking e recorder.
+
+A família de draw indireto inclui o opcode, layout, handler e produtor HLE de
+`DrawIndirectCountMulti`. O produtor respeita o ponteiro de payload devolvido
+por `WriteHeader`; o handler preserva endereço de contagem, limite, stride e
+SGPRs, inclusive com alinhamento de apenas quatro bytes. `DrawIndirectMulti`
+declara as seis palavras de payload que efetivamente escreve. O gate compila
+e decodifica os produtores e handlers reais em 9.072 combinações com UBSan,
+sentinelas e entradas inválidas; também rejeita as duas regressões anteriores.
 
 ### Callbacks e recuperação de memória
 

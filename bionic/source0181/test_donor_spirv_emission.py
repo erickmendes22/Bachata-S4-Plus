@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile effective atomic/trinary/LDS emitters with real Sirit and spirv-val.
+"""Compile effective atomic/trinary/NaN clamp/LDS emitters with real Sirit and spirv-val.
 
 Usage: --source EFFECTIVE --sirit PINNED_SIRIT --out OUTPUT
 SPIRV-Headers defaults to Sirit/externals/SPIRV-Headers/include. --emit-only
@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import shutil
 import subprocess
+import re
 from test_donor_alu_semantics import function
 
 
@@ -38,18 +39,23 @@ def main():
     bodies+="\n"+"\n".join(function(fp,f"Id {name}(") for name in
                                 ("EmitFPMinTri32","EmitFPMaxTri32","EmitFPMedTri32"))
     bodies+="\n"+function(barriers,"void EmitSubgroupBarrier(")
+    nan_header=args.source/"src/shader_recompiler/donor_nan_clamp.h"
+    if nan_header.exists():
+        bodies+="\n"+"\n".join(function(fp,f"Id EmitFP{name}{width}(")
+                                    for name in ("Min","Max","Clamp","Saturate") for width in (32,64))
     cpp=r'''
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <string>
 #include <sirit/sirit.h>
-using Id=Sirit::Id;using u32=uint32_t;
+using Id=Sirit::Id;using u32=uint32_t;using f32=float;using f64=double;
 namespace IR{struct Inst{};}
 struct EmitContext:Sirit::Module {
     struct Profile {bool supports_buffer_fp32_atomic_min_max=false;
                     bool supports_image_fp32_atomic_min_max=false;}profile;
-    std::array<Id,3> F32{},U32{},U1{};
+    std::array<Id,3> F32{},F64{},U32{},U1{};
     Id u32_zero_value{},buffer{},image{},buffer_u32{},image_u32{},last_label{};
     explicit EmitContext(u32 version):Module(version){
         AddCapability(spv::Capability::Shader);
@@ -69,6 +75,7 @@ struct EmitContext:Sirit::Module {
         image_u32=TypePointer(spv::StorageClass::Image,U32[1]);
     }
     Id ConstU32(u32 n){return Constant(U32[1],n);}
+    Id ConstF32(f32 n){return Constant(F32[1],n);}
     Id AddLabel(Id id){last_label=Module::AddLabel(id);return last_label;}
     Id AddLabel(){last_label=Module::AddLabel();return last_label;}
     Id BufferPtr(Id offset){return OpAccessChain(buffer_u32,buffer,u32_zero_value,offset);}
@@ -130,10 +137,39 @@ void Generate(u32 version,const std::string& path){
 }
 int main(int argc,char** argv){
     if(argc!=2)return 2;
+    unsetenv("SHADPS4_IEEE_MINMAX");
     Generate(0x00010300u,std::string(argv[1])+"/donor-alu-lds-v13.spv");
     Generate(0x00010400u,std::string(argv[1])+"/donor-alu-lds-v14.spv");
 }
 '''
+    if nan_header.exists():
+        policy=re.sub(r"^\s*#(?:include|pragma)[^\n]*\n","",nan_header.read_text(),flags=re.M)
+        policy='''namespace Common {struct ElfInfo {
+    std::string serial="CUSA08809";static ElfInfo& Instance(){static ElfInfo x;return x;}
+    std::string GameSerial()const{return serial;}
+};}
+'''+policy+'\nnamespace DonorNanClamp=Shader::DonorNanClamp;\n'
+        cpp=cpp.replace("namespace IR{struct Inst{};}",policy+"namespace IR{struct Inst{};}",1)
+        cpp=cpp.replace("        AddCapability(spv::Capability::Shader);",
+                        "        AddCapability(spv::Capability::Shader);\n"
+                        "        AddCapability(spv::Capability::Float64);\n"
+                        "        F64[1]=TypeFloat(64);",1)
+        cpp=cpp.replace("    EmitSubgroupBarrier(ctx);",'''    Id clamped=median;
+    for(const char* serial:{"CUSA08809","CUSA08034","CUSA00785","CUSA12345"}) {
+        Common::ElfInfo::Instance().serial=serial;
+        const Id lo32=ctx.ConstF32(-2.0f),hi32=ctx.ConstF32(2.0f);
+        const Id min32=EmitFPMin32(ctx,clamped,value);
+        const Id max32=EmitFPMax32(ctx,min32,value);
+        clamped=EmitFPSaturate32(ctx,EmitFPClamp32(ctx,max32,lo32,hi32));
+        const Id wide=ctx.OpFConvert(ctx.F64[1],clamped);
+        const Id lo64=ctx.Constant(ctx.F64[1],-2.0),hi64=ctx.Constant(ctx.F64[1],2.0);
+        const Id min64=EmitFPMin64(ctx,wide,hi64);
+        const Id max64=EmitFPMax64(ctx,min64,lo64);
+        const Id bounded=EmitFPSaturate64(ctx,EmitFPClamp64(ctx,max64,lo64,hi64));
+        clamped=ctx.OpFConvert(ctx.F32[1],bounded);
+    }
+    ctx.OpStore(ctx.BufferPtr(ctx.ConstU32(3)),ctx.OpBitcast(ctx.U32[1],clamped));
+    EmitSubgroupBarrier(ctx);''',1)
     generated=args.out/"donor_spirv.cpp"
     generated.write_text(cpp)
     objects=args.out/"sirit-objects"
@@ -160,7 +196,7 @@ int main(int argc,char** argv){
         return
     for suffix,target in (("v13","vulkan1.1"),("v14","vulkan1.2")):
         subprocess.run([args.spirv_val,"--target-env",target,str(args.out/f"donor-alu-lds-{suffix}.spv")],check=True)
-    print("DONOR_REAL_SIRIT_NESTED_ATOMIC_TRINARY_LDS_SPIRV_VALIDATED")
+    print("DONOR_REAL_SIRIT_NESTED_ATOMIC_TRINARY_NAN_CLAMP_LDS_SPIRV_VALIDATED")
 
 
 if __name__=="__main__":
