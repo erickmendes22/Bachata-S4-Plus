@@ -306,6 +306,22 @@ def audit(root: Path) -> None:
     if not re.fullmatch(r"[0-9a-f]{40}", git_sha) or (
             f"BACHATA_CORE_REVISION={git_sha}" not in emulator_source):
         issues.append("Native ELF marker does not match the actual source Git revision")
+    stall_progress_contracts = {
+        "src/video_core/amdgpu/liverpool.cpp": (
+            "header->type == 2 ? 1 : header->type3.NumWords() + 1",
+            "!SotcCommandWaitEnabled() && vo_port->IsVoLabel(wait_addr)",
+            "BACHATA_GPU_WAIT phase=cp_predicate", "std::chrono::microseconds(100)",
+            "num_mapped_queues.load(std::memory_order_acquire)",
+            "std::scoped_lock lock{submit_mutex, queue.m_access};", "std::memory_order_release);",
+            "if (cp_progress || task.done()) ResetCommandWaitProgress();"),
+        "src/video_core/amdgpu/liverpool.h": (
+            "std::atomic<u32> num_mapped_queues{1u};", "void BackoffCommandWait(std::stop_token stoken);"),
+        "src/video_core/amdgpu/pm4_cmds.h": (
+            "bool Test(std::span<const u32> regs, u32* observed = nullptr) const",
+            "bool Signaled(u64* observed = nullptr) const", "bool Valid(u32* observed = nullptr) const"),
+    }
+    for rel, markers in stall_progress_contracts.items():
+        required[rel] = (*required.get(rel, ()), *markers)
     for rel, markers in required.items():
         path = root / rel
         if not path.is_file():

@@ -108,6 +108,7 @@ jobs:
           python3 bionic/source0181/test_pending_gpu_callbacks.py --source generic-upstream
           python3 bionic/source0181/test_pending_poll.py --source generic-upstream
           python3 bionic/source0181/test_sotc_fence_publication.py --source generic-upstream
+          python3 bionic/source0181/test_sotc_stall_progress.py --source generic-upstream
           python3 bionic/source0181/test_sotc_readback_completion.py --source generic-upstream
           python3 bionic/source0181/test_sotc_arena_lifecycle.py --source generic-upstream
           python3 bionic/source0181/test_sotc_async_readback.py --source generic-upstream
@@ -329,6 +330,7 @@ jobs:
           python3 bionic/source0181/test_pending_gpu_callbacks.py --source generic-upstream
           python3 bionic/source0181/test_pending_poll.py --source generic-upstream
           python3 bionic/source0181/test_sotc_fence_publication.py --source generic-upstream
+          python3 bionic/source0181/test_sotc_stall_progress.py --source generic-upstream
           python3 bionic/source0181/test_sotc_readback_completion.py --source generic-upstream
           python3 bionic/source0181/test_sotc_arena_lifecycle.py --source generic-upstream
           python3 bionic/source0181/test_sotc_async_readback.py --source generic-upstream
