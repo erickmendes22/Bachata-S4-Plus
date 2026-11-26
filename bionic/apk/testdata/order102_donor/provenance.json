@@ -1,0 +1,30 @@
+{
+  "prepare.py": {
+    "sha256": "8752568c7141507d758ec0dd6d6878aa4735d557560ad890ad4d40f1a5bf6476",
+    "donorRevision": "c53cd01d032995fe622033623ab64b4cf6b02233"
+  },
+  "order1886_editions.py": {
+    "sha256": "b35aaa991c416d679be415613ed85869bff4a2507206e12be3615cf472cf8a9b",
+    "donorRevision": "c53cd01d032995fe622033623ab64b4cf6b02233"
+  },
+  "order1886_frame_rate.py": {
+    "sha256": "c5c4fc8fab80ef8ebc2e3a8f61b73b61bf1ab0677f41e9493192200e74f85568",
+    "donorRevision": "c53cd01d032995fe622033623ab64b4cf6b02233"
+  },
+  "order1886_display.py": {
+    "sha256": "23b29cf20de20744adcf0f314b4925648d052d6ce700fa22d30064f4097e866f",
+    "donorRevision": "c53cd01d032995fe622033623ab64b4cf6b02233"
+  },
+  "order1886_resolution.py": {
+    "sha256": "dc3891a74095fc477d7c964e5d96c20a490b70f87e888fb1b71f9648a5b1d23a",
+    "donorRevision": "c53cd01d032995fe622033623ab64b4cf6b02233"
+  },
+  "order1886_post_effects.py": {
+    "sha256": "5bf6a30d81e7834f5a0b30ef567b1612623c1d23229d473305adaa4d5765d7fd",
+    "donorRevision": "c53cd01d032995fe622033623ab64b4cf6b02233"
+  },
+  "patch_android_resolution.py": {
+    "sha256": "9d7931b0c6767e600ce0ae3a3afe7fa54a58816f3ad6fc244bb36ef99e67d864",
+    "donorRevision": "756a4f0cc603b02971d45b36354143249a4fe492"
+  }
+}

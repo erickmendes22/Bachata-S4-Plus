@@ -13,7 +13,7 @@ import zipfile
 
 from compact_runtime import (
     GLIBC_DROP, GLIBC_KEEP, GUEST_BUILD_JSON, GUEST_BUILD_TXT,
-    RUNTIME_MANIFEST, RUNTIME_ZIP, compact_runtime,
+    RUNTIME_MANIFEST, RUNTIME_ZIP, compact_runtime, runtime_identity,
 )
 
 REVISION = "fedcba9876543210fedcba9876543210fedcba98"
@@ -43,6 +43,8 @@ def test() -> None:
         "host/shadps4-arm64-fex": b"original guest shim",
         GUEST_BUILD_JSON: (json.dumps(entry) + "\n").encode(),
         GUEST_BUILD_TXT: b"variant=built\nrevision=core024-c39-fe-clean-r28\n",
+        "patches/bachata-official/TheOrder1886.xml": b"<Patch legacy='true'/>\n",
+        "user/patches/bachata-official/TheOrder1886.xml": b"<Patch legacy='true'/>\n",
     }
     manifest = {
         "schemaVersion": 2,
@@ -60,14 +62,27 @@ def test() -> None:
         RUNTIME_MANIFEST: json.dumps(manifest).encode(),
     })
     with zipfile.ZipFile(io.BytesIO(package)) as original:
+        catalogue_updates = {
+            path: b"<Patch BachataPortCatalog='order1886-0102-port-v1'/>\n"
+            for path in contents if path.endswith("TheOrder1886.xml")
+        }
+        version = runtime_identity(CORE_SHA, catalogue_updates)
+        assert version.startswith(VERSION + "-patch-")
+        assert version == runtime_identity(CORE_SHA, dict(reversed(list(catalogue_updates.items()))))
+        for path in catalogue_updates:
+            changed = dict(catalogue_updates)
+            changed[path] += b"<!-- new recipe -->\n"
+            assert version != runtime_identity(CORE_SHA, changed)
+        assert version != runtime_identity("a" * 64, catalogue_updates)
         result_zip, result_manifest = compact_runtime(
-            original, runtime_version=VERSION,
+            original, runtime_version=version,
             core_revision=REVISION, core_sha256=CORE_SHA,
+            extra_updates=catalogue_updates,
         )
-        if not re.fullmatch(r"bachata-s4-plus-0\.2\.7-bionic-[a-f0-9]{16}", VERSION):
-            raise AssertionError("Runtime identity did not include core digest")
+        if not re.fullmatch(r"bachata-s4-plus-0\.2\.7-bionic-[a-f0-9]{16}-patch-[a-f0-9]{12}", version):
+            raise AssertionError("Runtime identity did not include core and catalogue digests")
         updated = json.loads(result_manifest)
-        assert updated["runtimeVersion"] == VERSION
+        assert updated["runtimeVersion"] == version
         assert updated["runtimeVersion"] != manifest["runtimeVersion"]
         assert updated["schemaVersion"] == manifest["schemaVersion"]
         all_paths = {x["path"] for x in updated["files"]}
@@ -84,6 +99,8 @@ def test() -> None:
             assert meta["sha256"] == CORE_SHA
             assert "core024-" not in z.read(GUEST_BUILD_TXT).decode()
             assert "bionic-" + REVISION[:12] in z.read(GUEST_BUILD_TXT).decode()
+            for path, data in catalogue_updates.items():
+                assert z.read(path) == data
             for item in updated["files"]:
                 raw = z.read(item["path"])
                 assert len(raw) == item["size"]
@@ -99,7 +116,24 @@ def test() -> None:
         else:
             raise AssertionError("Accepted unchanged/invalid extraction name")
 
-    print("BACHATA_RUNTIME_REEXTRACTION_CONTRACT_PASS", VERSION, REVISION)
+        try:
+            compact_runtime(original, runtime_version=VERSION, core_revision=REVISION,
+                            core_sha256=CORE_SHA, extra_updates=catalogue_updates)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Accepted a catalogue change with stale extraction identity")
+
+        for invalid in ({"missing.xml": b"bad"}, {GUEST_BUILD_JSON: b"bad"}):
+            try:
+                compact_runtime(original, runtime_version=runtime_identity(CORE_SHA, invalid), core_revision=REVISION,
+                                core_sha256=CORE_SHA, extra_updates=invalid)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("Accepted untracked catalogue or overwritten build identity")
+
+    print("BACHATA_RUNTIME_REEXTRACTION_CONTRACT_PASS", version, REVISION)
 
 
 if __name__ == "__main__":
