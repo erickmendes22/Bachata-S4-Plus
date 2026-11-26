@@ -842,6 +842,9 @@ void GameController::PollState() {
     from port_texture_binding_memo import apply as apply_texture_binding_memo
     result["textureBindingMemo"] = apply_texture_binding_memo(root)
 
+    from port_texture_view_memo import apply as apply_texture_view_memo
+    result["textureViewMemo"] = apply_texture_view_memo(root)
+
     from port_shader_stall_progress import apply as apply_shader_stall_progress
     result["shaderStallProgress"] = apply_shader_stall_progress(root)
 

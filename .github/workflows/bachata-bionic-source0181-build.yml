@@ -18,14 +18,14 @@ on:
         required: false
         type: string
 
-# One complete Bionic APK build per branch. New source revisions supersede old builds.
+# Complete active builds and preserve their compiler caches when a new revision is queued.
 concurrency:
   group: bachata-bionic-full-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
-  actions: write  # Cancel runs started before this concurrency rule existed.
+  actions: read
 
 jobs:
   bionic-source-preflight:
@@ -109,6 +109,7 @@ jobs:
           python3 bionic/source0181/test_donor_draw_pipeline.py --source generic-upstream
           python3 bionic/source0181/test_indirect_submission_protocol.py --source generic-upstream
           python3 bionic/source0181/test_texture_binding_memo.py --source generic-upstream
+          python3 bionic/source0181/test_texture_view_memo.py --source generic-upstream
           python3 bionic/source0181/test_shader_stall_progress.py --source generic-upstream
           python3 bionic/source0181/test_pending_gpu_callbacks.py --source generic-upstream
           python3 bionic/source0181/test_surface_metadata_protocol.py --source generic-upstream
@@ -242,26 +243,6 @@ jobs:
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       CCACHE_NOHASHDIR: "true"
     steps:
-      - name: Stop older concurrent Bionic builds (pre-concurrency runs)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          endpoint="/repos/${GITHUB_REPOSITORY}/actions/workflows/bachata-bionic-generic-source.yml/runs?branch=feature%2Fbionic-shadps4-0181-source-port-20261121&per_page=100"
-          previous_ids="$(gh api "$endpoint" --jq '.workflow_runs[] | select(.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "pending") | .id')"
-          for previous_id in $previous_ids; do
-            if (( previous_id < GITHUB_RUN_ID )); then
-              echo "Cancel superseded Bionic build #${previous_id} (current #${GITHUB_RUN_ID})"
-              if ! gh api -X POST "/repos/${GITHUB_REPOSITORY}/actions/runs/${previous_id}/cancel" >/dev/null; then
-                current_status="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${previous_id}" --jq '.status')"
-                if [[ "$current_status" != "completed" ]]; then
-                  echo "::error::Failed to cancel concurrent Bionic run #${previous_id}; refusing to start another costly build"
-                  exit 1
-                fi
-              fi
-            fi
-          done
-
       - name: Bachata S4+ Android JNI integration
         uses: actions/checkout@v4
 
@@ -344,6 +325,7 @@ jobs:
           python3 bionic/source0181/test_donor_draw_pipeline.py --source generic-upstream
           python3 bionic/source0181/test_indirect_submission_protocol.py --source generic-upstream
           python3 bionic/source0181/test_texture_binding_memo.py --source generic-upstream
+          python3 bionic/source0181/test_texture_view_memo.py --source generic-upstream
           python3 bionic/source0181/test_shader_stall_progress.py --source generic-upstream
           python3 bionic/source0181/test_pending_gpu_callbacks.py --source generic-upstream
           python3 bionic/source0181/test_surface_metadata_protocol.py --source generic-upstream

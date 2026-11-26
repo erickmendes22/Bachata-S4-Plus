@@ -301,7 +301,18 @@ def run(root):
     rh = (root/'src/video_core/renderer_vulkan/vk_rasterizer.h').read_text()
     bc = (root/'src/video_core/buffer_cache/buffer_cache.cpp').read_text()
     members = rh[rh.index('    // Runtime-only caches:'):rh.index('    using ImageBindingInfo =')]
-    code = PREAMBLE.replace('__RASTER_MEMBERS__',members)
+    preamble = PREAMBLE
+    if 'BACHATA_ORDER_TEXTURE_VIEW_MEMO_V1' in th:
+        # This gate exercises the lookup family with no view-memo argument.
+        # The separate view-memo gate compiles its real backing/view protocol.
+        preamble = preamble.replace('namespace VideoCore {',
+            'namespace VideoCore {\nbool OrderDescriptorViewMemoEnabled(){return true;}', 1)
+        preamble = preamble.replace('    ImageView& FindTexture(ImageId,const ImageDesc&);',
+            '    struct ViewMemo {};\n'
+            '    ImageView* TryViewMemo(ImageId,const ImageViewInfo&,const ViewMemo&) {assert(false);return nullptr;}\n'
+            '    void RememberViewMemo(ImageId,const ImageViewInfo&,const ImageView&,ViewMemo&) {assert(false);}\n'
+            '    ImageView& FindTexture(ImageId,const ImageDesc&,ViewMemo* memo=nullptr);')
+    code = preamble.replace('__RASTER_MEMBERS__',members)
     code += '\nnamespace VideoCore {\n'
     for signature in ('bool TextureCache::BindingMemoEnabled()', 'u64 TextureCache::MemoImageUid(',
                       'bool TextureCache::TryMemoImage(', 'bool TextureCache::IsStructuralImageMiss(',
