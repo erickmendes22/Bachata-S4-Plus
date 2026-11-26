@@ -182,6 +182,106 @@ passa a pertencer ao callback, evitando que uma execução aninhada invalide a
 iteração externa. O teste executa o `Finish` e os callbacks reais, incluindo
 liberação anterior ao retry e batches de faults intercalados.
 
+## Reteste do Order em 26/11/2026: DB405003
+
+O reteste executou efetivamente o core
+`887d05d3c8afbb42e67510ed51ef45037e3a7bdd`, confirmado por
+`BACHATA_CORE_REVISION` em `DB405003/shadps4.log:9`. O título é CUSA00785
+v01.02 (`shadps4.log:41–42`), com FEX, DrawPipe e recorder habilitados. Portanto,
+esta captura não pode ser descartada como execução do core anterior à integração.
+
+O processo começou às 00:37:03.293550 UTC e terminou às 00:39:07.741951 UTC,
+aproximadamente 124,45 segundos depois (`process-exit.json`). O aplicativo recebeu
+`FIRST_FRAME_PRESENTED` às 00:37:18.898280, cerca de 15,60 segundos após o início
+(`application.log:25–26`). Há amostras subsequentes de FPS, incluindo 30/60 no
+início e valores menores mais adiante. Isso confirma o caminho de telemetria nessa
+execução, sem demonstrar equivalência de desempenho nem corrigir a amostra inicial
+isolada de `frameTimeMs=79165.76` (`application.log:27`).
+
+A falha nativa observável é **Vulkan DeviceLost**. As últimas quatro linhas de
+`shadps4.log:4542–4545` registram falha de leitura do master semaphore em GpuDraw
+e falha de QueueSubmit em Present, ambas com `ErrorDeviceLost`. O encerramento
+reportado pelo aplicativo é `BACKEND_CRASHED`, saída -1, sem wait status ou sinal
+disponível. Esta captura não contém um novo `BIONIC_HOST_FAULT`, RIP ou opcode
+que sustente atribuir a falha ao guard FEX do diagnóstico anterior.
+
+O descriptor do shader `0xa7b66f58`, com span `0x39f53d00`, foi rejeitado pelo
+guard antes de `FindImage` e recebeu binding nulo. Sua proximidade temporal com
+DeviceLost não prova que esse descriptor inválido tenha sido enviado a Vulkan.
+A comparação dos caminhos ativos dos doadores encontrou os contratos abaixo;
+eles são correções de diferenças funcionais demonstradas, sem alegação de serem
+a causa exclusiva do DeviceLost capturado.
+
+### Acessos indiretos e índices produzidos pela GPU
+
+`port_indirect_submission_protocol.py` registra leituras de argumentos e do
+contador de draws indiretos, argumentos de dispatch indireto e vertex/index
+buffers. `eIndirectCommandRead` participa do `READ_MASK`, para que Copy, Fill e
+WRITE_DATA posteriores aguardem essas leituras. O tracker e os métodos de escrita
+existentes continuam responsáveis por emitir a barreira necessária.
+
+No Order, o binding de índice indireto usa `max_index_size` e a faixa efetivamente
+mapeada. A validação usa `ClampGpuRangeSize`; o `ClampRangeSize` antigo deixa
+tamanhos menores que 1 GiB passar sem verificar o mapeamento. O protocolo
+preserva a semântica do doador quando `max_index_size` não está definido e rejeita
+records incompletos ou fora do mapeamento antes da submissão Vulkan.
+
+O compute shader limita somente `indexCount` ao espaço restante após `firstIndex`.
+Preserva `instanceCount`, `firstIndex`, os bits de `vertexOffset` e `firstInstance`.
+Os dados de argumentos e contagem produzidos por shaders anteriores permanecem
+na GPU: não são substituídos por cópias desatualizadas da CPU. A divisão em batches
+respeita os limites de storage buffer, dispatch e draw do dispositivo, ajustando a
+contagem de cada batch na GPU. As saídas usam o staging pool sincronizado e seus
+ticks de conclusão; não usam o ring sem fences do doador.
+
+A rejeição de índice vazio ocorre antes de `PrepareRenderState`, `BindResources`
+e `BeginRendering`. Esses caminhos já atualizam o estado de layout das imagens e
+consomem metadata de clear, mesmo antes de gravar o draw Vulkan. Retornar depois
+deles com `ResetBindings` poderia perder a indicação de transição pendente ou o
+clear. Os limites são resolvidos antes dessa preparação e passados por valor ao
+binding, que continua sendo gravado na posição original. O gate executa o prefixo
+real de `DrawIndirect` e verifica a preservação desses estados nas rejeições.
+
+O warning recorrente de leitura de metadata em `BindTextures` passa a exigir
+`ORDER1886_WARN_META_TEXTURE=1` no Order, conforme o caminho ativo do doador. Essa
+mudança elimina custo de diagnóstico no caminho frequente, sem classificá-lo como
+causa comprovada do DeviceLost. Outros títulos preservam o warning anterior.
+
+O teste do protocolo executa métodos reais de Runtime/StreamBuffer e o corpo real
+do shader, com 178.542 records em 12.377 batches por execução. Cobre conflitos de
+leitura→escrita, mapeamento, stride, count, dados produzidos após a gravação dos
+comandos, campos preservados e reutilização somente após o tick da GPU. Remover
+apenas `eIndirectCommandRead` do `READ_MASK` reproduz a falha da asserção de hazard.
+O shader GLSL real compilou localmente em target Vulkan 1.3; o gate native exige
+também `spirv-val`, além da compilação C++ completa.
+
+### Guards de patches e mapeamento antes da execução
+
+O guard transacional de patches também usa `ClampGpuRangeSize` para verificar
+cada preimage antes de acessá-la; `ClampRangeSize` não serve como prova de
+mapeamento para patches curtos por causa do fast path abaixo de 1 GiB
+(`src/core/memory.cpp:98–137`). A verificação estrita percorre VMAs contíguas e
+exige `IsMapped()`, que rejeita Free, Reserved e PoolReserved
+(`src/core/memory.h:129–131`). Nenhuma escrita do grupo ocorre se uma preimage
+estiver em um buraco. O teste mantém o fast path permissivo no mock legado;
+substituir o clamp estrito pelo legado reproduz a falha, confirmada nos dois cores.
+
+Essa aplicação acontece durante o carregamento, antes da execução do jogo:
+`src/emulator.cpp:529` carrega o EBOOT antes de `Linker::Execute` em
+`src/emulator.cpp:563`. `Module::LoadModuleToMemory` mapeia os segmentos em
+`src/core/module.cpp:174–179` e só então publica `g_eboot_address`, o tamanho da
+imagem e chama `OnGameLoaded` em `src/core/module.cpp:275–279`. O callback aplica
+a sessão managed ou os patches legados sincronamente. A criação de Game:Main e
+`RunMainEntry` pertencem ao `Linker::Execute` posterior
+(`src/core/linker.cpp:468–575`).
+
+O limite de 40 bits é compatível com esse EBOOT: a base observada é `0x800000000`
+e o tamanho `0x1764000` (`DB405003/shadps4.log:245–249`), coerentes com
+`ModuleLoadBase` em `src/core/module.cpp:26`. No runtime Android, o limite do
+espaço do convidado é `0x3FFFFFFFFF`, inferior a 40 bits
+(`src/core/address_space.cpp:49–52`). O clamp valida VMAs de código/memória
+flexível; não depende de um registro adicional da imagem como recurso Vulkan.
+
 ## Verificação e limites da conclusão
 
 O workflow reconstrói a fonte a partir das revisões fixadas, aplica todos os

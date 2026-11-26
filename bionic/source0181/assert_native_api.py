@@ -11,6 +11,46 @@ import re
 import subprocess
 from pathlib import Path
 
+
+def has_translation_srt_callback(source: str) -> bool:
+    """Require the guarded sync inside CompileModule's TranslateProgram callback.
+
+    Diagnostic wrappers may expand the callback body. A sync moved after
+    translation, into a log string or only into another cache path is too late.
+    """
+    source = re.sub(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//[^\n]*|/\*.*?\*/',
+                    ' ', source, flags=re.S)
+
+    def scope(text: str, begin: int) -> str:
+        if begin < 0:
+            return ''
+        opening = text.find('{', begin)
+        if opening < 0:
+            return ''
+        depth = 0
+        for index in range(opening, len(text)):
+            depth += (text[index] == '{') - (text[index] == '}')
+            if not depth:
+                return text[opening + 1:index]
+        return ''
+
+    body = scope(source, source.find('vk::ShaderModule PipelineCache::CompileModule('))
+    callback = re.search(
+        r'Shader::TranslateProgram\s*\(\s*code\s*,\s*pools\s*,\s*info\s*,'
+        r'\s*runtime_info\s*,\s*profile\s*,\s*\[[^\]]*\]\s*\{', body)
+    if not callback:
+        return False
+    callback_body = scope(body, callback.end() - 1)
+    guard = re.search(r'\bif\s*\(\s*srt_sync\s*\)\s*', callback_body)
+    if not guard:
+        return False
+    guarded_body = callback_body[guard.end():]
+    if guarded_body.startswith('{'):
+        guarded_body = scope(guarded_body, 0)
+        return bool(re.search(r'\bsrt_sync\s*\(\s*info\s*\)\s*;', guarded_body))
+    return bool(re.match(r'srt_sync\s*\(\s*info\s*\)\s*;', guarded_body))
+
+
 def audit(root: Path) -> None:
     # Duplicate dict keys silently override old checks. That hid the prior
     # vk_presenter assertions, so reject duplicate keys in the audit itself.
@@ -319,11 +359,12 @@ def audit(root: Path) -> None:
         ("BACHATA_ORDER1886_PRE_RESOURCE_SRT_SYNC", rsrc),
         ("if (guest_reads_done) guest_reads_done();", rsrc),
         ("void SetSrtSync(std::function<void(Shader::Info&)> callback)", hdr),
-        ("if (srt_sync) srt_sync(info);", pc),
         ("pipeline_cache.SetSrtSync(", raster_src),
     ):
         if marker not in blob:
             issues.append("The Order SRT pre-resource synchronization missing: " + marker)
+    if not has_translation_srt_callback(pc):
+        issues.append("The Order SRT sync must remain guarded inside the TranslateProgram callback")
     srt_impl = (root / "src/shader_recompiler/ir/passes/flatten_extended_userdata_pass.cpp").read_text()
     if "flat_multimap<IR::Value" not in srt_impl:
         issues.append("The Order duplicate-offset ReadConst chains still lost by flat_map")

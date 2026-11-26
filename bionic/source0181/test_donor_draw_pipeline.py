@@ -68,6 +68,7 @@ HARNESS = r'''
 #include <thread>
 #include <utility>
 #include <vector>
+#include "common/bachata_progress.h"
 #include "video_core/amdgpu/bachata_draw_snapshot.h"
 using u8=std::uint8_t;using u16=std::uint16_t;using u32=std::uint32_t;
 using u64=std::uint64_t;using VAddr=u64;
@@ -76,6 +77,7 @@ constexpr int Render_Vulkan=0;
 std::atomic<u32> policy_logs{0};
 template<class...Args>void TestLog(const Args&...){++policy_logs;}
 #define LOG_INFO(...) TestLog(__VA_ARGS__)
+#define LOG_WARNING(...) TestLog(__VA_ARGS__)
 namespace fmt {template<class T>int make_format_args(const T&){return 0;}}
 namespace Common {
 template<class R>using UniqueFunction=std::function<R()>;
@@ -88,7 +90,7 @@ struct ElfInfo {
 }
 struct Settings {bool uffd{};bool IsUserfaultfdTracking()const{return uffd;}} EmulatorSettings;
 namespace Shader {
-enum class SwStage{Vertex=0,Compute=1};constexpr u32 MaxStageTypes=2;
+enum class SwStage{Vertex=0,Compute=1,Fragment=2};constexpr u32 MaxStageTypes=2;
 struct Info {
     SwStage sw_stage{SwStage::Vertex};
     std::optional<int> params{42};
@@ -97,6 +99,7 @@ struct Info {
     std::vector<VAddr> srt_guest_sources;
     std::vector<u32> sharp_tables;
     VAddr pgm_base{};
+    u64 pgm_hash{};
     u32 metadata{};
     bool uses_dma{},has_storage_images{};
     struct Resource {bool is_written{};};
@@ -135,6 +138,10 @@ struct Scheduler {
     bool recorder{true};
     bool HasRecordThread()const{return recorder;}
     void ClaimRecorder(){producer=std::this_thread::get_id();}
+    u64 CurrentTick()const{return 7;}
+    u64 RecordedSubmitTick()const{return 6;}
+    u64 KnownGpuTick()const{return 5;}
+    Scheduler* GetWorkSemaphore(){return this;}
 };
 class Rasterizer {
 public:

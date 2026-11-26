@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Adapted from the Order donor. Keep argument production and count clamping on
+// the GPU: copying stale CPU arguments would discard preceding compute writes.
+#version 450
+
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer Source { uint src[]; };
+layout(std430, binding = 1) writeonly buffer Destination { uint dst[]; };
+layout(std430, binding = 2) readonly buffer CountSource { uint counts[]; };
+layout(push_constant) uniform Push {
+    uint count;
+    uint first;
+    uint stride;
+    uint max_indices;
+    uint has_count;
+    uint count_first;
+    uint first_draw;
+    uint bounded;
+} push;
+
+void main() {
+    const uint index = gl_GlobalInvocationID.x;
+    if (index >= push.count) return;
+    if (index == 0) {
+        uint available_draws = push.count;
+        if (push.has_count != 0) {
+            const uint total = counts[push.count_first];
+            available_draws = total > push.first_draw
+                ? min(push.count, total - push.first_draw) : 0;
+        }
+        dst[0] = available_draws;
+    }
+    const uint s = push.first + index * push.stride;
+    const uint d = 1 + index * 5;
+    const uint first_index = src[s + 2];
+    const uint available = push.max_indices > first_index ? push.max_indices - first_index : 0;
+    dst[d + 0] = push.bounded != 0 ? min(src[s + 0], available) : src[s + 0];
+    dst[d + 1] = src[s + 1];
+    dst[d + 2] = first_index;
+    dst[d + 3] = src[s + 3];
+    dst[d + 4] = src[s + 4];
+}
