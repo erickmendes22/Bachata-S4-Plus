@@ -942,5 +942,7 @@ void GameController::PollState() {
 
     from port_dmem_exact_ranges import apply as apply_dmem_exact_ranges
     result["dmemExactRanges"] = apply_dmem_exact_ranges(root)
+    from port_sotc_page_owner import apply as apply_sotc_page_owner
+    result["sotcPageOwner"] = apply_sotc_page_owner(root)
 
     return result
