@@ -181,6 +181,29 @@ void Swapchain::Recreate(u32 width_, u32 height_) {""")
     if(draw_data->DisplaySize.x>0&&draw_data->DisplaySize.y>0)
         draw_data->FramebufferScale=ImVec2(extent.width/draw_data->DisplaySize.x,
                                            extent.height/draw_data->DisplaySize.y);""")
+    if not sotc:
+        # Donor ISS uses this ABI and expects the local profile string, not a success-only stub.
+        edit("core/libraries/system/systemservice.h","int PS4_SYSV_ABI sceSystemServiceParamGetString();",
+             "int PS4_SYSV_ABI sceSystemServiceParamGetString(s32 id,char* value,u64 size);")
+        edit("core/libraries/system/systemservice.cpp",'''int PS4_SYSV_ABI sceSystemServiceParamGetString() {
+    LOG_ERROR(Lib_SystemService, "(STUBBED) called");
+    return ORBIS_OK;
+}''',r'''static int BachataIssParamString(s32 id,char* value,u64 size) {
+    if(id!=6||!value||!size)return ORBIS_SYSTEM_SERVICE_ERROR_PARAMETER;
+    constexpr char player[]="Player";
+    u64 i=0;
+    for(;i+1<size&&i<sizeof(player)-1;++i)value[i]=player[i];
+    value[i]='\0';
+    return ORBIS_OK;
+}
+
+int PS4_SYSV_ABI sceSystemServiceParamGetString(s32 id,char* value,u64 size) {
+    const auto serial=Common::ElfInfo::Instance().GameSerial();
+    if(serial=="CUSA00004"||serial=="CUSA00223")
+        return BachataIssParamString(id,value,size);
+    LOG_ERROR(Lib_SystemService, "(STUBBED) called");
+    return ORBIS_OK;
+}''')
     return {"specialization":"directional live binding compatibility, cube/FMask class, cache ABI increment",
             "presentation":"guest-sized AHB and scaled UI draw data, physical output geometry",
             "orderAccuracy":"synchronous no draw drops, exact light guard, opaque PP no-clear and verified engine arguments" if not sotc else None}

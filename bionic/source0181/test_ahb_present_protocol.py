@@ -499,12 +499,25 @@ void PolicyTest(){
   assert(!s.AcquireNextImage()&&s.ahb_disabled);s.Recreate();assert(!s.ahb&&s.wsi_creates==1);}
  Reset();
 }
+using s32=int32_t;
+constexpr int ORBIS_OK=0;
+constexpr int ORBIS_SYSTEM_SERVICE_ERROR_PARAMETER=static_cast<int32_t>(0x80A10003u);
+@TARGET_HELPER@
+void TargetTest(){
+ char value[8]={'?','?','?','?','?','?','?','!'};
+ assert(BachataIssParamString(6,value,7)==0&&std::string_view(value)=="Player"&&value[7]=='!');
+ assert(BachataIssParamString(6,value,3)==0&&std::string_view(value)=="Pl"&&value[3]=='y');
+ assert(BachataIssParamString(6,value,1)==0&&value[0]=='\0');
+ assert(BachataIssParamString(6,nullptr,8)!=0&&BachataIssParamString(6,value,0)!=0);
+ assert(BachataIssParamString(5,value,8)!=0);
+}
 int main(int argc,char**argv){
  const std::string only=argc>1?argv[1]:"";
  if(only.empty()||only=="fifo"){FifoTest();CompleteDoesNotGate();InlineCommitTest();}
  if(only.empty()||only=="newest")NewestTest();
  if(only.empty()||only=="session"){SessionTest();StateTest();}
  if(only.empty()||only=="geometry")GeometryTest();
+ if(only.empty()||only=="target")TargetTest();
  if(only.empty()||only=="import")ImportTest();
  if(only.empty()||only=="failure")FailureTest();
  if(only.empty()||only=="policy")PolicyTest();
@@ -538,6 +551,7 @@ def program(source):
             "SWAPCHAIN_CREATE":create,"SWAPCHAIN_ACQUIRE":arm("bool Swapchain::AcquireNextImage()"),
             "SWAPCHAIN_PRESENT":arm("bool Swapchain::Present()"),"CAPABILITIES":caps,
             "AHB_CONTENT_FIT":block(presenter,"static std::pair<float,float> BachataFitAhbContent(")}
+    values["TARGET_HELPER"]=block((source/"src/core/libraries/system/systemservice.cpp").read_text(),"static int BachataIssParamString(")
     text=PREAMBLE+TESTS
     for key,value in values.items():text=text.replace("@"+key+"@",value)
     assert "@" not in text

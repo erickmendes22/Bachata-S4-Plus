@@ -102,12 +102,16 @@ inline void CountOrderAliasProbe(const void* owner, OrderAliasEvent event, bool 
         u32 unchecked{};
     };
     thread_local std::array<Window, 8> windows{};
-    Window* selected{};
-    for (auto& item : windows) {
-        if (item.owner==owner) {selected=&item;break;}
-        if (!item.owner&&!selected) selected=&item;
+    static thread_local Window* last_selected{};
+    Window* selected=last_selected&&last_selected->owner==owner?last_selected:nullptr;
+    if (!selected) {
+        for (auto& item : windows) {
+            if (item.owner==owner) {selected=&item;break;}
+            if (!item.owner&&!selected) selected=&item;
+        }
+        if (!selected) selected=&windows[0];
+        last_selected=selected;
     }
-    if (!selected) selected=&windows[0];
     if (selected->owner!=owner) {
         *selected={};selected->owner=owner;selected->start=std::chrono::steady_clock::now();
     }
