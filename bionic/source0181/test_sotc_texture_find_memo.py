@@ -71,6 +71,7 @@ PREAMBLE = r'''
 #include <map>
 #include <mutex>
 #include <numeric>
+#include <optional>
 #include <ranges>
 #include <string>
 #include <tuple>
@@ -82,6 +83,8 @@ PREAMBLE = r'''
 #define ASSERT_MSG(x,...) assert(x)
 #define DEBUG_ASSERT(x) assert(x)
 #define LOG_WARNING(...) ((void)0)
+#define LOG_ERROR(...) ((void)0)
+#define TEST_HAS_MIP_TAIL __HAS_MIP_TAIL__
 __REAL_COMMON__
 namespace Common {
 void* ReserveMemoryPages(std::size_t size) noexcept { return std::calloc(1, size); }
@@ -100,6 +103,7 @@ struct CheckedMutex {
     void lock() { assert(!held); held = true; }
     void unlock() { assert(held); held = false; }
 };
+__TAIL_POLICY__
 namespace VideoCore {
 __REAL_IMAGE_FLAGS__
 struct ImageInfo {
@@ -110,8 +114,10 @@ struct ImageInfo {
     AmdGpu::ImageType type = AmdGpu::ImageType::Color2D;
     SubresourceExtent resources{4, 8};
     struct { bool is_tiled = false; } props;
+    u8 sotc_first_mip = 0;
+    u32 sotc_dropped_bytes = 0;
 };
-struct ImageViewInfo { SubresourceRange range{}; };
+struct ImageViewInfo { SubresourceRange range{}; u16 min_lod = 0; };
 struct ImageView { u64 owner_uid = 0; };
 struct Image {
     inline static u64 next_uid = 1;
@@ -120,13 +126,16 @@ struct Image {
     u64 image_uid = next_uid++;
     size_t lru_id = 0;
     u64 tick_accessed_last = 0;
-    struct { bool needs_rebind = false; } binding;
+    struct {
+        bool needs_rebind = false, is_bound = false, is_target = false, mip_tail_writer = false;
+    } binding;
     ImageView view{image_uid};
     unsigned view_calls = 0, refresh_calls = 0, uploads = 0, tracks = 0;
     Image(int, int, int, const ImageInfo& value) : info(value) {}
     ImageView& FindView(const ImageViewInfo&) { ++view_calls; return view; }
     __REAL_OVERLAPS__
 };
+__TAIL_WRITE_HELPERS__
 bool IsVulkanFormatCompatible(vk::Format a, vk::Format b) {
     return a == b || ((a == vk::Format::RgbaUnorm || a == vk::Format::RgbaSrgb) &&
                      (b == vk::Format::RgbaUnorm || b == vk::Format::RgbaSrgb));
@@ -153,7 +162,16 @@ struct CheckedPages {
 };
 struct TextureCache {
     __REAL_BINDING_TYPE__;
-    struct ImageDesc { ImageInfo info; ImageViewInfo view_info; BindingType type = BindingType::Texture; };
+    struct ImageDesc {
+        ImageInfo info;
+        ImageViewInfo view_info;
+        BindingType type = BindingType::Texture;
+        u8 rebase_mip = 0;
+        bool rebased_now = false;
+        u16 orig_min_lod = 0;
+        u32 orig_base_layer = 0;
+        std::optional<ImageInfo> other_info;
+    };
     using ImageIds = std::vector<ImageId>;
     __REAL_TRAITS__;
     __REAL_MEMBERS__
@@ -181,6 +199,8 @@ struct TextureCache {
     void TouchImage(const Image&);
     ImageId FindImage(ImageDesc&, bool = false);
     ImageView& FindTexture(ImageId, const ImageDesc&);
+    __REAL_REGISTRY_EPOCH__
+    __REAL_GET_IMAGE__
     void TrackImage(ImageId id) { assert(mutex.held); ++slot_images[id].tracks; }
     void RefreshImage(Image& image) {
         assert(mutex.held); ++image.refresh_calls;
@@ -230,6 +250,12 @@ static void TestColdWarmEffects() {
     TextureCache cache;
     auto desc = Desc();
     auto id = Warm(cache, desc);
+#if TEST_HAS_MIP_TAIL
+    // A writer has a distinct key and publishes its pending-write epoch. Warm
+    // that key as well before checking all consumers' steady-state hits.
+    auto writer = desc; writer.type = TextureCache::BindingType::Storage;
+    assert(cache.FindImage(writer) == id && cache.FindImage(writer) == id);
+#endif
     const auto searches = cache.page_table.searches;
     cache.scheduler.tick = 41; cache.gc_tick = 9;
     desc.view_info.range.base = {2, 3};
@@ -384,6 +410,23 @@ static void TestAliasAndCollision() {
     assert(!collision.PeekMemo(desc.info));
     assert(collision.FindImage(desc) == original);
 }
+#if TEST_HAS_MIP_TAIL
+static void TestRetiredLruNode() {
+    TextureCache cache;
+    auto retired_desc = Desc();
+    const auto retired = Warm(cache, retired_desc);
+    const auto released_lru_id = cache.slot_images[retired].lru_id;
+    cache.Retire(retired); // deferred slot is still inspected for needs_rebind
+    auto live_desc = Desc(0xb00000);
+    const auto live = cache.Add(live_desc.info);
+    assert(cache.slot_images[live].lru_id == released_lru_id);
+    cache.gc_tick = 10;
+    const auto touches = cache.lru_cache.touches;
+    assert(&cache.GetImage(retired) == &cache.slot_images[retired]);
+    assert(cache.lru_cache.touches == touches);
+    assert(cache.OlderThan(9) == std::vector<ImageId>{live});
+}
+#endif
 int main(int argc, char** argv) {
     if (argc > 1) Common::ElfInfo::Instance().serial = argv[1];
     const auto& serial = Common::ElfInfo::Instance().GameSerial();
@@ -403,6 +446,9 @@ int main(int argc, char** argv) {
     }
     TestColdWarmEffects(); TestRegistryGeneration(); TestLifetimeDefenses();
     TestKeysAndCapacity(); TestAliasAndCollision();
+#if TEST_HAS_MIP_TAIL
+    TestRetiredLruNode();
+#endif
     std::cout << "SOTC_TEXTURE_FIND_MEMO_REAL_METHODS_PASS " << serial << '\n';
 }
 '''
@@ -412,6 +458,7 @@ def program(root):
     source = (root / "video_core/texture_cache/texture_cache.cpp").read_text()
     header = (root / "video_core/texture_cache/texture_cache.h").read_text()
     image = (root / "video_core/texture_cache/image.h").read_text()
+    has_tail = "bool TextureCache::DecideMipTail(" in source
     common = "\n".join(strip_includes((root / name).read_text()) for name in (
         "common/types.h", "common/enum.h", "common/alignment.h", "common/slot_vector.h",
         "common/lru_cache.h", "video_core/texture_cache/types.h"))
@@ -419,13 +466,30 @@ def program(root):
                      header.index("    Common::SlotVector<Image> slot_images;")]
     flags = image[image.index("enum ImageFlagBits :"):
                   image.index("struct UniqueImage")]
-    methods = "\n".join(function(source, signature) for signature in (
+    signatures = [
         "static bool IsSotcMemoPerfectMatch(", "bool TextureCache::FindMemoEnabled(",
         "TextureCache::FindMemo& TextureCache::MemoSlot(", "u64 TextureCache::MemoGeneration(",
         "ImageId TextureCache::MemoLookup(", "ImageId TextureCache::FindImage(",
         "void TextureCache::RegisterImage(", "void TextureCache::UnregisterImage(",
-        "void TextureCache::TouchImage(", "ImageView& TextureCache::FindTexture("))
+        "void TextureCache::TouchImage(", "ImageView& TextureCache::FindTexture("]
+    if has_tail:
+        signatures = signatures[:5] + [
+            "static void SetSotcMipTailView(", "bool TextureCache::IsMipTailIdle(",
+            "void TextureCache::FreeMipTail(", "bool TextureCache::DecideMipTail(",
+            "void TextureCache::PruneMipTails("] + signatures[5:]
+    methods = "\n".join(function(source, signature) for signature in signatures)
+    tail_policy = ""
+    tail_helpers = ""
+    if has_tail:
+        tail_policy = strip_includes((root / "video_core/texture_cache/sotc_mip_tail_policy.h").read_text())
+        tail_helpers = image[image.index("inline std::atomic<u64> sotc_mip_tail_gpu_epoch"):
+                             image.rindex("} // namespace VideoCore")]
+        tail_helpers += function((root / "video_core/texture_cache/image.cpp").read_text(),
+                                 "void NoteSotcMipTailWrite(")
     replacements = {
+        "__HAS_MIP_TAIL__": "1" if has_tail else "0",
+        "__TAIL_POLICY__": tail_policy,
+        "__TAIL_WRITE_HELPERS__": tail_helpers,
         "__REAL_COMMON__": common,
         "__REAL_IMAGE_FLAGS__": flags,
         "__REAL_OVERLAPS__": function(image, "    bool Overlaps("),
@@ -433,6 +497,8 @@ def program(root):
         "__REAL_TRAITS__": function(header, "    struct Traits {"),
         "__REAL_MEMBERS__": members,
         "__REAL_UPDATE_IMAGE__": function(header, "    void UpdateImage("),
+        "__REAL_REGISTRY_EPOCH__": function(header, "    u64 TargetRegistryEpoch() const"),
+        "__REAL_GET_IMAGE__": function(header, "    [[nodiscard]] Image& GetImage("),
         "__REAL_FOR_EACH_REGION__": "template <typename Func>\n" + function(header, "    void ForEachImageInRegion("),
         "__REAL_FOR_EACH_PAGE__": "template <typename Func>\n" + function(header, "    static void ForEachPage("),
         "__REAL_METHODS__": methods,
@@ -483,6 +549,13 @@ def run(root):
             "lost_tick": ("            image.tick_accessed_last = scheduler.CurrentTick();\n", "", 1),
             "lost_lru": ("            TouchImage(image);\n", "", 1),
         }
+        if "bool TextureCache::DecideMipTail(" in code:
+            guarded_touch = function(code, "void TextureCache::TouchImage(")
+            controls["lost_retired_lru_guard"] = (
+                guarded_touch,
+                "void TextureCache::TouchImage(const Image& image) { lru_cache.Touch(image.lru_id, gc_tick); }",
+                1,
+            )
         for name, (old, new, count) in controls.items():
             assert code.count(old) >= count, name
             mutant = build(name, code.replace(old, new, count))

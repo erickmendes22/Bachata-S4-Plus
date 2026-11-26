@@ -836,6 +836,12 @@ void GameController::PollState() {
     from port_sotc_texture_find_memo import apply as apply_sotc_texture_find_memo
     result["sotcTextureFindMemo"] = apply_sotc_texture_find_memo(root)
 
+    from port_sotc_mip_tail import apply as apply_sotc_mip_tail
+    result["sotcMipTail"] = apply_sotc_mip_tail(root)
+
+    from port_texture_view_memo import apply as apply_texture_view_memo
+    result["textureViewMemo"] = apply_texture_view_memo(root)
+
     from port_shader_stall_progress import apply as apply_shader_stall_progress
     result["shaderStallProgress"] = apply_shader_stall_progress(root)
 
