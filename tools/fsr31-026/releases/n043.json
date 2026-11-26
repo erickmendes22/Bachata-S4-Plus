@@ -1,0 +1,22 @@
+{
+  "sourceBase": "n042 cd5681c",
+  "retainedAndroidCorePayload": "n040; n041/n042 changed SDK only per prior build record",
+  "runtimeVersion": "bachata-s4-n043-0.2.6-r",
+  "baseSha256": "6cecb04c4dbb5f316d820e97d2cdc1bbf86731dde5b379773908ced68f7ff6b9",
+  "sdkSha256": "50ffaba2bb77bce4dc89d36e9e22f2b5ba8ee5005c27d13c1fa47fe1dcf606b5",
+  "native025Sha256": "c1cf8986c2a5f6f9f33d32a073eff797e2717b4848cd475c4d19f26dc7042bb2",
+  "allNonSDKPayloadsIdenticalToRetainedBase": true,
+  "runtimeHashesVerified": 562,
+  "nativeCoreCompiled": false,
+  "deviceValidated": false,
+  "apkSha256": "5afc0ce8683e8a646c0176fcf8f84cda8f22cb86d5ec0244c68e727d19198f74",
+  "apkSize": 221535713,
+  "signature": "P36 V2/V3 SDK24-36 verified",
+  "sourceCommit": "3a7b53689f1b921fede0a6c2d20f27ca7cef8937",
+  "gpuValidationRun": 38555959288,
+  "baselineDeviceDiagnostic": "BS4-20261014-FF1A56D6",
+  "gpuNegativeControlCyanPixels": 2068600,
+  "gpuCorrectedOriginalScenePixels": 2068600,
+  "gpuHudPixelsPreserved": 5000,
+  "deviceCyanResolved": null
+}

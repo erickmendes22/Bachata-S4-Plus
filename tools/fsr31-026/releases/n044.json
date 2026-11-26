@@ -1,0 +1,21 @@
+{
+  "sourceBase": "n043 with corrected access-mask semantics",
+  "retainedAndroidCorePayload": "exact n043 APK unchanged non-SDK payload",
+  "runtimeVersion": "bachata-s4-n044-0.2.6-r",
+  "baseSha256": "5afc0ce8683e8a646c0176fcf8f84cda8f22cb86d5ec0244c68e727d19198f74",
+  "sdkSha256": "4387e0d2a1a1fb7931b8924f897636f2d73fa2a6d7d7146e2512c6aa546d0731",
+  "native025Sha256": "c1cf8986c2a5f6f9f33d32a073eff797e2717b4848cd475c4d19f26dc7042bb2",
+  "allNonSDKPayloadsIdenticalToRetainedBase": true,
+  "runtimeHashesVerified": 562,
+  "nativeCoreCompiled": false,
+  "deviceValidated": false,
+  "apkSha256": "f12325d889ddb8a0867121ebf99513810373673cf4f5ba6093c7c5f6fe944282",
+  "apkSize": 221535713,
+  "signature": "P36 V2/V3 verified SDK24-36",
+  "sourceCommit": "867366f3d2197f326e839539fbdafc94427e18d5",
+  "gpuValidationRun": 38558681132,
+  "baselineDeviceDiagnostic": "BS4-20261014-48DCA539",
+  "deviceCrashResolved": null,
+  "depthAccess0x600ScenePreservedTest": true,
+  "depthClearActualWriteRetiresSceneTest": true
+}

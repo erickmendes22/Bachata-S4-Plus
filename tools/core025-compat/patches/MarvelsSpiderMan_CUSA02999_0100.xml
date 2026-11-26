@@ -1,0 +1,54 @@
+<?xml version='1.0' encoding='utf-8'?>
+<Patch>
+    <TitleID>
+        <ID>CUSA02999</ID>
+        <ID>CUSA02299</ID>
+    </TitleID>
+    <Metadata Title="Marvel's Spider-Man" Name="Resolution 1280x720" Note="Forces the internal 3D render resolution to 1280x720 while preserving the normal display/output path. Reduces GPU load at the cost of image sharpness. Select only one resolution patch and restart the game." Author="erickmendes22" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x01839671" Value="e8ac339d0190" Expected="8b534c8b4b50" />
+            <Line Type="bytes" Address="0x0320ca22" Value="ba00050000b9d002000089534c894b50c3" Expected="cccccccccccccccccccccccccccccccccc" />
+            <Line Type="bytes" Address="0x01675be3" Value="8b4810908b501490" Expected="0f4548100f455014" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Marvel's Spider-Man" Name="Resolution 1600x900" Note="Forces the internal 3D render resolution to 1600x900 while preserving the normal display/output path. Offers better image quality than 720p with a smaller GPU reduction. Select only one resolution patch and restart the game." Author="erickmendes22" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x01839671" Value="e8ac339d0190" Expected="8b534c8b4b50" />
+            <Line Type="bytes" Address="0x0320ca22" Value="ba40060000b98403000089534c894b50c3" Expected="cccccccccccccccccccccccccccccccccc" />
+            <Line Type="bytes" Address="0x01675be3" Value="8b4810908b501490" Expected="0f4548100f455014" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Marvel's Spider-Man" Name="Disable Sun Shadows" Note="Disables cascaded sun/directional shadow rendering through the renderer's native no-shadow path. Local-light shadows remain enabled. Can reduce GPU load in outdoor scenes; direct sun shadows are removed. Restart the game." Author="erickmendes22" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x0165d12d" Value="e9b600000090" Expected="0f84b5000000" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Marvel's Spider-Man" Name="Disable SSAO" Note="Disables screen-space ambient occlusion through the renderer's native inactive path while leaving Ambient Shadow available. Contact areas and corners look lighter. Restart the game." Author="erickmendes22" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x0177b613" Value="eb0f" Expected="730f" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Marvel's Spider-Man" Name="Vehicle Density 50%" Note="Halves the default and configured density for all three ambient vehicle categories. Scripted and mission vehicles are unaffected, so visible traffic is not guaranteed to be exactly 50%. Restart the game." Author="erickmendes22" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x004905dd" Value="c5fa10055bfa7502" Expected="c5fa1005a3547602" />
+            <Line Type="bytes" Address="0x0049060f" Value="c5fa100529fa7502" Expected="c5fa100571547602" />
+            <Line Type="bytes" Address="0x00490641" Value="c5fa1005f7f97502" Expected="c5fa10053f547602" />
+            <Line Type="bytes" Address="0x004905f2" Value="c5fa5905beee7702" Expected="c5fa590592547602" />
+            <Line Type="bytes" Address="0x00490624" Value="c5fa59058cee7702" Expected="c5fa590560547602" />
+            <Line Type="bytes" Address="0x00490656" Value="c5fa59055aee7702" Expected="c5fa59052e547602" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Marvel's Spider-Man" Name="Pedestrian Generation 50%" Note="Keeps alternating procedural pedestrian spawn candidates and halves the dynamic pedestrian population cap. Scripted and mission NPCs are unaffected, so visible population is not guaranteed to be exactly 50%. Restart the game." Author="erickmendes22" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x004ab6e3" Value="8b8520ffffff4431f0a8019090" Expected="666666662e0f1f840000000000" />
+            <Line Type="bytes" Address="0x004ab6f0" Value="0f851b04000090909090" Expected="c5782e3540b17402733a" />
+            <Line Type="bytes" Address="0x004abb77" Value="0f8266fbffff" Expected="0f8273fbffff" />
+            <Line Type="bytes" Address="0x004d5335" Value="c5fa590503ad7102" Expected="c5fa5980c4f02000" />
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Marvel's Spider-Man" Name="60 FPS" Note="Targets 60 FPS on App 01.00 by switching the renderer frame-timing normalization from the native 1/30 reference to its adjacent 1/60 reference. Ported for the supplied 01.00 executable. Restart the game." Author="erickmendes22" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x0165a866" Expected="c5fa101d6a8b7501" Value="c5fa101d6e8b7501" />
+        </PatchList>
+    </Metadata>
+</Patch>
