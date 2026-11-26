@@ -94,13 +94,10 @@ def apply(root, order):
         auto it=saved_modules.end();
         if (perm_idx<saved_modules.size() && saved_modules[perm_idx].module) {
             auto& saved=saved_modules[perm_idx];
-            if (saved.spec.bitset != spec.bitset ||
+            if (!saved.effective_info || saved.spec.bitset != spec.bitset ||
                 !(saved.spec==spec) || !(spec==saved.spec)) return false;
             it=saved_modules.begin()+perm_idx;
         }""")
-        anchor="    it_pgm.value()->InsertPermut(module, std::move(spec), perm_idx);"
-        assert s.count(anchor)==1
-        s=s.replace(anchor,"    spec.info = &it_pgm.value()->info;\n"+anchor)
     p.write_text(s)
     return {"drain_cache_writes": True, "atomic_blob_publication":True,
             "order_independent_shader_restore": order}
