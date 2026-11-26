@@ -1,7 +1,7 @@
 """Combine independently compiled Bachata FEX cores, verifying exact revision and ABI."""
 import hashlib,re,subprocess,sys
 from pathlib import Path
-REV="4b96fe4efb3483a81ab77f824559227774b0b6d5"
+REV="8c1c43e6e9b690c10f9ce17b25c96855a5b3ea5b"
 stage=Path(sys.argv[1])
 lib=Path(sys.argv[2])
 assert (stage/"BIONIC_SOURCE_REVISION.txt").read_text().strip()==REV

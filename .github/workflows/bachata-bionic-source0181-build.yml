@@ -250,7 +250,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for pair in "45873568578 5fbdce5135ca76ef75b2ac4e30a0c1cd9a048a0c" "45871946934 4b96fe4efb3483a81ab77f824559227774b0b6d5"; do
+          for pair in "45891720104 74726eb861b8da5055cfd810512b573c265b64cd" "45897025445 8c1c43e6e9b690c10f9ce17b25c96855a5b3ea5b"; do
             read -r run revision <<< "$pair"
             for attempt in $(seq 1 360); do
               state="$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$run)"
@@ -283,7 +283,7 @@ jobs:
         with:
           name: Bachata-S4Plus-REAL-shadPS4-0181-FEX-Bionic-core
           path: out/sotc-stage
-          run-id: 45871946934
+          run-id: 45897025445
           github-token: ${{ github.token }}
 
       - name: Android build tools and ELF patching
@@ -393,7 +393,7 @@ jobs:
       - name: Normalize, strip and import the second validated Bachata FEX core
         run: |
           set -euo pipefail
-          test "$(cat out/sotc-stage/BIONIC_SOURCE_REVISION.txt)" = "4b96fe4efb3483a81ab77f824559227774b0b6d5"
+          test "$(cat out/sotc-stage/BIONIC_SOURCE_REVISION.txt)" = "8c1c43e6e9b690c10f9ce17b25c96855a5b3ea5b"
           bash bionic/apk/normalize_elf.sh out/sotc-stage/lib/arm64-v8a
           NDK="$ANDROID_HOME/ndk/30.0.14904198"
           python3 bionic/apk/prepare_slim_native.py out/sotc-stage \

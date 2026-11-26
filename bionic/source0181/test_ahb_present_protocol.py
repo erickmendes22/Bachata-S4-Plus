@@ -30,6 +30,7 @@ PREAMBLE = r'''
 #include <cassert>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
@@ -384,11 +385,29 @@ void InlineCommitTest(){
  Reset();inline_commit=true;Vulkan::Instance i;auto p=Create(i);Frame(*p);
  u32 next=99;assert(p->Acquire(next,0ms)&&next==1);p.reset();Reset();
 }
+@AHB_CONTENT_FIT@
 void GeometryTest(){
  Reset();using A=Vulkan::AndroidAhbPresent;
  assert((A::FitDestination(1280,720,2688,1216)==ARect{263,0,2424,1216}));
  assert((A::FitDestination(1920,1080,1920,1080)==ARect{0,0,1920,1080}));
  assert((A::FitDestination(1280,720,1080,1920)==ARect{0,656,1080,1263}));
+ // Reproduce both stages of the fit, including the reported ultrawide display.
+ for(const auto& display:std::array<std::pair<float,float>,5>{
+         {{2688,1216},{2048,926},{1920,1080},{1080,1920},{2560,1440}}}){
+  const float sx=1280.0f/display.first,sy=720.0f/display.second;
+  const auto size=BachataFitAhbContent(1280,720,display.first,display.second,sx,sy);
+  assert(std::abs(size.first-display.first)<0.01f&&std::abs(size.second-display.second)<0.01f);
+  const auto rect=A::FitDestination(1280,720,static_cast<u32>(display.first),static_cast<u32>(display.second));
+  const float output_w=(size.first/display.first)*(rect.right-rect.left);
+  const float output_h=(size.second/display.second)*(rect.bottom-rect.top);
+  assert(std::abs(output_w-output_h*16.0f/9.0f)<=2.0f);
+  const auto splash=BachataFitAhbContent(640,480,display.first,display.second,sx,sy);
+  assert(std::abs(splash.first*sx-(splash.second*sy)*4.0f/3.0f)<0.01f);
+  assert(std::abs(splash.second-display.second)<0.01f&&splash.first<display.first);
+ }
+ const auto partial=BachataFitAhbContent(1280,720,2000,800,1280.0f/2688,720.0f/1216);
+ assert(partial.first<=2000&&partial.second<=800);
+ assert(std::abs(partial.first*(1280.0f/2688)-partial.second*(720.0f/1216)*16.0f/9.0f)<0.01f);
  unsigned count=0;
  for(u32 w:{1u,720u,1280u,8192u,static_cast<u32>(INT32_MAX)})
  for(u32 h:{1u,480u,720u,8192u,static_cast<u32>(INT32_MAX)})
@@ -480,12 +499,25 @@ void PolicyTest(){
   assert(!s.AcquireNextImage()&&s.ahb_disabled);s.Recreate();assert(!s.ahb&&s.wsi_creates==1);}
  Reset();
 }
+using s32=int32_t;
+constexpr int ORBIS_OK=0;
+constexpr int ORBIS_SYSTEM_SERVICE_ERROR_PARAMETER=static_cast<int32_t>(0x80A10003u);
+@TARGET_HELPER@
+void TargetTest(){
+ char value[8]={'?','?','?','?','?','?','?','!'};
+ assert(BachataIssParamString(6,value,7)==0&&std::string_view(value)=="Player"&&value[7]=='!');
+ assert(BachataIssParamString(6,value,3)==0&&std::string_view(value)=="Pl"&&value[3]=='y');
+ assert(BachataIssParamString(6,value,1)==0&&value[0]=='\0');
+ assert(BachataIssParamString(6,nullptr,8)!=0&&BachataIssParamString(6,value,0)!=0);
+ assert(BachataIssParamString(5,value,8)!=0);
+}
 int main(int argc,char**argv){
  const std::string only=argc>1?argv[1]:"";
  if(only.empty()||only=="fifo"){FifoTest();CompleteDoesNotGate();InlineCommitTest();}
  if(only.empty()||only=="newest")NewestTest();
  if(only.empty()||only=="session"){SessionTest();StateTest();}
  if(only.empty()||only=="geometry")GeometryTest();
+ if(only.empty()||only=="target")TargetTest();
  if(only.empty()||only=="import")ImportTest();
  if(only.empty()||only=="failure")FailureTest();
  if(only.empty()||only=="policy")PolicyTest();
@@ -499,6 +531,8 @@ def program(source):
     h=(base/"vk_ahb_present.h").read_text()
     slots=(base/"ahb_release_slots.h").read_text()
     swap=(base/"vk_swapchain.cpp").read_text()
+    presenter=(base/"vk_presenter.cpp").read_text()
+    assert "BACHATA_AHB_CONTENT_FIT" in presenter and "swapchain.PresentLayout() == vk::ImageLayout::eGeneral" in presenter
     instance=(base/"vk_instance.cpp").read_text()
     # Access visibility is the only adapter change: the state/fit unit cases use
     # the exact nested class methods without mirroring their implementation.
@@ -515,7 +549,9 @@ def program(source):
     values={"RELEASE_SLOTS":slots[slots.index("namespace BachataAhb {"):],"ADAPTER":adapter,
             "POLICY":block(swap,"static const char* BachataAhbPolicyBlockReason(){")+"\n"+block(swap,"static bool BachataAhbTarget(){"),
             "SWAPCHAIN_CREATE":create,"SWAPCHAIN_ACQUIRE":arm("bool Swapchain::AcquireNextImage()"),
-            "SWAPCHAIN_PRESENT":arm("bool Swapchain::Present()"),"CAPABILITIES":caps}
+            "SWAPCHAIN_PRESENT":arm("bool Swapchain::Present()"),"CAPABILITIES":caps,
+            "AHB_CONTENT_FIT":block(presenter,"static std::pair<float,float> BachataFitAhbContent(")}
+    values["TARGET_HELPER"]=block((source/"src/core/libraries/system/systemservice.cpp").read_text(),"static int BachataIssParamString(")
     text=PREAMBLE+TESTS
     for key,value in values.items():text=text.replace("@"+key+"@",value)
     assert "@" not in text
@@ -553,6 +589,7 @@ def main():
             "no_commit_progress":("ctx->state->Committed(ctx->sequence);","(void)ctx;","fifo"),
             "stale_commit":("!retired && pending == value","!retired && value != 0","session"),
             "no_retirement":("            releases.Retire();","            (void)releases;","session"),
+            "double_content_fit":("const float fit = std::min(content_w*scale_x/game_w,content_h*scale_y/game_h);","scale_x=scale_y=1.0f; const float fit = std::min(content_w*scale_x/game_w,content_h*scale_y/game_h);","geometry"),
             "stretch_geometry":("const ARect dst=FitDestination(width,height,destination_width,destination_height);","const ARect dst{0,0,static_cast<int32_t>(destination_width),static_cast<int32_t>(destination_height)};","geometry"),
             "double_close_import":("slot.imported=true;return true; // Vulkan owns fd only after success.","close(next->fence);slot.imported=true;return true; // Vulkan owns fd only after success.","fifo"),
             "leak_failed_import":("        close(next->fence);\n        if(result>0", "        if(result>0", "import"),
