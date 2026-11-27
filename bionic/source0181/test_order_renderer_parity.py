@@ -1,7 +1,7 @@
 """Verify the actual selective VRS geometry policy and set-path integration."""
 import argparse,subprocess,tempfile
 from pathlib import Path
-from port_order_selective_vrs import add_vrs_query_feature
+from port_order_selective_vrs import add_vrs_query_feature, ensure_extension_capacity
 
 # The failed revision matched three occurrences, including the unrelated
 # get and unlink APIs. Reproduce the collision before building native code.
@@ -22,6 +22,14 @@ except RuntimeError:
 else:
     raise AssertionError("Duplicate feature insertion accepted")
 
+for declaration in (
+    "boost::container::static_vector<const char*, 32> enabled_extensions;",
+    "boost::container::static_vector<const char *, 64> enabled_extensions;",
+    "boost::container::static_vector<const char*, 128> enabled_extensions;",
+    "std::vector<const char*> enabled_extensions{};",
+):
+    result=ensure_extension_capacity(declaration)
+    assert result==declaration.replace(", 32>",", 64>")
 p=argparse.ArgumentParser();p.add_argument("--source",type=Path,required=True)
 root=p.parse_args().source/"src/video_core"
 r=(root/"renderer_vulkan/vk_rasterizer.cpp").read_text()
