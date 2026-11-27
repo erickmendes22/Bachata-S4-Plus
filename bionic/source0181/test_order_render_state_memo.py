@@ -30,7 +30,7 @@ struct Image {
     struct Info {
         SubresourceExtent resources{};
         struct{u32 width=2,height=2,depth=1;}size;
-        struct{bool has_stencil=true,is_tiled=true;}props;
+        struct{bool has_stencil=true,is_tiled=true,is_depth=false;}props;
         struct{VAddr cmask_addr{},fmask_addr{},htile_addr{};s32 htile_clear_mask=-1;}meta_info;
         VAddr guest_address=0x4000,stencil_addr{};u32 guest_size=4096,stencil_size{},num_samples=1;
         vk::Format pixel_format=vk::Format::eR8G8B8A8Unorm;
