@@ -1,0 +1,128 @@
+name: Bachata CI monitor (work branches only)
+on:
+  push:
+    branches: [work/bionic-ci-monitor-20261127]
+    paths: ['.github/workflows/bachata-ci-watch.yml']
+concurrency:
+  group: bachata-work-branch-monitor
+  cancel-in-progress: true
+permissions:
+  contents: read
+  actions: write
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 335
+    steps:
+      - name: Monitor current heads every 60 seconds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PYTHONUNBUFFERED: '1'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, time
+          from urllib.parse import quote
+
+          repo = os.environ["GH_REPO"]
+          workflow = "bachata-bionic-source0181-build.yml"
+          branches = (
+              "work/bionic-fps-baseline-20261125",
+              "work/bionic-sotc-color-20261125",
+              "work/bionic-wsi-fex-async-package-20261125",
+          )
+          seen = set()
+          retries = set()
+          deadline = time.monotonic() + 330 * 60
+
+          def api(path, method="GET", raw=False):
+              result = subprocess.run(
+                  ["gh", "api", "--method", method, "repos/" + repo + "/" + path],
+                  capture_output=True, text=True, timeout=25, check=True,
+              ).stdout
+              return result if raw else json.loads(result or "{}")
+
+          def latest(branch):
+              name = quote(branch, safe="")
+              head = api("commits?sha=" + name + "&per_page=1")[0]["sha"]
+              runs = api("actions/workflows/" + workflow + "/runs?branch=" +
+                         name + "&per_page=20")["workflow_runs"]
+              current = [run for run in runs if run["head_sha"] == head]
+              return head, current[0] if current else None
+
+          def retryable(run, jobs):
+              # Never retry a deterministic build/test/signing failure.
+              if run["run_attempt"] != 1:
+                  return False
+              if run["conclusion"] == "startup_failure":
+                  return True
+              failed = [j for j in jobs if j["conclusion"] not in
+                        ("success", "skipped", "neutral", "cancelled")]
+              if not failed:
+                  return False
+              for job in failed:
+                  steps = [s for s in job.get("steps", [])
+                           if s.get("conclusion") == "failure"]
+                  if not steps or any(s["name"] != "Set up job" for s in steps):
+                      return False
+                  try:
+                      logs = api("actions/jobs/" + str(job["id"]) + "/logs", raw=True)
+                  except (subprocess.SubprocessError, ValueError):
+                      return False
+                  signatures = ("The runner has received a shutdown signal",
+                                "The hosted runner lost communication",
+                                "The runner lost communication with the server")
+                  if not any(signature in logs for signature in signatures):
+                      return False
+              return True
+
+          def note(message):
+              print(message, flush=True)
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+                  output.write(message + "\n\n")
+
+          while time.monotonic() < deadline:
+              for branch in branches:
+                  try:
+                      head, run = latest(branch)
+                      if run is None:
+                          key = (branch, head, "no-run")
+                          if key not in seen:
+                              note("::notice::No run for current head " + branch + " " + head)
+                              seen.add(key)
+                          continue
+                      key = (branch, run["id"], run["run_attempt"], run["status"], run["conclusion"])
+                      if key in seen:
+                          continue
+                      link = run["html_url"]
+                      note(branch + " " + head + " " + run["status"] + " " +
+                           str(run["conclusion"]) + " " + link)
+                      if run["status"] == "completed" and run["conclusion"] in (
+                          "failure", "startup_failure", "timed_out", "action_required", "stale"
+                      ):
+                          jobs = api("actions/runs/" + str(run["id"]) +
+                                     "/attempts/" + str(run["run_attempt"]) + "/jobs?per_page=100")["jobs"]
+                          for job in jobs:
+                              if job["conclusion"] not in ("success", "skipped", "neutral"):
+                                  failed = [s["name"] for s in job.get("steps", [])
+                                            if s.get("conclusion") == "failure"]
+                                  note("::warning::" + job["name"] + " " +
+                                       str(job["conclusion"]) + " " + ", ".join(failed) +
+                                       " " + job["html_url"])
+                          if retryable(run, jobs) and run["id"] not in retries:
+                              # Check head and attempt again immediately before retry.
+                              current_head, current = latest(branch)
+                              if current_head == head and current and current["id"] == run["id"] and current["run_attempt"] == 1 and current["status"] == "completed":
+                                  api("actions/runs/" + str(run["id"]) + "/rerun", "POST")
+                                  retries.add(run["id"])
+                                  note("::notice::Retried confirmed runner infrastructure failure once: " + link)
+                          else:
+                              note("::warning::Requires diagnosis; no blind rerun: " + link)
+                      seen.add(key)
+                  except (subprocess.SubprocessError, ValueError, KeyError, IndexError) as error:
+                      print("::warning::Monitor API check failed for " + branch +
+                            " (" + type(error).__name__ + "); will retry.")
+              time.sleep(60)
+          note("::warning::Monitoring window ended; renew monitor if APK delivery is not verified.")
+          PY
