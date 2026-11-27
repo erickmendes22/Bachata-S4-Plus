@@ -194,6 +194,11 @@ public:
     std::mutex mutex;
     std::vector<std::unique_ptr<Module>> m_modules;
     std::vector<u32> m_prepared_boot_modules;
+#if FIOS_TEST_FEX
+    bool m_donor_mspace_active{},m_donor_mspace_pending{};
+    std::vector<Loader::SymbolRecord> m_donor_mspace_exports;
+    void SelectDonorMspaceProvider(s32);
+#endif
     Loader::SymbolsResolver m_hle_symbols;
     std::unique_ptr<GuestCpu::HleVeneerAllocator> m_hle_veneers;
     std::unique_ptr<Module> next_module;
@@ -223,6 +228,10 @@ public:
 // Keep that production body verbatim without suppressing other warnings.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wsign-compare"
+#if FIOS_TEST_FEX
+@MSPACE_NIDS@
+@MSPACE_PROVIDER@
+#endif
 @PREPARE_BOOT@
 @LOAD_AND_START@
 #pragma GCC diagnostic pop
@@ -328,6 +337,36 @@ int main(int argc,char** argv){
      int result=-1;assert(Libraries::SysModule::loadModuleInternal(3,0,nullptr,&result)==0);
      assert(cp.load_paths.empty() && result==0);
      std::filesystem::remove(dir/"libSceFios2.use-hle");++cases;}
+    // All Mspace calls use one provider. No strong HLE alias is sealed
+    // before selection; incomplete or ambiguous LLE families stay HLE.
+    for(int failure=0;failure<3;++failure){
+        Core::Linker cp;cp.m_donor_mspace_active=cp.m_donor_mspace_pending=true;
+        auto main=MainModule("libc");auto* importer=cp.m_modules.emplace_back(std::move(main)).get();
+        const auto nids=Core::DonorMspaceNids();const std::string nid(nids.front());
+        cp.m_hle_symbols.Add(Symbol(nid,Core::Loader::SymbolType::Function,"libc",1,"libc"),
+          {nid,"",0x111,std::make_shared<Core::GuestCpu::HleCallAdapter>(Core::GuestCpu::HleCallAdapter{5}),false});
+        Core::Loader::SymbolRecord record{};
+        assert(!cp.Resolve(nid+"#L#M",Core::Loader::SymbolType::Function,importer,&record));
+        assert(record.hle_adapter && record.virtual_address==0x111);
+        auto libc=GuestModule("libc",2);libc->export_sym.records.clear();
+        for(size_t i=0;i<nids.size();++i){
+            if(failure==1 && i+1==nids.size()) continue;
+            const std::string n(nids[i]);libc->export_sym.Add(Symbol(n,Core::Loader::SymbolType::Function,"libc",2,"libc"),
+                {n,"",0x800100000ULL+32*i,{},false});
+        }
+        if(failure==2){libc->export_libs.push_back({"libc",3});
+            libc->export_sym.Add(Symbol(nid,Core::Loader::SymbolType::Function,"libc",3,"libc"),{nid,"",0x800200000ULL,{},false});}
+        cp.m_modules.push_back(std::move(libc));cp.SelectDonorMspaceProvider(1);
+        assert(!cp.m_donor_mspace_pending);
+        assert(cp.Resolve(nid+"#L#M",Core::Loader::SymbolType::Function,importer,&record));
+        assert(record.virtual_address==(failure?0x111ULL:0x800100000ULL));
+        if(!failure){
+            importer->library.name="libSceLibcInternal";importer->module.name="libSceLibcInternal";
+            for(size_t i=0;i<nids.size();++i){assert(cp.Resolve(std::string(nids[i])+"#L#M",Core::Loader::SymbolType::Function,importer,&record));
+                assert(!record.hle_adapter && record.virtual_address==0x800100000ULL+32*i);}
+        }else assert(cp.m_donor_mspace_exports.empty());
+        cp.SelectDonorMspaceProvider(-1);assert(cp.m_donor_mspace_exports.size()==(failure?0:nids.size()));++cases;
+    }
     // Both modules publish exports and TLS before either initializer runs.
     {Core::Linker cp;Select(cp,game);RegisterAtBoot(&cp.m_hle_symbols,dir);
      auto* main=cp.m_modules.emplace_back(MainModule()).get();cp.Relocate(main);
@@ -421,6 +460,8 @@ def program(source):
         "RELOCATE": block(cpp, "void Linker::Relocate("),
         "RELOCATE_ANY": block(h, "    void RelocateAnyImports("),
         "RELOCATE_ALL": block(h, "    void RelocateAllImports("),
+        "MSPACE_NIDS": block(cpp, "static std::span<const std::string_view> DonorMspaceNids("),
+        "MSPACE_PROVIDER": block(cpp, "void Linker::SelectDonorMspaceProvider("),
         "PREPARE_BOOT": block(cpp, "s32 Linker::PrepareBootModule("),
         "LOAD_AND_START": block(cpp, "s32 Linker::LoadAndStartModule("),
         "LOAD_FIOS_ARM": load,

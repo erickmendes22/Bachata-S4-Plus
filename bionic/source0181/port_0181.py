@@ -83,6 +83,8 @@ def main() -> None:
             subprocess.run(["git", "apply", "--check", str(donor_delta)], cwd=args.source.resolve(), check=True)
             subprocess.run(["git", "apply", str(donor_delta)], cwd=args.source.resolve(), check=True)
             print("BACHATA_EFFECTIVE_DONOR_DELTA_MAIN_APPLIED")
+            from port_donor_mspace_family import apply as apply_donor_mspace_family
+            apply_donor_mspace_family(args.source.resolve())
             from reconcile_cmake import reconcile
             source_registry=reconcile(args.source.resolve())
             print("REAL_SHADPS4_0181_CMAKE_REGISTRY_RECONCILED",source_registry["changedGroups"])
