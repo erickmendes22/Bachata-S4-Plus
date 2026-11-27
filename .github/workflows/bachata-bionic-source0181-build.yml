@@ -109,6 +109,7 @@ jobs:
           python3 bionic/source0181/test_sotc_sampled_set_gate.py --source generic-upstream
           python3 bionic/source0181/test_sotc_stage_specialization.py --source generic-upstream
           python3 bionic/source0181/test_sotc_copy_batch.py --source generic-upstream
+          python3 bionic/source0181/test_sotc_view_layout.py --source generic-upstream
           c++ -std=c++20 -O2 -Wall -Wextra -Werror -I generic-upstream/src bionic/source0181/test_sotc_load_flush.cpp -o /tmp/test-sotc-load-flush
           /tmp/test-sotc-load-flush
           python3 bionic/source0181/test_sotc_mip_tail.py --source generic-upstream
@@ -347,6 +348,7 @@ jobs:
           python3 bionic/source0181/test_sotc_sampled_set_gate.py --source generic-upstream
           python3 bionic/source0181/test_sotc_stage_specialization.py --source generic-upstream
           python3 bionic/source0181/test_sotc_copy_batch.py --source generic-upstream
+          python3 bionic/source0181/test_sotc_view_layout.py --source generic-upstream
           c++ -std=c++20 -O2 -Wall -Wextra -Werror -I generic-upstream/src bionic/source0181/test_sotc_load_flush.cpp -o /tmp/test-sotc-load-flush
           /tmp/test-sotc-load-flush
           python3 bionic/source0181/test_sotc_mip_tail.py --source generic-upstream
