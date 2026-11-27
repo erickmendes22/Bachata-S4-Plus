@@ -18,10 +18,10 @@ on:
         required: false
         type: string
 
-# Complete active builds and preserve their compiler caches when a new revision is queued.
+# Only the newest exact two-core package should wait for validation.
 concurrency:
   group: bachata-bionic-full-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: read
