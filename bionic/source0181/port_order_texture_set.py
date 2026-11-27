@@ -217,8 +217,11 @@ def apply(root:Path):
     th.write_text(one(t,anchor,API+"\n"+anchor,"cache set API"))
     tc.write_text(one(tc.read_text(),"ImageView* TextureCache::TryViewMemo(",METHOD+"ImageView* TextureCache::TryViewMemo(","cache set validation"))
     r=rh.read_text()
-    anchor="    using DescriptorViewMemos ="
-    rh.write_text(one(r,anchor,MEMBERS+"\n"+anchor,"raster set storage"))
+    # Keep the view-memo declaration family contiguous. Its existing real
+    # method/lifetime test extracts ViewMemoToken through FindTextureWithViewMemo.
+    # The new set-cache family has independent dependencies and validation.
+    anchor="const VideoCore::TextureCache::ImageDesc& desc, ViewMemoToken token);"
+    rh.write_text(one(r,anchor,anchor+"\n\n"+MEMBERS,"raster set storage"))
     s=rc.read_text()
     marker="void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindings& binding) {"
     a=s.index(marker)
