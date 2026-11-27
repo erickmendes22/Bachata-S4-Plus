@@ -78,6 +78,14 @@ void BootObjects(Core::Linker* linker,Core::MemoryFixture* memory){
 #endif
 }
 struct CallbackPayload{std::function<void()> action;};
+std::function<void()> plain_callback;
+void GuestPlainDestructor(){
+#if FIOS_TEST_FEX
+    assert(false && "guest address was called natively");
+#else
+    plain_callback();
+#endif
+}
 void GuestDestructor(void* pointer){
 #if FIOS_TEST_FEX
     Consume(pointer);assert(false && "guest address was called natively");
@@ -93,6 +101,9 @@ namespace Core::GuestCpu {
 @CALLBACK_TEMPLATE@
 }
 Core::Linker::GuestFunctionResult Core::Linker::RunGuestFunction(VAddr address,std::span<const u64> args,VAddr stack){
+    if(address==reinterpret_cast<VAddr>(&GuestPlainDestructor)){
+        assert(args.empty()&&stack==0);plain_callback();return u64(0);
+    }
     assert(address==reinterpret_cast<VAddr>(&GuestDestructor));
     assert(args.size()==1 && stack==0);++bridge_calls;
     reinterpret_cast<CallbackPayload*>(args[0])->action();return u64(0);
@@ -286,6 +297,17 @@ unsigned FinalizeCases(){
     CallbackPayload null_dso{[&]{seen.push_back(17);}};const auto old=seen.size();
     fex_libc_cxa_atexit(GuestDestructor,&null_dso,nullptr);fex_libc_cxa_finalize(&da);assert(seen.size()==old);
     fex_libc_cxa_finalize(nullptr);assert(seen.size()==old+1);++cases;
+    // Plain atexit and C++ destructors share ordering, without a fake argument.
+    {std::vector<int> order;
+     CallbackPayload first{[&]{order.push_back(1);}};
+     CallbackPayload last{[&]{order.push_back(3);}};
+     plain_callback=[&]{order.push_back(2);};
+     assert(fex_libc_atexit(nullptr)==-1);
+     assert(fex_libc_cxa_atexit(GuestDestructor,&first,&da)==0);
+     assert(fex_libc_atexit(GuestPlainDestructor)==0);
+     assert(fex_libc_cxa_atexit(GuestDestructor,&last,&da)==0);
+     fex_libc_cxa_finalize(nullptr);assert((order==std::vector<int>{3,2,1}));
+     fex_libc_cxa_finalize(nullptr);assert(order.size()==3&&AtexitEntries.empty());++cases;}
     // Actual registration binds both runtime namespaces to the same owner.
     Core::Linker cp;RegisterFexLibcCxaAliases(&cp.m_hle_symbols);
     for(const auto* name:{Internal,"libc"}){
@@ -294,7 +316,7 @@ unsigned FinalizeCases(){
         assert(Resolve(cp,importer,"H2e8t5ScQGc",r)&&r.hle_adapter&&r.virtual_address==reinterpret_cast<u64>(&fex_libc_cxa_finalize));++cases;
     }
 #if FIOS_TEST_FEX
-    assert(bridge_calls==3+130+2+256+1);
+    assert(bridge_calls==3+130+2+256+1+2);
 #else
     assert(bridge_calls==0);
 #endif

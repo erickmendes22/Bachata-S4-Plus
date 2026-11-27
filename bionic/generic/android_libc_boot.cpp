@@ -20,6 +20,7 @@
 #include "common/va_ctx.h"
 #include "core/guest_cpu/hle_call_adapter.h"
 #include "core/libraries/libc_internal/mspace.h"
+#include "core/libraries/libc_internal/libc_internal_cxa.h"
 #include "core/libraries/libc_internal/printf.h"
 #include "core/memory.h"
 
@@ -153,7 +154,7 @@ std::size_t PS4_SYSV_ABI GuestMallocUsableSize(void* pointer) {
 }
 
 int PS4_SYSV_ABI FexInitEnv(void*, void*) { return 0; }
-int PS4_SYSV_ABI FexAtexit(void (*callback)()) { return callback ? 0 : -1; }
+int PS4_SYSV_ABI FexAtexit(void (*callback)()) { return fex_libc_atexit(callback); }
 void PS4_SYSV_ABI FexIostreamInit(void*) {}
 void* PS4_SYSV_ABI FexOperatorNew(std::size_t size) { return GuestMalloc(size); }
 void PS4_SYSV_ABI FexOperatorDelete(void* pointer) { GuestFree(pointer); }
