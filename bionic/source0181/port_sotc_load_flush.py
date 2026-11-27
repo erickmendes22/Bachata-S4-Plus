@@ -43,10 +43,10 @@ def apply(root: Path):
     if (BachataSotcLod::Enabled() && BachataSotcLoad::pending.exchange(false,std::memory_order_acq_rel)) {
         // The donor drops unused images after a load. FEX cannot discard guest
         // data whose only authoritative copy is GPU-owned, including targets.
-        std::unique_lock lock{mutex,std::try_to_lock};
-        if (arena_refresh_depth || !lock.owns_lock()) {
+        std::unique_lock lock{mutex,std::defer_lock};
+        if (arena_refresh_depth || gc_tick==0 || !lock.try_lock()) {
             BachataSotcLoad::pending.store(true,std::memory_order_release);
-        } else if (gc_tick>0) {
+        } else {
             size_t freed=0;
             lru_cache.ForEachItemBelow(gc_tick-1,[&](ImageId id) {
                 const auto& image=slot_images[id];

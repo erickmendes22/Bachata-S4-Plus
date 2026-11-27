@@ -536,7 +536,9 @@ def emergency_test(root):
     source=(root/"video_core/texture_cache/texture_cache.cpp").read_text()
     refresh=function(source,"void TextureCache::RefreshImage(")
     guard=refresh[refresh.index("{\n")+2:refresh.index("    if (False(image.flags")]
-    cpp=COMMON+r'''
+    load_header=root/"video_core/sotc_load_flush.h"
+    load_flush=(strip_includes(load_header.read_text())+"\nnamespace BachataSotcLod {"+function((root/"video_core/sotc_lod_stats.h").read_text(),"inline bool Enabled()")+"}\n") if load_header.exists() else ""
+    cpp=COMMON+load_flush+r'''
 template<class F>struct ScopeExit{F fn;~ScopeExit(){fn();}};
 struct ScopeTag{};template<class F>auto operator+(ScopeTag,F fn){return ScopeExit<F>{fn};}
 #define SCOPE_EXIT const auto scope_exit=ScopeTag{}+[&]()
@@ -546,14 +548,18 @@ struct CheckedMutex {
     void unlock(){assert(owned);owned=false;}
 };
 using ImageId=unsigned;
-struct FakeImage {bool download=false;struct{bool tiled=false;bool IsTiled()const{return tiled;}}info;
+enum ImageFlagBits:u32 {GpuModified=1u<<3,Registered=1u<<6};
+bool True(u32 flags){return flags!=0;}
+struct FakeImage {bool download=false;u32 flags=Registered;struct{bool tiled=false;bool IsTiled()const{return tiled;}}info;
+    struct{bool is_bound{},is_target{},needs_rebind{};}binding;
+    struct{bool storage{},render_target{},depth_target{},vo_surface{};}usage;
     bool SafeToDownload()const{return download;}};
 struct TextureCache {
     inline static thread_local u32 arena_refresh_depth{};
     std::atomic_bool arena_emergency_pending{};CheckedMutex mutex;
     u64 gc_tick=10;std::vector<FakeImage> slot_images=std::vector<FakeImage>(600);
     std::vector<ImageId> downloaded,freed;unsigned image_gcs=0,sampler_gcs=0;
-    struct Lru {void ForEachItemBelow(u64,auto fn){for(unsigned i=0;i<600;++i)if(fn(i))break;}}lru_cache;
+    struct Lru {void ForEachItemBelow(u64,auto fn){for(unsigned i=0;i<600;++i){if constexpr(std::is_same_v<decltype(fn(i)),bool>){if(fn(i))break;}else fn(i);}}}lru_cache;
     void DownloadImageMemory(ImageId id){downloaded.push_back(id);}void FreeImage(ImageId id){freed.push_back(id);}
     void GarbageCollectImages(){++image_gcs;}void GarbageCollectSamplers(){++sampler_gcs;}
     void EmergencyCollect();void RunGarbageCollector();
@@ -575,6 +581,19 @@ int main(){TextureCache c;c.mutex.owned=true;c.RefreshProbe();
     std::cout<<"SOTC_ARENA_TEXTURE_GC_REENTRANCY_PASS\n";
 }
 '''
+    if load_header.exists():
+        cpp=cpp.replace('    std::cout<<"SOTC_ARENA_TEXTURE_GC_REENTRANCY_PASS', r'''    TextureCache l;l.gc_tick=0;BachataSotcLoad::pending=true;l.RunGarbageCollector();
+    assert(BachataSotcLoad::pending.load()&&l.mutex.attempts==0&&l.freed.empty());
+    l.arena_refresh_depth=1;l.mutex.owned=true;l.RunGarbageCollector();
+    assert(BachataSotcLoad::pending.load()&&l.mutex.attempts==0&&l.freed.empty());
+    l.arena_refresh_depth=0;l.mutex.owned=false;l.mutex.contended=true;l.RunGarbageCollector();
+    assert(BachataSotcLoad::pending.load()&&l.mutex.attempts==1&&l.freed.empty());
+    l.mutex.contended=false;l.slot_images[0].flags|=GpuModified;l.slot_images[1].binding.is_bound=true;
+    l.slot_images[2].usage.render_target=true;l.RunGarbageCollector();
+    assert(!BachataSotcLoad::pending.load()&&l.freed.size()==597&&l.mutex.attempts==2);
+    assert(l.freed.front()==3&&!l.mutex.owned);
+    std::cout<<"SOTC_LOAD_FLUSH_REENTRANCY_PASS\n";
+    std::cout<<"SOTC_ARENA_TEXTURE_GC_REENTRANCY_PASS''')
     run_cpp(cpp,"sotc_arena_emergency_collect")
 
 
