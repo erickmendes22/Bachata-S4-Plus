@@ -26,7 +26,7 @@ jobs:
           from urllib.parse import quote
 
           repo = os.environ["GH_REPO"]
-          workflow = "bachata-bionic-source0181-build.yml"
+          workflow_id = 426113333  # Verified on all three existing build runs.
           branches = (
               "work/bionic-fps-baseline-20261125",
               "work/bionic-sotc-color-20261125",
@@ -46,9 +46,9 @@ jobs:
           def latest(branch):
               name = quote(branch, safe="")
               head = api("commits?sha=" + name + "&per_page=1")[0]["sha"]
-              runs = api("actions/workflows/" + workflow + "/runs?branch=" +
-                         name + "&per_page=20")["workflow_runs"]
-              current = [run for run in runs if run["head_sha"] == head]
+              runs = api("actions/runs?branch=" + name + "&per_page=50")["workflow_runs"]
+              current = [run for run in runs if run["head_sha"] == head and
+                         run["workflow_id"] == workflow_id]
               return head, current[0] if current else None
 
           def retryable(run, jobs):
