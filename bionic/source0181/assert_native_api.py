@@ -244,7 +244,10 @@ def audit(root: Path) -> None:
             "texture_cache.ResolveCMaskOwner(device_addr)"),
         "src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp": (
             "std::vector<u32> portable_code(", "if (!walker_func) {",
-            "ShaderMetaVersion = 222u;", "return info.Deserialize(ar) && effective_info.Deserialize(ar);"),
+            "ShaderMetaVersion = 222u;",
+            "if (!info.Deserialize(ar) || !effective_info.Deserialize(ar)) return false;",
+            "perm_hash_ar != HashCombine(info.pgm_hash, perm_idx)",
+            "effective_info.hw_stage != info.hw_stage", "effective_info.sw_stage != info.sw_stage"),
         "src/core/guest_cpu/hle_call_adapter.cpp": (
             "BIONIC_GUEST_X86_NONLOCAL_JUMP", "gNQ1V2vfXDE",
             "lKEN2IebgJ0", "guest_setjmp[]", "guest_longjmp[]",
