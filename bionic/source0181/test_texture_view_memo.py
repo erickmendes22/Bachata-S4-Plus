@@ -498,6 +498,10 @@ def program(root):
             'void Rasterizer::RememberImageViewToken(', 'bool Rasterizer::IsViewMemoTokenCurrent(',
             'VideoCore::ImageView& Rasterizer::FindTextureWithViewMemo('))
     code = PREAMBLE
+    prepared = src / 'shader_recompiler/bachata_prepared_sharps.h'
+    if prepared.is_file():
+        code = '#include "' + str(prepared) + '"\n' + code
+        code = code.replace('namespace vk {', 'namespace Shader { struct Info { std::vector<ImageResource> images; BachataPreparedSharps::Stage<AmdGpu::Image,AmdGpu::Image,AmdGpu::Image> order_sharps; }; }\nnamespace vk {', 1)
     if 'void RegisterAlias(ImageId image_id);' in header:
         # The view fixture has no image-memory aliases. Their independent gate
         # covers the real authority, while these real view/lifetime methods run.
