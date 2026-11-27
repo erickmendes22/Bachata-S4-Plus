@@ -33,6 +33,11 @@ for declaration in (
 p=argparse.ArgumentParser();p.add_argument("--source",type=Path,required=True)
 root=p.parse_args().source/"src/video_core"
 r=(root/"renderer_vulkan/vk_rasterizer.cpp").read_text()
+rh=(root/"renderer_vulkan/vk_rasterizer.h").read_text()
+view_family_start=rh.index("    struct ViewMemoToken {")
+view_family_end=rh.index("ViewMemoToken token);",view_family_start)
+assert view_family_end<rh.index("    struct OrderTextureSetKey {")
+assert "OrderTextureSet" not in rh[view_family_start:view_family_end]
 c=(root/"texture_cache/texture_cache.cpp").read_text()
 i=(root/"renderer_vulkan/vk_instance.cpp").read_text()
 g=(root/"renderer_vulkan/vk_graphics_pipeline.cpp").read_text()
