@@ -133,6 +133,7 @@ jobs:
           python3 bionic/source0181/test_order_readconst_reuse.py --source generic-upstream
           python3 bionic/source0181/test_order_shader_warmup.py --source generic-upstream
           python3 bionic/source0181/test_donor_appcontent.py --source generic-upstream
+          python3 bionic/source0181/test_donor_sema.py --source generic-upstream
           python3 bionic/source0181/test_order_frame_pacing.py --source generic-upstream
           python3 bionic/source0181/test_order_render_pass_coalescing.py --source generic-upstream
           python3 bionic/source0181/test_surface_metadata_protocol.py --source generic-upstream
@@ -370,6 +371,7 @@ jobs:
           python3 bionic/source0181/test_order_readconst_reuse.py --source generic-upstream
           python3 bionic/source0181/test_order_shader_warmup.py --source generic-upstream
           python3 bionic/source0181/test_donor_appcontent.py --source generic-upstream
+          python3 bionic/source0181/test_donor_sema.py --source generic-upstream
           python3 bionic/source0181/test_order_frame_pacing.py --source generic-upstream
           python3 bionic/source0181/test_order_render_pass_coalescing.py --source generic-upstream
           python3 bionic/source0181/test_surface_metadata_protocol.py --source generic-upstream
