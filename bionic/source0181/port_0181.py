@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -77,6 +78,11 @@ def main() -> None:
             # full NDK compilation, not just the first failing translation unit.
             from compatibility_port import apply as apply_modern_apis
             modern_api_adapter=apply_modern_apis(args.source.resolve())
+            # Apply the checked effective-source delta only after all base overlays.
+            donor_delta = Path(__file__).resolve().with_name("effective-sotc-donor.patch")
+            subprocess.run(["git", "apply", "--check", str(donor_delta)], cwd=args.source.resolve(), check=True)
+            subprocess.run(["git", "apply", str(donor_delta)], cwd=args.source.resolve(), check=True)
+            print("BACHATA_EFFECTIVE_DONOR_DELTA_SOTC_APPLIED")
             from reconcile_cmake import reconcile
             source_registry=reconcile(args.source.resolve())
             print("REAL_SHADPS4_0181_CMAKE_REGISTRY_RECONCILED",source_registry["changedGroups"])

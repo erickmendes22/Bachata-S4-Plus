@@ -1,0 +1,389 @@
+--- a/src/video_core/buffer_cache/buffer_cache.cpp
++++ b/src/video_core/buffer_cache/buffer_cache.cpp
+@@ -1081,4 +1081,65 @@
+ }
+ 
++// Adapt the donor's fill-table ownership contract to FEX's physical backing
++// and page-granular dirty bits. Refuse any foreign GPU ownership, including
++// adjacent bytes of a page and image aliases; the original shader then runs.
++bool BufferCache::CanAccessSotcTable(VAddr addr, u64 size) {
++    constexpr u64 limit = 1ULL << 40;
++    if (!size || addr < 0x10000 || addr >= limit || size > limit - addr) return false;
++    const VAddr lo = Common::AlignDown(addr, 4_KB);
++    const VAddr hi = Common::AlignUp(addr + size, 4_KB);
++    return !memory_tracker->IsRegionGpuModified(lo, hi - lo) &&
++           !gpu_modified_ranges.Intersects(lo, hi - lo) &&
++           !texture_cache.HasSotcTableImage(lo, hi - lo);
++}
++
++bool BufferCache::ReadSotcTable(VAddr addr, void* data, u64 size) {
++    return CanAccessSotcTable(addr, size) && memory->TryReadBacking(addr, data, size);
++}
++
++bool BufferCache::WriteSotcTable(VAddr addr, const void* data, u64 size, u64 period) {
++    if (!CanAccessSotcTable(addr, size) || !memory->TryWriteBacking(std::bit_cast<void*>(addr), data, size))
++        return false;
++    MarkReadbacksDirty(addr, size);
++    const u64 first = addr >> block_shift;
++    const u64 last = (addr + size - 1) >> block_shift;
++    bool resident = true;
++    resident_ranges.ForEachGap(first, last + 1, [&](u64, u64) { resident = false; });
++    const Buffer* arena = resident ? address_space[first >> blocks_per_arena_page_shift] : nullptr;
++    if (!arena || arena != address_space[last >> blocks_per_arena_page_shift] ||
++        (addr & 3) || (size & 3) || (period & 3) || !period) {
++        memory_tracker->MarkRegionAsCpuModified(addr, size);
++    } else {
++        // No new sparse bind: keep resident pages alive for the recorded copy.
++        if (IsSotcArena()) for (u64 block=first; block<=last; ++block) block_last_use[block]=use_epoch;
++        const u64 dst = arena->Offset(addr);
++        const auto upload = [&](u64 bytes) {
++            auto staging = staging_pool.Request(bytes, MemoryType::HostUncached);
++            std::memcpy(staging.mapped, data, bytes);
++            staging.Flush();
++            const vk::BufferCopy copy{staging.offset, dst, bytes};
++            runtime.CopyBuffer(staging.buffer, arena, std::span{&copy, 1});
++        };
++        if (period == 4) {
++            u32 value;
++            std::memcpy(&value, data, 4);
++            runtime.FillBuffer(arena, dst, size, value);
++        } else if (period < size) {
++            const u64 seed = std::min(size, period * std::max<u64>(1, 1_MB / period));
++            upload(seed);
++            for (u64 have=seed; have<size;) {
++                const u64 n=std::min(have,size-have);
++                const vk::BufferCopy copy{dst,dst+have,n};
++                runtime.CopyBuffer(arena,arena,std::span{&copy,1});
++                have+=n;
++            }
++        } else upload(size);
++        // Guest backing and the resident GPU arena now contain the same bytes.
++        // Dirty CPU pages remain dirty and will upload the same data as usual.
++    }
++    texture_cache.InvalidateMemory(addr, size);
++    return true;
++}
++
+ bool BufferCache::IsRegionCpuModified(VAddr addr, size_t size) {
+     return memory_tracker->IsRegionCpuModified(addr, size);
+--- a/src/video_core/buffer_cache/buffer_cache.h
++++ b/src/video_core/buffer_cache/buffer_cache.h
+@@ -89,4 +89,6 @@
+     void ReleaseUnmappedArena(VAddr address, u64 size);
+     void DropGpuModified(VAddr address,u64 size);
++    bool ReadSotcTable(VAddr addr, void* data, u64 size);
++    bool WriteSotcTable(VAddr addr, const void* data, u64 size, u64 period);
+ 
+     /// Invalidates any buffer in the logical page range.
+@@ -133,4 +135,5 @@
+     }
+ 
++    bool CanAccessSotcTable(VAddr addr, u64 size);
+     const Buffer* GetArena(u64 first_block, u64 last_block);
+ 
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@ -311,5 +311,8 @@
+ 
+     const auto cmdbuf = scheduler.CommandBuffer();
+-    cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->Handle());
++    if (!BachataSotcLod::Enabled() || sotc_pipeline_memo.NeedsBind(
++            cmdbuf, pipeline->Handle(), scheduler.CurrentTick(), scheduler.RenderEpoch())) {
++        cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->Handle());
++    }
+ 
+     if (is_indexed) {
+@@ -415,5 +418,8 @@
+ 
+     const auto cmdbuf = scheduler.CommandBuffer();
+-    cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->Handle());
++    if (!BachataSotcLod::Enabled() || sotc_pipeline_memo.NeedsBind(
++            cmdbuf, pipeline->Handle(), scheduler.CurrentTick(), scheduler.RenderEpoch())) {
++        cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->Handle());
++    }
+ 
+     if (is_indexed) {
+@@ -654,5 +660,13 @@
+         // Update current vertex inputs.
+         const auto cmdbuf = scheduler.CommandBuffer();
+-        cmdbuf.setVertexInputEXT(bindings, attributes);
++        const bool plain = std::ranges::all_of(bindings, [](const auto& b) { return b.pNext == nullptr; }) &&
++                           std::ranges::all_of(attributes, [](const auto& a) { return a.pNext == nullptr; });
++        if (!plain) sotc_vertex_memo.Invalidate();
++        if (!BachataSotcLod::Enabled() || !plain || sotc_vertex_memo.NeedsSet(
++                cmdbuf, scheduler.CurrentTick(), scheduler.RenderEpoch(),
++                std::span<const vk::VertexInputBindingDescription2EXT>{bindings.data(), bindings.size()},
++                std::span<const vk::VertexInputAttributeDescription2EXT>{attributes.data(), attributes.size()})) {
++            cmdbuf.setVertexInputEXT(bindings, attributes);
++        }
+     }
+ 
+@@ -1265,6 +1279,11 @@
+                 const auto element_dfmt = element.GetDataFmt();
+                 const auto element_nfmt = element.GetNumberFmt();
++                const auto legal_select=[](u64 s){return s==0||s==1||(s>=4&&s<=7);};
++                const bool supported=std::ranges::any_of(LiverpoolToVK::SurfaceFormats(),
++                    [=](const auto& fmt){return fmt.data_format==element_dfmt&&fmt.number_format==element_nfmt;});
+                 const bool bindable =
+-                    element && element_dfmt != AmdGpu::DataFormat::FormatInvalid &&
++                    element && supported && legal_select(element.dst_sel_x) &&
++                    legal_select(element.dst_sel_y) && legal_select(element.dst_sel_z) &&
++                    legal_select(element.dst_sel_w) && element_dfmt != AmdGpu::DataFormat::FormatInvalid &&
+                     magic_enum::enum_contains(element_dfmt) &&
+                     magic_enum::enum_contains(element_nfmt) &&
+@@ -1274,6 +1293,9 @@
+                     element.GetNumberConversion() == tsharp.GetNumberConversion();
+                 if (!bindable) {
+-                    image_bindings.emplace_back(std::piecewise_construct, std::tuple{},
+-                                                std::tuple{});
++                    auto& [unused_id,null_desc]=image_bindings.emplace_back(
++                        std::piecewise_construct,std::tuple{},std::tuple{});
++                    null_desc.type=image_desc.is_written
++                        ? VideoCore::TextureCache::BindingType::Storage
++                        : VideoCore::TextureCache::BindingType::Texture;
+                     continue;
+                 }
+@@ -1428,4 +1450,8 @@
+ 
+             auto& image = texture_cache.GetImage(image_id);
++            if (auto view=texture_cache.TryReuseSampledView(image_id,desc)) {
++                image_infos.emplace_back(VK_NULL_HANDLE,*view,image.backing->state.layout);
++                continue;
++            }
+             auto& image_view = texture_cache.FindTexture(image_id, desc);
+             const auto binding = image.binding;
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.h
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.h
+@@ -11,4 +11,5 @@
+ #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
+ #include "video_core/renderer_vulkan/vk_scheduler.h"
++#include "video_core/renderer_vulkan/vk_sotc_fastpaths.h"
+ #include "video_core/texture_cache/texture_cache.h"
+ 
+@@ -27,4 +28,7 @@
+ 
+ class Rasterizer {
++    SotcFastPath::GraphicsPipelineMemo<vk::CommandBuffer, vk::Pipeline> sotc_pipeline_memo;
++    SotcFastPath::VertexInputMemo<vk::CommandBuffer, vk::VertexInputBindingDescription2EXT,
++                                 vk::VertexInputAttributeDescription2EXT> sotc_vertex_memo;
+ public:
+     explicit Rasterizer(const Instance& instance, Scheduler& scheduler, Runtime& runtime,
+--- a/src/video_core/renderer_vulkan/vk_shader_hle.cpp
++++ b/src/video_core/renderer_vulkan/vk_shader_hle.cpp
+@@ -3,4 +3,10 @@
+ 
+ #include "shader_recompiler/info.h"
++#include "video_core/sotc_lod_stats.h"
++#include <algorithm>
++#include <array>
++#include <cstring>
++#include <cstdlib>
++#include <vector>
+ #include "video_core/renderer_vulkan/vk_rasterizer.h"
+ #include "video_core/renderer_vulkan/vk_runtime.h"
+@@ -103,4 +109,42 @@
+ }
+ 
++// Same GCN shader, exact control table and dispatch bound as the donor.
++static bool ExecuteSotcReplicateHLE(const Shader::Info& info,
++                                   const AmdGpu::ComputeProgram& cs, Rasterizer& rasterizer) {
++    if (!BachataSotcLod::Enabled() || info.buffers.size() < 3 || cs.dim_y != 1 || cs.dim_z != 1)
++        return false;
++    static const bool enabled=[] { const char* v=std::getenv("SOTC_FILL_HLE"); return !v || *v!='0'; }();
++    if (!enabled) return false;
++    auto& cache = rasterizer.GetBufferCache();
++    const auto ctl=info.buffers[0].GetSharp(info);
++    const auto src=info.buffers[1].GetSharp(info);
++    const auto dst=info.buffers[2].GetSharp(info);
++    if ((src.GetStride() && src.GetStride()!=4) || (dst.GetStride() && dst.GetStride()!=4) ||
++        ctl.GetSize()<8 || ctl.base_address>UINT64_MAX-8 || (src.base_address&3) || (dst.base_address&3)) return false;
++    std::array<u32,2> control{};
++    if (!cache.ReadSotcTable(ctl.base_address, control.data(), sizeof(control))) return false;
++    const u64 count = std::min<u64>({control[0],cs.user_data[6],u64(cs.dim_x)*64,dst.GetSize()/4});
++    if (!count) return true;
++    const u64 src_count=control[1]?std::min<u64>(control[1],count):count;
++    const u64 period=src_count*4, size=count*4;
++    const VAddr address=dst.base_address;
++    if (period>src.GetSize() || size>64_MB || address>UINT64_MAX-size || src.base_address>UINT64_MAX-period ||
++        (src.base_address<address+size && address<src.base_address+period) ||
++        (ctl.base_address<address+size && address<ctl.base_address+8)) return false;
++    static thread_local std::vector<u32> table,current;
++    table.resize(count); current.resize(count);
++    if (!cache.ReadSotcTable(src.base_address,table.data(),period) ||
++        !cache.ReadSotcTable(address,current.data(),size)) return false;
++    for (u64 done=src_count; done<count;) {
++        const u64 chunk=std::min(done,count-done);
++        std::memcpy(table.data()+done,table.data(),chunk*4); done+=chunk;
++    }
++    // Skip the whole table if it is already authoritative. Commit a single
++    // validated backing transaction otherwise: an HLE fallback must never
++    // leave only some pages written. Resident GPU seed/fill is still used.
++    if (std::memcmp(table.data(),current.data(),size)==0) return true;
++    return cache.WriteSotcTable(address,table.data(),size,period);
++}
++
+ bool ExecuteShaderHLE(const Shader::Info& info, const AmdGpu::Regs& regs,
+                       const AmdGpu::ComputeProgram& cs_program, Rasterizer& rasterizer) {
+@@ -108,4 +152,6 @@
+     case COPY_SHADER_HASH:
+         return ExecuteCopyShaderHLE(info, cs_program, rasterizer);
++    case 0x50784801:
++        return ExecuteSotcReplicateHLE(info, cs_program, rasterizer);
+     default:
+         return false;
+--- /dev/null
++++ b/src/video_core/renderer_vulkan/vk_sotc_fastpaths.h
+@@ -0,0 +1,76 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++#pragma once
++// SotC Android exact Vulkan recording-state memos.
++//
++// These caches do NOT cache guest resources, uploads, barriers, push constants,
++// shader inputs or image contents. They may only avoid repeating two host Vulkan
++// state-setting commands when a command buffer, tick, and rendering-state epoch
++// are all identical. Every changed render pass invalidates the epoch.
++#include <algorithm>
++#include <cstdint>
++#include <span>
++#include <vector>
++
++namespace SotcFastPath {
++
++template<class CommandBuffer, class Pipeline>
++class GraphicsPipelineMemo {
++public:
++    bool NeedsBind(CommandBuffer command, Pipeline pipeline,
++                   std::uint64_t tick, std::uint64_t epoch) noexcept {
++        const bool hit = valid && last_command == command && last_pipeline == pipeline &&
++                         last_tick == tick && last_epoch == epoch;
++        last_command = command;
++        last_pipeline = pipeline;
++        last_tick = tick;
++        last_epoch = epoch;
++        valid = true;
++        return !hit;
++    }
++    void Invalidate() noexcept { valid = false; }
++private:
++    CommandBuffer last_command{};
++    Pipeline last_pipeline{};
++    std::uint64_t last_tick{}, last_epoch{};
++    bool valid = false;
++};
++
++// Compare field values, not raw bytes: Vk*Description2EXT has possible padding.
++// Each physical VkCmdSetVertexInputEXT reuses exactly the last complete state.
++// First draw, render-pass change, submit tick, or changed attributes always emits.
++template<class CommandBuffer, class Binding, class Attribute>
++class VertexInputMemo {
++    static bool SameBinding(const Binding& a, const Binding& b) {
++        return a.binding == b.binding && a.stride == b.stride &&
++               a.inputRate == b.inputRate && a.divisor == b.divisor;
++    }
++    static bool SameAttribute(const Attribute& a, const Attribute& b) {
++        return a.location == b.location && a.binding == b.binding &&
++               a.format == b.format && a.offset == b.offset;
++    }
++public:
++    bool NeedsSet(CommandBuffer command, std::uint64_t tick, std::uint64_t epoch,
++                  std::span<const Binding> bindings, std::span<const Attribute> attributes) {
++        const bool hit = valid && last_command == command &&
++                         last_tick == tick && last_epoch == epoch &&
++                         std::ranges::equal(bindings, last_bindings, SameBinding) &&
++                         std::ranges::equal(attributes, last_attributes, SameAttribute);
++        if (hit) return false;
++        last_command = command;
++        last_tick = tick;
++        last_epoch = epoch;
++        last_bindings.assign(bindings.begin(), bindings.end());
++        last_attributes.assign(attributes.begin(), attributes.end());
++        valid = true;
++        return true;
++    }
++    void Invalidate() noexcept { valid = false; }
++private:
++    CommandBuffer last_command{};
++    std::uint64_t last_tick{}, last_epoch{};
++    std::vector<Binding> last_bindings;
++    std::vector<Attribute> last_attributes;
++    bool valid = false;
++};
++
++} // namespace SotcFastPath
+--- a/src/video_core/texture_cache/texture_cache.cpp
++++ b/src/video_core/texture_cache/texture_cache.cpp
+@@ -874,7 +874,15 @@
+ }
+ 
++bool TextureCache::HasSotcTableImage(VAddr addr, u64 size) {
++    std::scoped_lock lock{mutex};
++    bool overlap = false;
++    ForEachImageInRegion(addr, size, [&](ImageId, Image&) { overlap = true; return true; });
++    return overlap;
++}
++
+ ImageId TextureCache::FindImageFromRange(VAddr address, size_t size, bool ensure_valid) {
++    if (size == 0) return {};
+     ImageIds image_ids;
+-    ForEachImageInRegion(address, size, [&](ImageId image_id, Image& image) {
++    ForEachImageInRegion(address, 1, [&](ImageId image_id, Image& image) {
+         if (image.info.guest_address != address || image.info.sotc_first_mip) {
+             return;
+@@ -902,4 +910,43 @@
+     }
+     return {};
++}
++
++std::optional<vk::ImageView> TextureCache::TryReuseSampledView(ImageId id,const ImageDesc& desc) {
++    if (!FindMemoEnabled() || desc.type != BindingType::Texture) return std::nullopt;
++    std::scoped_lock lock{mutex};
++    if (!id || !slot_images.IsAllocated(id)) return std::nullopt;
++    auto& img=slot_images[id];
++    if (!img.backing || False(img.flags & ImageFlagBits::Registered) ||
++        True(img.flags & ImageFlagBits::Dirty) || img.binding.needs_rebind ||
++        img.binding.force_general || img.binding.is_target || img.info.props.is_depth ||
++        img.info.sotc_first_mip || img.info.num_samples!=1 || img.backing->num_samples!=1 ||
++        img.track_addr!=img.info.guest_address ||
++        img.track_addr_end!=img.info.guest_address+img.info.guest_size) return std::nullopt;
++    const auto same=[](const Image::State& state){
++        return state.layout==vk::ImageLayout::eShaderReadOnlyOptimal &&
++               state.access_mask==vk::AccessFlagBits2::eShaderRead &&
++               state.pl_stage==vk::PipelineStageFlagBits2::eAllCommands;
++    };
++    const auto& backing=*img.backing;
++    if (!same(backing.state)) return std::nullopt;
++    const auto range=desc.view_info.range;
++    const bool partial=range.base!=SubresourceBase{} || range.extent!=img.info.resources;
++    if (partial) {
++        if (backing.subresource_states.empty()) return std::nullopt;
++        for (u32 m=range.base.level;m<range.base.level+range.extent.levels;++m)
++            for (u32 l=range.base.layer;l<range.base.layer+range.extent.layers;++l) {
++                const auto i=m*img.info.resources.layers+l;
++                if (i>=backing.subresource_states.size() || !same(backing.subresource_states[i]))
++                    return std::nullopt;
++            }
++    } else if (!backing.subresource_states.empty()) return std::nullopt;
++    const u32 index=backing.last_view;
++    if (index>=backing.image_view_infos.size() || index>=backing.image_view_ids.size() ||
++        backing.image_view_infos[index]!=desc.view_info) return std::nullopt;
++    const auto view=backing.image_view_ids[index];
++    if (!slot_image_views.IsAllocated(view)) return std::nullopt;
++    TouchImage(img);
++    img.usage.texture=1u;
++    return *slot_image_views[view].image_view;
+ }
+ 
+--- a/src/video_core/texture_cache/texture_cache.h
++++ b/src/video_core/texture_cache/texture_cache.h
+@@ -100,4 +100,5 @@
+     /// Invalidates any image in the logical page range.
+     void InvalidateMemory(VAddr addr, size_t size);
++    bool HasSotcTableImage(VAddr addr, u64 size);
+ 
+     /// Marks an image as dirty if it exists at the provided address.
+@@ -118,4 +119,5 @@
+     /// Retrieves an image view with the properties of the specified image id.
+     [[nodiscard]] ImageView& FindTexture(ImageId image_id, const ImageDesc& desc);
++    [[nodiscard]] std::optional<vk::ImageView> TryReuseSampledView(ImageId image_id,const ImageDesc& desc);
+ 
+     /// Retrieves the render target with specified properties
