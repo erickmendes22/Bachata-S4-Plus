@@ -141,6 +141,8 @@ def arena_test(root):
     header=(root/"video_core/buffer_cache/buffer_cache.h").read_text()
     pool=(root/"video_core/renderer_vulkan/vk_staging_buffer_pool.cpp").read_text()
     pool_h=(root/"video_core/renderer_vulkan/vk_staging_buffer_pool.h").read_text()
+    staging_classes=strip_includes((root/"video_core/renderer_vulkan/bachata_staging_classes.h").read_text())
+    staging_policy=function(pool,"bool SotcStagingLargePow2(")
     interval=strip_includes((root/"common/interval_set.h").read_text())
     spans=strip_includes((root/"video_core/buffer_cache/bachata_readback_span.h").read_text())
     members=header[header.index("    static constexpr u64 ARENA_CHUNK_SIZE"):
@@ -156,12 +158,12 @@ def arena_test(root):
     staging_ref=pool_h[pool_h.index("struct StagingBufferRef {"):pool_h.index("class StagingBufferPool {")]
     # The unchanged upstream IntervalList compares iterator differences to sizes.
     # Keep that header verbatim while retaining -Werror for the adapted methods.
-    cpp=COMMON+'\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored "-Wsign-compare"\n'+interval+'\n#pragma GCC diagnostic pop\n'+spans+r'''
+    cpp=COMMON+'\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored "-Wsign-compare"\n'+interval+'\n#pragma GCC diagnostic pop\n'+spans+'\n'+staging_classes+r'''
 namespace Vulkan {
 using VideoCore::MemoryType;
 '''+staging_ref+r'''
 constexpr u64 LARGE_MIN_GRANULARITY=64_KB;
-'''+function(pool,"u64 RoundAllocationSize(")+r'''
+'''+function(pool,"u64 RoundAllocationSize(")+'\n'+staging_policy+r'''
 struct StagingBufferPool {
     struct LargeBuffer {std::unique_ptr<VideoCore::Buffer> buffer;u64 tick,last_used_frame;bool held;};
     const Instance& instance;Scheduler& scheduler;u64 frame=0;
