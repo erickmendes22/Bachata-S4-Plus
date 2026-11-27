@@ -91,6 +91,8 @@ def main() -> None:
             apply_donor_host_contracts(args.source.resolve())
             from port_order_readbacks import apply as apply_order_readbacks
             apply_order_readbacks(args.source.resolve())
+            from port_order_shader_warmup import apply as apply_order_shader_warmup
+            apply_order_shader_warmup(args.source.resolve())
             from reconcile_cmake import reconcile
             source_registry=reconcile(args.source.resolve())
             print("REAL_SHADPS4_0181_CMAKE_REGISTRY_RECONCILED",source_registry["changedGroups"])
