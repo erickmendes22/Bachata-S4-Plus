@@ -125,7 +125,7 @@ static bool DonorRegularIO() {
     edit(f,'''    const s64 pos = file->Tell();
     SCOPE_EXIT''','''    const s64 pos = file->Tell();
     if (pos < 0) { *__Error() = POSIX_EIO; return -1; }
-    SCOPE_EXIT''')
+    SCOPE_EXIT''',2)
     edit('core/file_sys/backends/saf_fs_backend.cpp',
          'if (target < 0 || static_cast<u64>(target) > size) return false;',
          'if (target < 0) { errno = EINVAL; return false; }')
