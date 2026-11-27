@@ -702,7 +702,7 @@ def producer_dependency(source: Path):
     with tempfile.TemporaryDirectory(prefix='present-liverpool-dependency-') as tmp:
         work=Path(tmp)
         shims={
-            'common/assert.h':'#pragma once\n#define ASSERT_MSG(...) ((void)0)\n#define UNREACHABLE_MSG(...) ((void)0)\n',
+            'common/assert.h':'#pragma once\n#define ASSERT(...) ((void)0)\n#define ASSERT_MSG(...) ((void)0)\n#define UNREACHABLE_MSG(...) ((void)0)\n',
             'common/slot_vector.h':'#pragma once\n#include <cstddef>\nnamespace Common { template<class T> struct SlotVector { explicit SlotVector(std::size_t) {} }; }\n',
             'video_core/amdgpu/regs.h':'#pragma once\n#include "common/types.h"\nnamespace AmdGpu { constexpr u32 NUM_COLOR_BUFFERS=8; struct Buffer {}; struct ComputeProgram {}; struct Regs { static constexpr u32 NumRegs=32; std::array<u32,NumRegs> reg_array{}; }; }\n',
             'shader_recompiler/info.h':'#pragma once\n#include <cstddef>\nnamespace Shader { struct Info {}; constexpr std::size_t MaxStageTypes=6; }\n',
