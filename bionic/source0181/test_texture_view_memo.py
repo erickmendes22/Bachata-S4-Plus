@@ -91,7 +91,8 @@ struct ColorBuffer;struct DepthBuffer;struct DepthView;struct DepthControl;
 namespace Shader {
 enum class MipStorageFallbackMode {None,ConstantIndex,DynamicIndex};
 struct ImageResource {bool is_written=false,is_depth=false,is_array=false;
-    MipStorageFallbackMode mip_fallback_mode=MipStorageFallbackMode::None;};
+    MipStorageFallbackMode mip_fallback_mode=MipStorageFallbackMode::None;
+    u32 array_size=0;};
 }
 namespace vk {
 enum class Format {eR8G8B8A8Unorm,eR8G8B8A8Srgb};

@@ -52,7 +52,8 @@ namespace AmdGpu { struct Image {std::array<u64,4> words{};}; constexpr u32 NUM_
 namespace Shader {
 enum class MipStorageFallbackMode {None,ConstantIndex,DynamicIndex};
 struct ImageResource {bool is_written=false,is_depth=false,is_array=false;
-    MipStorageFallbackMode mip_fallback_mode=MipStorageFallbackMode::None;};
+    MipStorageFallbackMode mip_fallback_mode=MipStorageFallbackMode::None;
+    u32 array_size=0;};
 }
 namespace VideoCore {
 using ImageId=u32;
