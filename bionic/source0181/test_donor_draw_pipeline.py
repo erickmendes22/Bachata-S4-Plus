@@ -24,6 +24,7 @@ lh = (src / "video_core/amdgpu/liverpool.h").read_text()
 ph = (src / "video_core/renderer_vulkan/vk_pipeline_common.h").read_text()
 methods = lp[lp.index("void Liverpool::MarkDrawWords("):lp.index("// BACHATA_RELEASE026_CE_QUEUE_PARITY")]
 members = lh[lh.index("    static constexpr u32 DrawChunkWords"):lh.index("    std::jthread process_thread{};")]
+members = members.replace("private:\n    std::bitset<DrawChunkCount>", "public:\n    std::bitset<DrawChunkCount>")
 pipeline = ph[ph.index("    using DrawStageArray="):ph.index("    bool IsCompute() const")]
 
 # Guard the edges not invoked by the fake Vulkan renderer below.
@@ -331,6 +332,40 @@ int main(){
         Liverpool cp{renderer};
         cp.QueueDirectDraw("draw:{}",nullptr,false,0);cp.DrainDrawQueue();
         assert(cp.draw_worker.joinable() && renderer.observations.size()==1);
+    }
+    {
+        Vulkan::Rasterizer renderer;Liverpool cp{renderer};
+        cp.QueueDirectDraw("draw:{}",nullptr,false,0);cp.DrainDrawQueue();
+        cp.QueueGpuTask([&]{cp.AddDrawRelevance(Liverpool::RelRender,&cp.back_regs.reg_array[0],4,7);
+                          cp.AddDrawRelevance(Liverpool::RelColor,&cp.back_regs.reg_array[1],4);
+                          cp.AddDrawRelevance(Liverpool::RelDynamic,&cp.back_regs.reg_array[0],4);});
+        cp.DrainDrawQueue();const auto initial=cp.draw_rel_serial;
+        const auto check=[&](u32 word,u32 value,bool render,bool color,bool dyn){
+            const auto before=cp.draw_rel_serial;const auto index=cp.draw_head%cp.DrawQueueCapacity;
+            cp.regs.reg_array[word]=value;cp.MarkDrawWords(word,1);
+            cp.QueueDirectDraw("draw:{}",nullptr,false,0);cp.DrainDrawQueue();
+            const auto& p=cp.draw_ring[index];
+            assert(cp.back_regs.reg_array[word]==value);
+            assert(cp.draw_rel_serial[0]==before[0]+render);
+            assert(cp.draw_rel_serial[1]==before[1]+color);
+            assert(cp.draw_rel_serial[2]==before[2]+dyn);
+            return p.changed_words.size();
+        };
+        assert(check(0,8,false,false,true)==1);
+        assert(check(0,8,false,false,false)==0);
+        assert(check(0,9,true,false,true)==1);
+        assert(check(1,4,false,true,false)==1);
+        assert(check(2,77,false,false,false)==1);
+        assert(cp.draw_rel_serial[0]==initial[0]+1);
+        const auto before=cp.draw_rel_serial;
+        cp.last_cb_extent[0].value=1;cp.last_db_extent.value=2;
+        cp.QueueDirectDraw("draw:{}",nullptr,false,0);cp.DrainDrawQueue();
+        assert(cp.draw_rel_serial[0]==before[0]+1&&cp.draw_rel_serial[1]==before[1]+1);
+        cp.draw_snapshot_valid=false;
+        const auto index=cp.draw_head%cp.DrawQueueCapacity;
+        cp.QueueDirectDraw("draw:{}",nullptr,false,0);cp.DrainDrawQueue();
+        assert(cp.draw_ring[index].changed_words.size()==AmdGpu::Regs::NumRegs);
+        std::cout<<"SOTC_PC308_DWORDS_RELEVANCE_PASS\n";
     }
     std::cout<<"BACHATA_DONOR_DRAW_PIPE_PASS owned-state/pointed-V#/FIFO/side-effects/lookup-barrier/compute/eviction/4096-wraps\n";
 }
