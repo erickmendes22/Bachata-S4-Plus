@@ -70,6 +70,9 @@ struct ElfInfo {
 };
 @SLOTID@;
 }
+namespace BachataCompat {
+@ORDER_TITLE_POLICY@
+}
 struct GpuImage {u32 width{},height{},layers{};std::vector<u64> pixels;};
 namespace vk {
 enum class Format{eUndefined,eR16G16B16A16Sfloat,eR16G16B16A16Uint,eR8Unorm};
@@ -219,6 +222,7 @@ struct TextureCache {
  AmdGpu::Liverpool processor;AmdGpu::Liverpool*liverpool=&processor;
  std::atomic<u64>registry_generation{};u64 total_used_memory{},gc_tick{};
  Metadata surface_metadata;bool readback_linear_images=false;std::set<ImageId>download_images;
+ @ORDER_EXACT_MEMO@
  @ALIAS_MEMBERS@
  bool ImageAliasesEnabled()const;void PublishAliasWrite(ImageId);
  void UnmapMemory(VAddr,size_t);
@@ -442,6 +446,9 @@ TEXEL_PROGRAM = r'''
 #include <utility>
 #include <vector>
 #include "common/types.h"
+#if __has_include("video_core/buffer_cache/bachata_copy_pool.h")
+#include "video_core/buffer_cache/bachata_copy_pool.h"
+#endif
 #define LOG_INFO(...) ((void)0)
 namespace boost::container {template<class T,size_t N>using small_vector=std::vector<T>;}
 namespace Common {
@@ -539,6 +546,8 @@ def make_program(src: Path) -> str:
         "OVERLAPS": block(image, "bool Overlaps("),
         "TRACKED": block(image, "bool IsTracked()"),
         "DOWNLOADABLE": block(image, "bool SafeToDownload()"),
+        "ORDER_TITLE_POLICY": block(read("common/bachata_compat_profile.h"), "inline bool Order1886()"),
+        "ORDER_EXACT_MEMO": (block(header, "    struct OrderExactImageMemo {") + ";\n    std::array<OrderExactImageMemo, 256> order_exact_images{};\n" + block(header, "    u64 RegistryGeneration() const noexcept")) if "struct OrderExactImageMemo" in header else "",
         "ALIAS_MEMBERS": members,
         "FREE": block(header, "    void FreeImage("),
         "UPDATE": block(header, "    void UpdateImage("),

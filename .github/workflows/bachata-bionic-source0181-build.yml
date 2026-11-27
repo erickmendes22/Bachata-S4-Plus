@@ -21,7 +21,7 @@ on:
 # Complete active builds and preserve their compiler caches when a new revision is queued.
 concurrency:
   group: bachata-bionic-full-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: read
