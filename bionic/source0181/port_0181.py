@@ -87,6 +87,8 @@ def main() -> None:
             print("BACHATA_EFFECTIVE_DONOR_DELTA_SOTC_APPLIED")
             from port_sotc_sampled_sets import apply as apply_sampled_sets
             apply_sampled_sets(args.source.resolve())
+            from port_sotc_load_flush import apply as apply_load_flush
+            apply_load_flush(args.source.resolve())
             from reconcile_cmake import reconcile
             source_registry=reconcile(args.source.resolve())
             print("REAL_SHADPS4_0181_CMAKE_REGISTRY_RECONCILED",source_registry["changedGroups"])
