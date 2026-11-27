@@ -25,7 +25,11 @@ METHOD=r'''bool TextureCache::CheckOrderSampledSet(std::span<OrderSampledSetEntr
     std::scoped_lock lock{mutex};
     if(generation!=RegistryGeneration()) return false;
     for(auto& entry:entries) {
-        if(!entry.id || !entry.handle || !slot_images.IsAllocated(entry.id)) return false;
+        if(!entry.id) {
+            if(entry.handle || entry.guest_address) return false;
+            continue;
+        }
+        if(!entry.handle || !slot_images.IsAllocated(entry.id)) return false;
         auto& image=slot_images[entry.id];
         constexpr auto rejected=ImageFlagBits::Dirty|ImageFlagBits::Aliased;
         if(False(image.flags&ImageFlagBits::Registered) || True(image.flags&rejected) ||
@@ -65,6 +69,7 @@ METHOD=r'''bool TextureCache::CheckOrderSampledSet(std::span<OrderSampledSetEntr
     }
     // No partial binding effects if any later texture failed validation.
     if(!remember) for(const auto& entry:entries) {
+        if(!entry.id) continue;
         auto& image=slot_images[entry.id];
         image.tick_accessed_last=scheduler.CurrentTick();
         TouchImage(image);
@@ -77,7 +82,7 @@ METHOD=r'''bool TextureCache::CheckOrderSampledSet(std::span<OrderSampledSetEntr
 '''
 MEMBERS=r'''    struct OrderTextureSetKey {
         static constexpr u32 MaxImages=16;
-        const Shader::Info* stage{};
+        u32 shader_stage{};
         u64 program{};
         u64 mapping_generation{};
         u32 count{};
@@ -92,7 +97,7 @@ MEMBERS=r'''    struct OrderTextureSetKey {
         bool valid{};
         std::array<VideoCore::TextureCache::OrderSampledSetEntry,OrderTextureSetKey::MaxImages> entries{};
     };
-    using OrderTextureSetTable=std::array<OrderTextureSetMemo,128>;
+    using OrderTextureSetTable=std::array<OrderTextureSetMemo,1024>;
     std::unique_ptr<OrderTextureSetTable> order_texture_sets;
     OrderTextureSetMemo* OrderTextureSetSlot(const Shader::Info& stage, OrderTextureSetKey& key);
 '''
@@ -107,17 +112,21 @@ METHODS=r'''Rasterizer::OrderTextureSetMemo* Rasterizer::OrderTextureSetSlot(
     if(!enabled || !texture_cache.BindingMemoEnabled() ||
        stage.pgm_hash==0xa7b66f58 || stage.images.empty() ||
        stage.images.size()>OrderTextureSetKey::MaxImages) return nullptr;
-    key.stage=&stage;
+    // FEX DrawStageSnapshot storage is transient. The complete resource
+    // contract below is the identity, not the packet's host address.
+    key.shader_stage=u32(stage.sw_stage);
     key.program=stage.pgm_hash;
     key.mapping_generation=memory->MappingGeneration();
     key.count=static_cast<u32>(stage.images.size());
-    u64 hash=key.program^reinterpret_cast<u64>(&stage);
+    u64 hash=key.program^(u64(key.shader_stage)<<32);
     for(u32 i=0;i<key.count;++i) {
         const auto& res=stage.images[i];
         if(res.is_written || res.is_atomic || res.is_depth ||
-           res.mip_fallback_mode!=Shader::MipStorageFallbackMode::None) return nullptr;
+           res.mip_fallback_mode!=Shader::MipStorageFallbackMode::None ||
+           res.array_size || res.NumBindings(stage)!=1) return nullptr;
         const auto sharp=res.GetSharp(stage);
-        if(!sharp.Valid() || !sharp.Address()) return nullptr;
+        // Only an address-zero descriptor is a stable null.
+        if(!sharp.Valid() && sharp.Address()) return nullptr;
         static_assert(sizeof(sharp)==sizeof(key.sharps[i]));
         std::memcpy(key.sharps[i].data(),&sharp,sizeof(sharp));
         key.flags[i]=u32(res.is_array)|(u32(res.is_r128)<<1)|(u32(res.post_op)<<2);
@@ -136,22 +145,28 @@ METHODS=r'''Rasterizer::OrderTextureSetMemo* Rasterizer::OrderTextureSetSlot(
 BEGIN=r'''    OrderTextureSetKey order_set_key{};
     auto* order_set=OrderTextureSetSlot(stage,order_set_key);
     bool order_set_hit=false;
+    u32 order_miss_reason=0;
     if(order_set && order_set->valid && order_set->key==order_set_key &&
        order_set->generation==texture_cache.RegistryGeneration() &&
        order_set_key.mapping_generation==memory->MappingGeneration()) {
+        order_miss_reason=3;
         // Own the complete memo across any recorder/cache callbacks.
         auto entries=order_set->entries;
         auto samples=std::span{entries}.first(order_set_key.count);
         if(texture_cache.CheckOrderSampledSet(samples,order_set->generation,false)) {
             order_set_hit=true;
             for(const auto& entry:samples) {
-                auto& image=texture_cache.GetImage(entry.id);
-                bound_images.emplace_back(entry.id);
-                // Do NOT bypass layout/hazard transitions on a set hit.
-                needs_barrier|=runtime.Transit(&image,vk::ImageLayout::eShaderReadOnlyOptimal,
-                    vk::PipelineStageFlagBits2::eAllCommands,
-                    vk::AccessFlagBits2::eShaderRead,entry.view_info.range);
-                image_infos.emplace_back(VK_NULL_HANDLE,entry.handle,image.backing->state.layout);
+                if(!entry.id) {
+                    image_infos.emplace_back(VK_NULL_HANDLE,VK_NULL_HANDLE,vk::ImageLayout::eGeneral);
+                } else {
+                    auto& image=texture_cache.GetImage(entry.id);
+                    bound_images.emplace_back(entry.id);
+                    // Do NOT bypass layout/hazard transitions on a set hit.
+                    needs_barrier|=runtime.Transit(&image,vk::ImageLayout::eShaderReadOnlyOptimal,
+                        vk::PipelineStageFlagBits2::eAllCommands,
+                        vk::AccessFlagBits2::eShaderRead,entry.view_info.range);
+                    image_infos.emplace_back(VK_NULL_HANDLE,entry.handle,image.backing->state.layout);
+                }
                 auto& write=set_writes[set_write_index++];
                 write.dstSet=VK_NULL_HANDLE;
                 write.dstBinding=binding.unified++;
@@ -163,11 +178,20 @@ BEGIN=r'''    OrderTextureSetKey order_set_key{};
         }
     }
     if(!order_set_hit) {
-        if(order_set) order_set->valid=false;
+        if(order_set) {
+            if(!order_miss_reason) {
+                if(!order_set->valid) order_miss_reason=0;
+                else if(order_set->generation!=texture_cache.RegistryGeneration() ||
+                        order_set->key.mapping_generation!=order_set_key.mapping_generation)
+                    order_miss_reason=2;
+                else order_miss_reason=1;
+            }
+            order_set->valid=false;
+        }
 '''
 END=r'''        // The full native path above remains authoritative for all misses.
-        // Capture only one-to-one, live, clean sampled bindings. A null,
-        // associated-depth, storage, alias or transient mapping is not cached.
+        // Capture only one-to-one, live, clean sampled bindings. Stable nulls match exactly; associated-depth,
+        // storage, alias or transient mapping is not cached.
         if(order_set && image_bindings.size()==order_set_key.count &&
            image_infos.size()-first_image_idx==order_set_key.count &&
            order_set_key.mapping_generation==memory->MappingGeneration()) {
@@ -177,7 +201,9 @@ END=r'''        // The full native path above remains authoritative for all miss
             bool valid=true;
             for(u32 i=0;i<order_set_key.count;++i) {
                 const auto& [id,desc]=image_bindings[i];
-                if(!id || desc.type!=VideoCore::TextureCache::BindingType::Texture) {
+                if(desc.type!=VideoCore::TextureCache::BindingType::Texture ||
+                   (!id && (order_set_key.addresses[i]!=0 ||
+                            image_infos[first_image_idx+i].imageView))) {
                     valid=false;break;
                 }
                 auto& entry=next.entries[i];
@@ -196,9 +222,12 @@ END=r'''        // The full native path above remains authoritative for all miss
     // Bounded evidence on real hits/misses; no per-draw log or clock.
     if(order_set) {
         static thread_local u64 hits{},misses{};
+        static thread_local std::array<u64,4> reasons{};
         hits+=order_set_hit;misses+=!order_set_hit;
+        if(!order_set_hit) ++reasons[order_miss_reason];
         if(((hits+misses)&0x3ffff)==0)
-            LOG_INFO(Render_Vulkan,"BACHATA_ORDER_TEXTURE_SET hits={} misses={}",hits,misses);
+            LOG_INFO(Render_Vulkan,"BACHATA_ORDER_TEXTURE_SET hits={} misses={} cold={} key={} generation={} image={}",
+                     hits,misses,reasons[0],reasons[1],reasons[2],reasons[3]);
     }
 
 '''
@@ -235,4 +264,4 @@ def apply(root:Path):
     rc.write_text(s[:a]+METHODS+body+s[b:])
     return {"donor":"Android effective BindTexturesFromSet","key":"exact T# words, metadata, program, FEX mapping generation",
             "hit":"single locked validation of complete set; real transitions and sampler binding retained",
-            "fallback":"null/dirty/untracked/alias/storage/depth/feedback/rebind and recycled view/backing"}
+            "fallback":"unstable null/dirty/untracked/alias/storage/depth/feedback/rebind and recycled view/backing", "snapshotIdentity":"stable exact T# and compiled cardinality, no packet-address key"}

@@ -47,6 +47,12 @@ assert "needs_barrier|=runtime.Transit" in r
 assert "ImageFlagBits::Dirty|ImageFlagBits::Aliased" in c
 assert "view.view_uid!=v.view_uid" in c and "v.backing_uid!=image.backing->backing_uid" in c
 assert "if(!remember) for(const auto& entry:entries)" in c
+assert "key.shader_stage=u32(stage.sw_stage)" in r
+assert "reinterpret_cast<u64>(&stage)" not in r
+assert "res.array_size || res.NumBindings(stage)!=1" in r
+assert "if(entry.handle || entry.guest_address) return false" in c
+assert "order_set_key.addresses[i]!=0" in r
+assert "cold={} key={} generation={} image={}" in r
 assert "order_vrs_supported=add_extension(VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME)" in i
 assert "rate.sampleCounts&vk::SampleCountFlagBits::e1" in i
 assert "device_chain.unlink<vk::PhysicalDeviceFragmentShadingRateFeaturesKHR>()" in i

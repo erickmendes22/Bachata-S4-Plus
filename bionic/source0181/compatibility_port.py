@@ -966,5 +966,7 @@ void GameController::PollState() {
     result["orderTextureSet"] = apply_order_texture_set(root)
     from port_order_selective_vrs import apply as apply_order_selective_vrs
     result["orderSelectiveVrs"] = apply_order_selective_vrs(root)
+    from port_playgo_donor_contract import apply as apply_playgo_donor_contract
+    result["playgoDonorContract"] = apply_playgo_donor_contract(root)
 
     return result
