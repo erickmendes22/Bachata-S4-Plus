@@ -801,6 +801,8 @@ void GameController::PollState() {
     result["sotcAsyncReadback"] = apply_sotc_async_readback(root)
     from port_sotc_readback_completion import apply as apply_sotc_readback_completion
     result["sotcReadbackCompletion"] = apply_sotc_readback_completion(root)
+    from port_sotc_staging_classes import apply as apply_sotc_staging_classes
+    result["sotcStagingClasses"] = apply_sotc_staging_classes(root)
     from port_sotc_arena_lifecycle import apply as apply_sotc_arena_lifecycle
     result["sotcArenaLifecycle"] = apply_sotc_arena_lifecycle(root)
     from port_fex_fault_evidence import apply as apply_fex_fault_evidence

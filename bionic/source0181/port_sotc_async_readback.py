@@ -113,7 +113,7 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
         constexpr u64 base=64_KB, maximum=1024_KB;''','''    const bool target=serial=="CUSA08809"||serial=="CUSA08034";
     static const u64 maximum=[] {
         const char* v=std::getenv("SOTC_RB_STREAM_MAX_KB");
-        return std::clamp<u64>(v?std::strtoull(v,nullptr,10):4096,64,4096)*1_KB;
+        return std::clamp<u64>(v?std::strtoull(v,nullptr,10):1024,64,4096)*1_KB;
     }();
     if (target && !assume_locks && !is_write) {
         thread_local VAddr last_end=0;
@@ -201,4 +201,4 @@ void BufferCache::DownloadMemory''')
     collect();
     if(!pending_binds.empty())scheduler.Flush();
     for (const auto& range : released) {''')
-    return {"donor":"732cb37d3470d2dad2cc99da19283253c96b53fc","twoPhaseReadback":True,"heldStaging":True,"overlapDirtyRetry":True,"preciseNarrowWindow":True,"streamMaximumKiB":4096,"recollectSparseReleaseAfterFinish":True,"cpuBackend":"FEX","limitations":"conservative whole-window requeue; donor hot readback aggregation and optional deferred eviction not ported"}
+    return {"donor":"732cb37d3470d2dad2cc99da19283253c96b53fc","twoPhaseReadback":True,"heldStaging":True,"overlapDirtyRetry":True,"preciseNarrowWindow":True,"streamMaximumKiB":1024,"recollectSparseReleaseAfterFinish":True,"cpuBackend":"FEX","limitations":"conservative whole-window requeue; donor hot readback aggregation and optional deferred eviction not ported"}

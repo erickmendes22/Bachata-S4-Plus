@@ -40,6 +40,9 @@ def apply(root):
         std::vector<ReadbackItem> items;
         Vulkan::StagingBufferRef staging{};
         u64 tick{};
+        bool dependent{};
+        bool finished{};
+        bool complete{};
     };
     struct HotReadback {
         BachataReadback::Span span{};
@@ -132,6 +135,7 @@ def apply(root):
         "hotReadback": "default mode 1, same resident arena, <=64KiB copied per hot item, TTL 2s",
         "lateCpuCheck": "atomic check/copy under the existing FEX RegionManager lock",
         "partialCompletion": "clean items applied; dirty hot items retained GPU-owned; requested window retried",
+        "overlappingRequests": "contained live requested windows share completed staging tick; any new GPU write forces retry; release exactly once",
         "residentFilter": "both asynchronous and synchronous target paths intersect sparse resident ranges",
         "ownership": "held staging; backing copied before subtract/unprotect",
         "cpuBackend": "FEX unchanged",
@@ -256,6 +260,18 @@ void BufferCache::BeginAsyncReadback(AsyncReadback& rb,VAddr addr,u64 size,u64 s
     const auto span=ReadbackWindow(rb.arena,addr,size,stream);
     if(span.begin>=span.end)return;
     rb.validity.pages=span;
+    // Reuse a clean, already submitted requested window. The original owner
+    // keeps its staging and stack object alive until its Finish callback.
+    // Dependents retain only the tick, not a potentially dangling pointer.
+    for(const auto* pending:inflight_readbacks) {
+        const auto p=pending->validity.pages;
+        if(pending->arena==rb.arena && !pending->validity.dirty &&
+           p.begin<=span.begin && span.end<=p.end && pending->tick) {
+            rb.dependent=true;
+            rb.tick=pending->tick;
+            return;
+        }
+    }
     u64 bytes=0;
     GatherReadbackItem(rb,rb.arena,span,false,bytes);
     // No pending copy owns the bytes before its Finish: an empty gather really
@@ -277,6 +293,32 @@ void BufferCache::BeginAsyncReadback(AsyncReadback& rb,VAddr addr,u64 size,u64 s
 }
 
 bool BufferCache::FinishAsyncReadback(AsyncReadback& rb) {
+    // The caller has waited for rb.tick. A dependent can publish the
+    // owner's completed staging while the original guest remains blocked.
+    // All lookup, finish and interval changes run on the cache owner.
+    const auto requested=rb.validity.pages;
+    const auto clean=[&] {
+        return !gpu_modified_ranges.Intersects(requested.begin,requested.end-requested.begin);
+    };
+    if(rb.finished)return rb.complete && clean();
+    if(rb.dependent) {
+        AsyncReadback* owner=nullptr;
+        for(auto* pending:inflight_readbacks) {
+            const auto p=pending->validity.pages;
+            if(pending->arena==rb.arena && pending->tick==rb.tick &&
+               p.begin<=requested.begin && requested.end<=p.end) {
+                owner=pending;
+                break;
+            }
+        }
+        // The owner may already have completed or been invalidated.
+        // New writes retain GPU ownership and force the normal retry.
+        const bool ready=!owner || FinishAsyncReadback(*owner);
+        rb.finished=true;
+        rb.complete=ready && clean();
+        return rb.complete;
+    }
+    rb.finished=true;
     std::erase(inflight_readbacks,&rb);
     bool complete=true;
     if(rb.validity.dirty)complete=false;
@@ -305,6 +347,7 @@ bool BufferCache::FinishAsyncReadback(AsyncReadback& rb) {
         memory_tracker->UnmarkRegionAsGpuModified(span.begin,span.end-span.begin,false);
     }
     staging_pool.FreeDeferred(rb.staging);
+    rb.complete=complete;
     return complete;
 }
 '''

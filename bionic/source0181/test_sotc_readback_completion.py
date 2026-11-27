@@ -278,6 +278,53 @@ int main(){
         assert(cache.hot_readbacks.size()==1);
     }
     {
+        // Two simultaneous guest faults inside the same window use one
+        // allocation and one submission. Finish may run in either order.
+        for(bool dependent_first:{false,true}) {
+            BufferCache cache;
+            cache.GpuWrite(a,64_KB,0x55);
+            BufferCache::AsyncReadback leader{},join{};
+            cache.BeginAsyncReadback(leader,a,1,0);
+            cache.BeginAsyncReadback(join,a+4_KB,1,0);
+            assert(join.dependent && join.tick==leader.tick);
+            assert(cache.staging_pool.allocations.size()==1);
+            assert(cache.inflight_readbacks.size()==1);
+            if(dependent_first) {
+                assert(cache.FinishAsyncReadback(join));
+                assert(cache.FinishAsyncReadback(leader));
+            } else {
+                assert(cache.FinishAsyncReadback(leader));
+                assert(cache.FinishAsyncReadback(join));
+            }
+            assert(cache.inflight_readbacks.empty());
+            assert(!leader.staging.buffer->held);
+            assert(cache.physical.bytes[a+4_KB]==0x55);
+        }
+    }
+    {
+        BufferCache cache;
+        cache.GpuWrite(a,64_KB,0x55);
+        BufferCache::AsyncReadback leader{},join{};
+        cache.BeginAsyncReadback(leader,a,1,0);
+        cache.BeginAsyncReadback(join,a,1,0);
+        cache.GpuWrite(a,64_KB,0x66);
+        assert(!cache.FinishAsyncReadback(join));
+        assert(!cache.FinishAsyncReadback(leader));
+        assert(cache.physical.bytes[a]==0x11);
+        cache.Complete(a);assert(cache.physical.bytes[a]==0x66);
+    }
+    {
+        BufferCache cache;
+        cache.GpuWrite(a,64_KB,0x55);
+        BufferCache::AsyncReadback leader{},join{};
+        cache.BeginAsyncReadback(leader,a,1,0);
+        cache.BeginAsyncReadback(join,a,1,0);
+        assert(cache.FinishAsyncReadback(leader));
+        cache.GpuWrite(a,64_KB,0x77);
+        assert(!cache.FinishAsyncReadback(join));
+        cache.Complete(a);assert(cache.physical.bytes[a]==0x77);
+    }
+    {
         PageManager pm;auto tracker=std::make_unique<MemoryTracker>(pm);
         const VAddr start=HIGHER_PAGE_SIZE-4_KB;
         auto noop=[](VAddr,u64){};
@@ -301,7 +348,7 @@ int main(){
         });
         guest.join();assert(value.load()==9);
     }
-    std::cout<<"BACHATA_SOTC_READBACK_COMPLETION_PASS resident-holes/hot-gather-provenance/hot-late-cpu/partial-retry/flush-race/locked-write\n";
+    std::cout<<"BACHATA_SOTC_READBACK_COMPLETION_PASS resident-holes/hot-gather-provenance/hot-late-cpu/partial-retry/flush-race/locked-write/joined-faults\n";
 }
 '''
 

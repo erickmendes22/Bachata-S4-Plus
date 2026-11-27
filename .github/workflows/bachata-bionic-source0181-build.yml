@@ -122,6 +122,7 @@ jobs:
           python3 bionic/source0181/test_sotc_wait_episode.py --source generic-upstream
           python3 bionic/source0181/test_sotc_lod_pool.py --source generic-upstream
           python3 bionic/source0181/test_sotc_readback_completion.py --source generic-upstream
+          python3 bionic/source0181/test_sotc_staging_classes.py --source generic-upstream
           python3 bionic/source0181/test_sotc_arena_lifecycle.py --source generic-upstream
           python3 bionic/source0181/test_sotc_async_readback.py --source generic-upstream
           grep -Fq 'BACHATA_ABSENT_REDUCTION_LANE' generic-upstream/src/shader_recompiler/ir/passes/lower_wave64_pass.cpp
@@ -354,6 +355,7 @@ jobs:
           python3 bionic/source0181/test_sotc_wait_episode.py --source generic-upstream
           python3 bionic/source0181/test_sotc_lod_pool.py --source generic-upstream
           python3 bionic/source0181/test_sotc_readback_completion.py --source generic-upstream
+          python3 bionic/source0181/test_sotc_staging_classes.py --source generic-upstream
           python3 bionic/source0181/test_sotc_arena_lifecycle.py --source generic-upstream
           python3 bionic/source0181/test_sotc_async_readback.py --source generic-upstream
           python3 - <<'PY'
