@@ -75,6 +75,9 @@ PROGRAM = r'''
 #include <vector>
 #include <sys/mman.h>
 #include "common/types.h"
+#if __has_include("video_core/buffer_cache/bachata_copy_pool.h")
+#include "video_core/buffer_cache/bachata_copy_pool.h"
+#endif
 #include "video_core/buffer_cache/memory_tracker.h"
 #define ASSERT(x) assert(x)
 #define ASSERT_MSG(x,...) assert(x)
