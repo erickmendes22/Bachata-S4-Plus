@@ -82,6 +82,8 @@ def main() -> None:
             donor_delta = Path(__file__).resolve().with_name("effective-sotc-donor.patch")
             subprocess.run(["git", "apply", "--check", str(donor_delta)], cwd=args.source.resolve(), check=True)
             subprocess.run(["git", "apply", str(donor_delta)], cwd=args.source.resolve(), check=True)
+            from port_depth_layout_contract import apply as apply_depth_layout
+            print("BACHATA_SOTC_DEPTH_LAYOUT_CONTRACT", apply_depth_layout(args.source.resolve()))
             print("BACHATA_EFFECTIVE_DONOR_DELTA_SOTC_APPLIED")
             from reconcile_cmake import reconcile
             source_registry=reconcile(args.source.resolve())
