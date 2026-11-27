@@ -7,6 +7,7 @@ storage effects, depth samples, blending, feedback and unknown half-res draws.
 ORDER1886_VRS_2X2=0 restores per-pixel rate on the same device.
 """
 from pathlib import Path
+import re
 
 HEADER=r'''#pragma once
 #include <atomic>
@@ -89,7 +90,43 @@ def add_vrs_query_feature(s):
         raise RuntimeError("Order VRS feature query type drift")
     return s[:end]+", vk::PhysicalDeviceFragmentShadingRateFeaturesKHR"+s[end:]
 
+def ensure_extension_capacity(s):
+    # This is the actual declaration, not a fixed guessed template capacity.
+    # Preserve an unbounded vector or a pre-existing sufficiently large one.
+    matches=list(re.finditer(
+        r"\b(?:(?:boost::container::)?static_vector\s*<\s*const\s+char\s*\*\s*,\s*(\d+)\s*>|"
+        r"std::vector\s*<\s*const\s+char\s*\*\s*>)\s+enabled_extensions\s*(?:\{\s*\})?\s*;",s))
+    if len(matches)!=1:
+        lines=[line.strip() for line in s.splitlines() if "enabled_extensions" in line]
+        raise RuntimeError("Order VRS extension container drift: "+repr(lines[:12]))
+    m=matches[0]
+    if m.group(1) is None or int(m.group(1))>=64:
+        return s
+    return s[:m.start(1)]+"64"+s[m.end(1):]
+
 def apply(root:Path):
+    # If another host-adapter declaration changes, show its exact context
+    # in the same preflight log; never hide the failure or omit VRS silently.
+    try:
+        return apply_renderer(root)
+    except Exception:
+        d=Path(root)/"src/video_core/renderer_vulkan"
+        needles=("getFeatures2", "feature_chain", "enabled_extensions", "device_chain",
+                 "calibrated_timestamps", "shaderSubgroupClock", "CreateDevice",
+                 "DEFAULT_DISPATCHER.init", "sampleShadingEnable", "clip_control =",
+                 "dynamic_info =", "needs_barrier{}", "Rasterizer::Draw(",
+                 "Rasterizer::DrawIndirect(", "Rasterizer::BindVertexBuffers(",
+                 "bindings.empty()", "bindPipeline(vk::PipelineBindPoint::eGraphics")
+        for name in ("vk_instance.cpp","vk_graphics_pipeline.cpp","vk_rasterizer.h","vk_rasterizer.cpp"):
+            p=d/name
+            if p.is_file():
+                print("BACHATA_ORDER_VRS_SOURCE_CONTEXT",name)
+                for i,line in enumerate(p.read_text().splitlines(),1):
+                    if any(needle in line for needle in needles):
+                        print(f"{i}: {line}")
+        raise
+
+def apply_renderer(root:Path):
     d=Path(root)/"src/video_core/renderer_vulkan"
     (d/"order_vrs_parity.h").write_text(HEADER)
     inc='#include "video_core/renderer_vulkan/order_vrs_parity.h"\n'
@@ -101,8 +138,7 @@ def apply(root:Path):
     # shader-clock type also occurs in feature_chain.get<> and unlink<>.
     # Editing those queries would alter a different Vulkan contract.
     s=add_vrs_query_feature(s)
-    s=one(s,"    boost::container::static_vector<const char*, 32> enabled_extensions;",
-          "    boost::container::static_vector<const char*, 64> enabled_extensions;","extension capacity")
+    s=ensure_extension_capacity(s)
     s=one(s,"    const bool calibrated_timestamps =",r'''    bool order_vrs_supported=false;
 #ifdef __ANDROID__
     const char* vrs_env=std::getenv("ORDER1886_VRS_2X2");
