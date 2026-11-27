@@ -160,7 +160,11 @@ bool TextureCache::CheckAttachment(AttachmentReplay& entry,bool record) {''')
     edit(h,'    void RefreshImageLayouts();','    void RefreshImageLayouts(RenderState* state=nullptr,u64* token=nullptr);')
     edit(c,'#include "video_core/renderer_vulkan/vk_rasterizer.h"',
          '#include "video_core/renderer_vulkan/vk_rasterizer.h"\n#include "video_core/renderer_vulkan/bachata_view_layout.h"')
-    p=src/c;s=p.read_text();a=s.index('void Rasterizer::RefreshImageLayouts() {');b=s.index('\nvoid Rasterizer::BindTextures(',a);p.write_text(s[:a]+METHOD+'\n'+s[b:])
+    p=src/c;s=p.read_text();a=s.index('void Rasterizer::RefreshImageLayouts() {')
+    b=s.index('{',a)+1;depth=1
+    while depth:
+        depth+=(s[b]=='{')-(s[b]=='}');b+=1
+    p.write_text(s[:a]+METHOD+s[b:])
     edit(c,'    const auto& state=BeginRenderingFast(pipeline,storage,render_token);\n    RefreshImageLayouts();',
          '    RenderState state=BeginRenderingFast(pipeline,storage,render_token);\n    RefreshImageLayouts(&state,&render_token);',2)
     edit(c,'''    if (needs_barrier) {
