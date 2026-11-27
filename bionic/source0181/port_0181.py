@@ -97,6 +97,8 @@ def main() -> None:
             apply_donor_appcontent(args.source.resolve())
             from port_donor_sema import apply as apply_donor_sema
             apply_donor_sema(args.source.resolve())
+            from port_donor_io_cond import apply as apply_donor_io_cond
+            apply_donor_io_cond(args.source.resolve())
             from reconcile_cmake import reconcile
             source_registry=reconcile(args.source.resolve())
             print("REAL_SHADPS4_0181_CMAKE_REGISTRY_RECONCILED",source_registry["changedGroups"])
