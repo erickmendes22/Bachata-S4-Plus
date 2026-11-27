@@ -193,6 +193,7 @@ class Linker {
 public:
     std::mutex mutex;
     std::vector<std::unique_ptr<Module>> m_modules;
+    std::vector<u32> m_prepared_boot_modules;
     Loader::SymbolsResolver m_hle_symbols;
     std::unique_ptr<GuestCpu::HleVeneerAllocator> m_hle_veneers;
     std::unique_ptr<Module> next_module;
@@ -213,6 +214,7 @@ public:
     void AdvanceGenerationCounter(){++generation_changes;}
     @RELOCATE_ANY@
     @RELOCATE_ALL@
+    s32 PrepareBootModule(const std::filesystem::path&);
     s32 LoadAndStartModule(const std::filesystem::path&,u64,const void*,int*);
     void Relocate(Module*);
     bool Resolve(const std::string&,Loader::SymbolType,Module*,Loader::SymbolRecord*);
@@ -221,6 +223,7 @@ public:
 // Keep that production body verbatim without suppressing other warnings.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wsign-compare"
+@PREPARE_BOOT@
 @LOAD_AND_START@
 #pragma GCC diagnostic pop
 @RESOLVE@
@@ -325,6 +328,27 @@ int main(int argc,char** argv){
      int result=-1;assert(Libraries::SysModule::loadModuleInternal(3,0,nullptr,&result)==0);
      assert(cp.load_paths.empty() && result==0);
      std::filesystem::remove(dir/"libSceFios2.use-hle");++cases;}
+    // Both modules publish exports and TLS before either initializer runs.
+    {Core::Linker cp;Select(cp,game);RegisterAtBoot(&cp.m_hle_symbols,dir);
+     auto* main=cp.m_modules.emplace_back(MainModule()).get();cp.Relocate(main);
+     unsigned starts=0;
+     auto libc=GuestModule("libc");libc->tls.image_size=64;
+     libc->start=[&]{assert(starts++==0 && main->slots[0]==0x800123000ULL);return 9;};
+     cp.next_module=std::move(libc);
+     const auto libc_path="/app0/sce_module/libc.prx";
+     const auto fios_path="/app0/sce_module/libSceFios2.prx";
+     assert(cp.PrepareBootModule(libc_path)==1 && starts==0);
+     assert(cp.PrepareBootModule(libc_path)==1 && cp.generation_changes==1);
+     auto fios=GuestModule();fios->tls.image_size=64;
+     fios->start=[&]{assert(starts++==1 && main->TestRelaBit(0));return 7;};
+     cp.next_module=std::move(fios);
+     assert(cp.PrepareBootModule(fios_path)==2 && starts==0 && cp.generation_changes==2);
+     cp.RelocateAllImports();assert(main->TestRelaBit(0));
+     int result=-1;
+     assert(cp.LoadAndStartModule(libc_path,0,nullptr,&result)==1 && result==9);
+     assert(cp.LoadAndStartModule(fios_path,0,nullptr,&result)==2 && result==7);
+     assert(cp.LoadAndStartModule(fios_path,0,nullptr,&result)==2 && starts==2);
+     assert(cp.generation_changes==2 && cp.load_paths.size()==2 && cp.m_prepared_boot_modules.empty());++cases;}
     // An available staged SPRX wins over the game's PRX; its exports are real.
     {std::ofstream(dir/"libSceFios2.sprx")<<"fixture";
      Core::Linker cp;Select(cp,game);RegisterAtBoot(&cp.m_hle_symbols,dir);
@@ -397,6 +421,7 @@ def program(source):
         "RELOCATE": block(cpp, "void Linker::Relocate("),
         "RELOCATE_ANY": block(h, "    void RelocateAnyImports("),
         "RELOCATE_ALL": block(h, "    void RelocateAllImports("),
+        "PREPARE_BOOT": block(cpp, "s32 Linker::PrepareBootModule("),
         "LOAD_AND_START": block(cpp, "s32 Linker::LoadAndStartModule("),
         "LOAD_FIOS_ARM": load,
     }
