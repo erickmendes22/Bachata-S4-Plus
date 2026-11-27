@@ -479,6 +479,7 @@ struct BufferCache {
  const Buffer*GetArena(u64,u64){return &arena;}void EnsureResident(const Buffer*,u64,u64){}
  bool UploadFreshBacking(VAddr,u64){std::abort();}
  bool SynchronizeMemoryFromImage(const Buffer*,VAddr,u32){++image_syncs;return true;}
+ void DirtyOrderReadbacks(VAddr,u64){}
  bool SynchronizeMemory(const Buffer*,VAddr,u32,bool,bool);
  std::pair<const Buffer*,u64>ObtainBuffer(VAddr,u32,bool,bool);
 };

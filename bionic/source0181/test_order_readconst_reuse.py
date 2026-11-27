@@ -59,6 +59,7 @@ PROGRAM = r'''
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <functional>
 #include <iostream>
 #include <map>
@@ -75,6 +76,7 @@ PROGRAM = r'''
 #include <vector>
 #include <sys/mman.h>
 #include "common/types.h"
+#include "core/memory_map_generation.h"
 #if __has_include("video_core/buffer_cache/bachata_copy_pool.h")
 #include "video_core/buffer_cache/bachata_copy_pool.h"
 #endif
@@ -117,6 +119,8 @@ public:
     static constexpr VAddr Base=0x4'0000'0000ULL;
     static constexpr u64 Span=32_MB;
     std::shared_mutex mutex;
+    MemoryMapGeneration mapping_generation;
+    u64 MappingGeneration()const{return mapping_generation.Load();}
     u64 alias_copy_bytes{};
     std::map<VAddr,VirtualMemoryArea>vma_map;
     struct AddressSpace {
@@ -138,6 +142,7 @@ public:
     @PHYSICAL@
     void CopySparseMemory(VAddr,u8*,u64);
     void WriteSparseBacking(VAddr,const void*,u64);
+    bool TryWriteBackingAtGeneration(VAddr,const void*,u64,u64);
     u64 ClampGpuRangeSize(VAddr,u64);
     u64 ClampRangeSize(VAddr,u64);
     int QueryProtection(VAddr address,void** start,void** end,u32* prot){
@@ -237,6 +242,7 @@ constexpr u64 LARGE_MIN_GRANULARITY=64_KB,BLOCK_SIZE=16_MB;
 struct StagingBufferRef {
     VideoCore::Buffer*buffer{};u64 offset{},size{};u8*mapped{};MemoryType type{};
     void Flush()const noexcept{buffer->Flush(offset,size);}
+    void Invalidate()const noexcept{buffer->Invalidate(offset,size);}
 };
 class StagingBufferPool {
     struct Block{std::unique_ptr<VideoCore::StreamBuffer>buffer;u64 last_used_frame;};
@@ -299,6 +305,7 @@ struct RangeSet {
     template<class F>void ForEachInRange(VAddr a,u64 n,F&&f)const{
         for(auto r:ranges){const auto lo=std::max(a,r.first),hi=std::min(a+n,r.second);if(lo<hi)f(lo,hi);}
     }
+    template<class F>void ForEach(F&& f)const{for(auto [a,b]:ranges)f(a,b);}
     void Subtract(VAddr a,u64 n){
         std::vector<std::pair<VAddr,VAddr>>next;
         for(auto r:ranges){if(r.second<=a||r.first>=a+n)next.push_back(r);else{
@@ -309,6 +316,8 @@ struct RangeSet {
 };
 struct TextureBoundary {
     u64 resolutions{},image_syncs{};
+    VAddr alias_page{};
+    bool WithOrderBufferPage(VAddr page,auto&& action){return page!=alias_page&&action();}
     bool ResolveImageReadbacks(VAddr,u64,bool){++resolutions;return false;}
     void NoteMetaShaderWrite(VAddr,u64){}
 };
@@ -326,13 +335,24 @@ public:
     TextureBoundary texture_cache;LiverpoolBoundary processor;LiverpoolBoundary*liverpool=&processor;
     StreamBuffer stream_buffer;Buffer arena;
     RangeSet gpu_modified_ranges,srt_source_pages;
+    static constexpr u64 ARENA_PAGE_BITS=32;
+    std::array<const Buffer*,256>address_space{};
+    struct Resident {void ForEachGap(u64,u64,auto&&)const{}} resident_ranges;
+    @ORDER_MEMBERS@
     u32 block_shift=12;bool coherent_arena_upload=false;
     std::vector<u64>fresh_backings;
     BufferCache(const Vulkan::Instance&i,Vulkan::Scheduler&s,Vulkan::Runtime&r,Core::MemoryManager&m)
         :instance(i),scheduler(s),runtime(r),staging_pool(r.pool),memory(&m),
          memory_tracker(std::make_unique<MemoryTracker>(pages)),
          stream_buffer(i,s,MemoryType::HostUncached,16_MB),
-         arena(i,Core::MemoryManager::Base,Core::MemoryManager::Span,MemoryType::Sparse){}
+         arena(i,Core::MemoryManager::Base,Core::MemoryManager::Span,MemoryType::Sparse){
+            address_space[Core::MemoryManager::Base>>ARENA_PAGE_BITS]=&arena;
+         }
+    ~BufferCache();
+    void KeepOrderSunPage(VAddr,u64);
+    void RecordOrderSunCopies();
+    void UnmapOrderReadbacks(VAddr,u64);
+    bool DownloadSrtSourcePages(std::span<const VAddr>);
     const Buffer*GetArena(u64 first,u64 last){
         assert(first<<block_shift>=arena.cpu_addr);
         assert(((last+1)<<block_shift)<=arena.cpu_addr+arena.SizeBytes());return &arena;
@@ -438,6 +458,7 @@ void GpuReadbackTest(){
     const auto read=f.binder.Bind(a,4096);assert(!read.snapshot&&read.buffer==buffer);
     f.r.Draw(read.buffer,read.offset,out);f.s.Finish();
     assert(out.back()==77&&f.m.Byte(a)==19);
+    f.cache.texture_cache.alias_page=a;
     f.cache.ReadMemory(a,4,false,false);
     assert(f.m.Byte(a)==77&&!f.cache.IsRegionGpuModified(a,4096));
     const auto uploads=f.cache.ReadConstUploadBytes();
@@ -497,6 +518,65 @@ void ScopeAndLifetimeTest(){
     Common::ElfInfo::Instance().serial="CUSA00785";
     std::cout<<"ORDER_READCONST_LIFETIME persistent/flush/recycled-upload/small-immutable/other-titles=PASS\n";
 }
+void DeferredReadbackTest(){
+    Fixture f;const auto a=MemoryManager::Base+8_MB;
+    f.GuestWrite(a,64_KB,19);
+    auto write_gpu=[&](VAddr addr,u64 size,u8 value){
+        const auto [b,off]=f.cache.ObtainBuffer(addr,size,true);
+        f.s.commands.emplace_back([b,off,size,value]{std::fill_n(b->Handle()->storage.data()+off,size,value);});
+    };
+    // A false-positive write fault must not wait for unrelated GPU bytes.
+    write_gpu(a+4096,4096,71);write_gpu(a+8192,4096,72);
+    const auto waits=f.s.waits;
+    f.cache.ReadMemory(a+7,1,true,false);
+    assert(f.s.waits==waits&&f.m.Byte(a+4096)==19);
+    assert(f.cache.OrderReadbackTick(a+4096,8192)>0);
+    assert(f.cache.IsRegionGpuModified(a+4096,8192));
+    assert(f.cache.pages.At(a+4096).second==1);
+    f.s.Finish();f.cache.ApplyOrderReadbacks();
+    assert(f.m.Byte(a+4096)==71&&f.m.Byte(a+8192)==72);
+    assert(!f.cache.IsRegionGpuModified(a+4096,8192));
+    // A new GPU writer supersedes a snapshot recorded earlier in this tick.
+    write_gpu(a+12288,4096,73);
+    f.cache.DeferOrderReadbacks(std::array<VAddr,1>{a+12288});
+    write_gpu(a+12288,4096,74);
+    f.s.Finish();f.cache.ApplyOrderReadbacks();
+    assert(f.m.Byte(a+12288)==19&&f.cache.IsRegionGpuModified(a+12288,4096));
+    f.cache.ReadMemory(a+12288,4,false,false);
+    assert(f.m.Byte(a+12288)==74);
+    // Two SRT pages share one wait and are both published before rebinding.
+    write_gpu(a+16384,4096,75);write_gpu(a+20480,4096,76);
+    const std::array<VAddr,2> srt{a+16384,a+20480};
+    f.cache.DeferOrderReadbacks(srt);
+    const auto before=f.s.waits;
+    assert(f.cache.DownloadSrtSourcePages(srt));
+    assert(f.s.waits==before+1&&f.m.Byte(srt[0])==75&&f.m.Byte(srt[1])==76);
+    // Mapping identity prevents old staging from publishing into a new VMA.
+    write_gpu(a+24576,4096,77);
+    f.cache.DeferOrderReadbacks(std::array<VAddr,1>{a+24576});
+    {auto mutation=f.m.mapping_generation.BeginMutation();}
+    f.s.Finish();f.cache.ApplyOrderReadbacks();
+    assert(f.m.Byte(a+24576)==19&&f.cache.IsRegionGpuModified(a+24576,4096));
+    f.cache.ReadMemory(a+24576,4,false,false);assert(f.m.Byte(a+24576)==77);
+    // A CPU store must see the current GPU bytes for the rest of the page.
+    write_gpu(a+28672,4096,78);
+    f.cache.DeferOrderReadbacks(std::array<VAddr,1>{a+28672});
+    f.GuestWrite(a+28672+9,1,99);
+    assert(f.m.Byte(a+28672)==78&&f.m.Byte(a+28672+9)==99&&f.m.Byte(a+28672+10)==78);
+    // Real producer registration and post-dispatch snapshot path.
+    write_gpu(a+32768,4096,79);
+    f.cache.KeepOrderSunPage(a+32768,4096);f.cache.RecordOrderSunCopies();
+    assert(f.cache.OrderReadbackTick(a+32768,4096)>0);
+    f.s.Finish();f.cache.ApplyOrderReadbacks();assert(f.m.Byte(a+32768)==79);
+    // An image alias appearing after capture requires the authoritative fallback.
+    write_gpu(a+36864,4096,80);
+    f.cache.DeferOrderReadbacks(std::array<VAddr,1>{a+36864});
+    f.cache.texture_cache.alias_page=a+36864;
+    f.s.Finish();f.cache.ApplyOrderReadbacks();
+    assert(f.m.Byte(a+36864)==19&&f.cache.IsRegionGpuModified(a+36864,4096));
+    f.cache.ReadMemory(a+36864,4,false,false);assert(f.m.Byte(a+36864)==80);
+    std::cout<<"ORDER_DEFERRED_PIPELINE_PASS protection/overlap/SRT/remap/CPU-write/sun/image-alias\n";
+}
 void MetricsTest(){
     OrderReadConstReuseWindow window;stats_logs.clear();
     window.Add(10'000'000,100,4_MB,false,4_MB);
@@ -520,6 +600,7 @@ int main(int argc,char**argv){
     if(only.empty()||only=="gpu")GpuReadbackTest();
     if(only.empty()||only=="mapping")MappingAndWindowTest();
     if(only.empty()||only=="lifetime")ScopeAndLifetimeTest();
+    if(only.empty()||only=="deferred")DeferredReadbackTest();
     if(only.empty())MetricsTest();
 }
 '''
@@ -528,6 +609,7 @@ int main(int argc,char**argv){
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True, type=Path)
+    parser.add_argument("--positive-only", action="store_true")
     args = parser.parse_args()
     src = args.source.resolve() / "src"
     read = lambda name: (src / name).read_text()
@@ -566,9 +648,10 @@ def main() -> None:
     values = {
         "POLICY": block(read("common/bachata_compat_profile.h"), "inline bool Order1886()"),
         "PHYSICAL": block(memory_h, "bool HasPhysicalBacking("),
-        "MEMORY": "\n".join(block(memory, marker) for marker in (
+        "MEMORY": "template<class F>\n"+block(memory,"bool VisitPhysicalSpans(")+"\n"+"\n".join(block(memory, marker) for marker in (
             "void MemoryManager::CopySparseMemory(", "void MemoryManager::WriteSparseBacking(",
-            "u64 MemoryManager::ClampGpuRangeSize(", "u64 MemoryManager::ClampRangeSize(")),
+            "u64 MemoryManager::ClampGpuRangeSize(", "u64 MemoryManager::ClampRangeSize(",
+            "bool MemoryManager::TryWriteBackingAtGeneration(")),
         "WAIT": block(read("video_core/renderer_vulkan/vk_scheduler.cpp"), "void Scheduler::Wait(u64 tick)"),
         "STREAM": "\n".join(block(stream, marker) for marker in (
             "bool StreamBuffer::PrepareMap(", "std::pair<u8*, u64> StreamBuffer::Map(",
@@ -590,7 +673,14 @@ def main() -> None:
         "UPLOAD_MEMBER": upload_member,
         "LIMIT_ACCESSOR": block(cache_h, "[[nodiscard]] static constexpr u64 ReadConstStreamThreshold()"),
         "COUNTER": block(cache_h, "[[nodiscard]] u64 ReadConstUploadBytes()"),
+        "ORDER_MEMBERS": cache_h[cache_h.index("    struct OrderReadbackPage {"):cache_h.index("    std::unique_ptr<FaultManager> fault_manager;")],
         "CACHE": "\n".join(block(cache, marker) for marker in (
+            "BufferCache::~BufferCache()", "void BufferCache::DirtyOrderReadbacks(",
+            "u64 BufferCache::OrderReadbackTick(", "void BufferCache::ApplyOrderReadbacks(",
+            "bool BufferCache::WaitOrderReadbacks(", "void BufferCache::DeferOrderReadbacks(",
+            "void BufferCache::ReadOrderWindow(", "void BufferCache::KeepOrderSunPage(",
+            "void BufferCache::RecordOrderSunCopies(", "void BufferCache::UnmapOrderReadbacks(",
+            "bool BufferCache::DownloadSrtSourcePages(",
             "void BufferCache::InvalidateMemory(", "void BufferCache::ReadMemory(",
             "void BufferCache::DownloadMemory(", "void BufferCache::MarkGuestWriteWindow(",
             "bool BufferCache::IsRegionCpuModified(", "bool BufferCache::IsRegionGpuModified(",
@@ -641,6 +731,7 @@ def main() -> None:
 
         run("positive", program)
         run("non_android", program, android=False)
+        if args.positive_only: return
         private_name = program.replace("BufferCache::ReadConstStreamThreshold()", "BufferCache::STREAM_THRESHOLD")
         assert private_name != program
         write("private_threshold.cpp", private_name)
@@ -650,6 +741,8 @@ def main() -> None:
         assert result.returncode != 0 and "private" in result.stderr
         print("ORDER_READCONST_REUSE_NEGATIVE_PASS private_threshold_access", flush=True)
         controls = {
+            "deferred_stale_writer": ("address<page.address+4096) page.valid=false;", "address<page.address+4096) page.valid=true;", "deferred"),
+            "deferred_release_early": ("    order_readbacks.push_back(std::move(batch));", "    for (const auto& page:batch.pages) memory_tracker->UnmarkRegionAsGpuModified(page.address,4096,false);\n    order_readbacks.push_back(std::move(batch));", "deferred"),
             "copy_every_binding": ("if (size <= VideoCore::BufferCache::ReadConstStreamThreshold() ||\n"
                                    "                            (vsharp.base_address & 3) != 0)",
                                    "if (true)", "reuse"),

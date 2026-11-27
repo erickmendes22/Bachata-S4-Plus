@@ -27,6 +27,7 @@ PREAMBLE = r'''
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <cassert>
 #include <cstdint>
 #include <cstring>
@@ -127,6 +128,13 @@ struct SymbolsResolver {
     const SymbolRecord* FindSymbol(const SymbolResolver& s)const{
         const auto it=records.find(Key(s));return it==records.end()?nullptr:&it->second;
     }
+    std::vector<SymbolRecord> GetSymbols()const {
+        std::vector<SymbolRecord> result;
+        constexpr std::array<const char*,5> types{"Unknown","Function","Object","Tls","NoType"};
+        for(const auto& [key,rec]:records){auto parts=Common::SplitString(key,':');auto item=rec;
+            item.name=parts[0]+"#"+parts[1]+"#"+parts[2]+"#"+parts[3]+"#"+types.at(std::stoi(parts[4]));
+            result.push_back(std::move(item));}return result;
+    }
     size_t GetSize()const{return records.size();}
     const std::shared_ptr<GuestCpu::HleCallAdapter>& AddUnsupportedFunction(const SymbolResolver& s){
         ++unsupported_calls;
@@ -156,7 +164,7 @@ struct elf_relocation{
     u32 GetType()const{return type;}u32 GetSymbol()const{return symbol;}
 };
 struct ElfSymbol{
-    u64 st_value{};u32 st_name{},bind=STB_GLOBAL,type=STT_FUN,visibility{};
+    u64 st_value{};u32 st_name{},bind=STB_GLOBAL,type=STT_FUN,visibility{},st_shndx{};
     u32 GetBind()const{return bind;}u32 GetType()const{return type;}
     u32 GetVisibility()const{return visibility;}
 };
@@ -166,7 +174,7 @@ struct Module {
     LibraryInfo library;ModuleInfo module;
     std::vector<LibraryInfo> export_libs;
     std::vector<ModuleInfo> export_modules,import_modules;
-    Loader::SymbolsResolver export_sym;
+    Loader::SymbolsResolver export_sym,import_sym;
     std::array<u64,4> slots{};
     std::array<ElfSymbol,4> symbols{};
     std::string names;
@@ -195,6 +203,10 @@ public:
     std::vector<std::unique_ptr<Module>> m_modules;
     std::vector<u32> m_prepared_boot_modules;
 #if FIOS_TEST_FEX
+    std::array<s32,2> m_donor_boot_handles{-1,-1};
+    bool m_donor_boot_selected{},m_donor_native_libc{};
+    const Loader::SymbolRecord* FindDonorBootExport(const Loader::SymbolResolver&) const;
+    void SelectDonorBootProviders(s32,s32);
     bool m_donor_mspace_active{},m_donor_mspace_pending{};
     std::vector<Loader::SymbolRecord> m_donor_mspace_exports;
     void SelectDonorMspaceProvider(s32);
@@ -214,7 +226,7 @@ public:
         next_module->path=path;m_modules.push_back(std::move(next_module));
         return static_cast<s32>(m_modules.size()-1);
     }
-    Module* GetModule(u32 handle){return m_modules.at(handle).get();}
+    Module* GetModule(s32 handle) const {return handle>=0 && static_cast<size_t>(handle)<m_modules.size()?m_modules.at(handle).get():nullptr;}
     Loader::SymbolsResolver& GetHLESymbols(){return m_hle_symbols;}
     void AdvanceGenerationCounter(){++generation_changes;}
     @RELOCATE_ANY@
@@ -229,6 +241,7 @@ public:
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wsign-compare"
 #if FIOS_TEST_FEX
+@DONOR_BOOT_POLICY@
 @MSPACE_NIDS@
 @MSPACE_PROVIDER@
 #endif
@@ -367,6 +380,48 @@ int main(int argc,char** argv){
         }else assert(cp.m_donor_mspace_exports.empty());
         cp.SelectDonorMspaceProvider(-1);assert(cp.m_donor_mspace_exports.size()==(failure?0:nids.size()));++cases;
     }
+    // Real linked donor import policy, with native ownership and actual host overrides.
+    {
+      using Core::Loader::SymbolType;using Core::Loader::SymbolRecord;
+      Core::Linker cp;cp.m_donor_mspace_active=cp.m_donor_mspace_pending=true;
+      auto* eboot=cp.m_modules.emplace_back(MainModule("libc")).get();
+      auto* libc=cp.m_modules.emplace_back(GuestModule("libc",2)).get();
+      auto* fios=cp.m_modules.emplace_back(GuestModule("libSceFios2",2)).get();
+      const auto adapter=std::make_shared<Core::GuestCpu::HleCallAdapter>(Core::GuestCpu::HleCallAdapter{3});
+      for(const auto* name:{"malloc","free","fopen","fclose","Q3VBxCXhUHs"}){
+        eboot->import_sym.Add(Symbol(name,SymbolType::Function,"libc",1,"libc"),{name,"",0,{},false});
+        cp.m_hle_symbols.Add(Symbol(name,SymbolType::Function,"libc",1,"libc"),{name,"",0x123,adapter,false});
+        libc->export_sym.Add(Symbol(name,SymbolType::Function,"libc",2,"libc"),{name,"",0x456,{},false});
+      }
+      fios->import_sym.Add(Symbol("fopen",SymbolType::Function,"libSceLibcInternal",1,"libSceLibcInternal"),{"fopen","",0,{},false});
+      eboot->import_sym.Add(Symbol("unresolved",SymbolType::Function,"libc",1,"libc"),{"unresolved","",0,{},false});
+      SymbolRecord out{};
+      assert(!cp.Resolve("malloc#L#M",SymbolType::Function,eboot,&out)&&out.hle_adapter==adapter);
+      cp.SelectDonorMspaceProvider(1);cp.SelectDonorBootProviders(1,2);
+      assert(cp.m_donor_boot_selected&&cp.m_donor_native_libc);
+      for(const auto* name:{"malloc","free","fopen","fclose"}){
+        out={};assert(cp.Resolve(std::string(name)+"#L#M",SymbolType::Function,eboot,&out));
+        assert(out.virtual_address==0x456&&!out.hle_adapter);
+      }
+      out={};assert(cp.Resolve("Q3VBxCXhUHs#L#M",SymbolType::Function,eboot,&out)&&out.hle_adapter==adapter);
+      eboot->library.name=eboot->module.name="libSceLibcInternal";
+      out={};assert(cp.Resolve("fopen#L#M",SymbolType::Function,eboot,&out)&&out.virtual_address==0x456);
+      out={};assert(!cp.Resolve("fopen#L#M",SymbolType::Object,eboot,&out));
+      cp.SelectDonorBootProviders(-1,-1);assert(cp.m_donor_boot_handles[0]==1);
+      libc->export_libs.push_back({"libc",3});
+      libc->export_sym.Add(Symbol("fopen",SymbolType::Function,"libc",3,"libc"),{"fopen","",0x789,{},false});
+      out={};assert(!cp.Resolve("fopen#L#M",SymbolType::Function,eboot,&out));
+      eboot->library={"libc",2};eboot->module.name="libc";
+      out={};assert(cp.Resolve("fopen#L#M",SymbolType::Function,eboot,&out)&&out.virtual_address==0x456);
+      eboot->library={"libSceFios2",1};eboot->module.name="libSceFios2";
+      out={};assert(cp.Resolve("open#L#M",SymbolType::Function,eboot,&out)&&out.virtual_address==0x800123000ULL);
+      ++cases;
+    }
+    {Core::Linker cp;cp.m_donor_mspace_active=true;auto* eboot=cp.m_modules.emplace_back(MainModule()).get();
+      eboot->symbols[1].st_shndx=1;eboot->symbols[1].st_value=40;
+      eboot->symbols[2].bind=Core::STB_WEAK;eboot->symbols[2].st_name=0;eboot->slots[1]=999;
+      cp.Relocate(eboot);assert(eboot->slots[0]==eboot->GetBaseAddress()+40&&eboot->TestRelaBit(0));
+      assert(eboot->slots[1]==0&&eboot->TestRelaBit(1));++cases;}
     // Both modules publish exports and TLS before either initializer runs.
     {Core::Linker cp;Select(cp,game);RegisterAtBoot(&cp.m_hle_symbols,dir);
      auto* main=cp.m_modules.emplace_back(MainModule()).get();cp.Relocate(main);
@@ -460,6 +515,7 @@ def program(source):
         "RELOCATE": block(cpp, "void Linker::Relocate("),
         "RELOCATE_ANY": block(h, "    void RelocateAnyImports("),
         "RELOCATE_ALL": block(h, "    void RelocateAllImports("),
+        "DONOR_BOOT_POLICY": cpp[cpp.index("static bool DonorLibcImport("):cpp.index("static std::span<const std::string_view> DonorMspaceNids(")],
         "MSPACE_NIDS": block(cpp, "static std::span<const std::string_view> DonorMspaceNids("),
         "MSPACE_PROVIDER": block(cpp, "void Linker::SelectDonorMspaceProvider("),
         "PREPARE_BOOT": block(cpp, "s32 Linker::PrepareBootModule("),
