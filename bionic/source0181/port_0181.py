@@ -93,6 +93,8 @@ def main() -> None:
             print("BACHATA_SOTC_PC308_PROTOCOL", apply_pc308(args.source.resolve()))
             from port_sotc_stage_specialization import apply as apply_sotc_stage_specialization
             apply_sotc_stage_specialization(args.source.resolve())
+            from port_sotc_copy_batch import apply as apply_sotc_copy_batch
+            apply_sotc_copy_batch(args.source.resolve())
             from reconcile_cmake import reconcile
             source_registry=reconcile(args.source.resolve())
             print("REAL_SHADPS4_0181_CMAKE_REGISTRY_RECONCILED",source_registry["changedGroups"])
