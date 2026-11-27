@@ -52,7 +52,8 @@ namespace AmdGpu { struct Image {std::array<u64,4> words{};}; constexpr u32 NUM_
 namespace Shader {
 enum class MipStorageFallbackMode {None,ConstantIndex,DynamicIndex};
 struct ImageResource {bool is_written=false,is_depth=false,is_array=false;
-    MipStorageFallbackMode mip_fallback_mode=MipStorageFallbackMode::None;};
+    MipStorageFallbackMode mip_fallback_mode=MipStorageFallbackMode::None;
+    u32 array_size=0;};
 }
 namespace VideoCore {
 using ImageId=u32;
@@ -323,7 +324,7 @@ def run(root):
     code = preamble.replace('__RASTER_MEMBERS__',members)
     prepared = root / 'src/shader_recompiler/bachata_prepared_sharps.h'
     if prepared.is_file():
-        code = '#include "' + str(prepared) + '"\n' + code
+        code = '#include "' + str(prepared.resolve()) + '"\n' + code
         code = code.replace('namespace VideoCore {', 'namespace Shader { struct Info { std::vector<ImageResource> images; BachataPreparedSharps::Stage<AmdGpu::Image,AmdGpu::Image,AmdGpu::Image> order_sharps; }; }\nnamespace VideoCore {', 1)
     code += '\nnamespace VideoCore {\n'
     for signature in ('bool TextureCache::BindingMemoEnabled()', 'u64 TextureCache::MemoImageUid(',
