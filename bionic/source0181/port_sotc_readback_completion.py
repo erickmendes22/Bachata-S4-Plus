@@ -110,6 +110,10 @@ def apply(root):
     MarkReadbacksDirty(device_addr,size);""", """void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size) {
     const auto serial=Common::ElfInfo::Instance().GameSerial();
     if(serial=="CUSA08809" || serial=="CUSA08034") {
+        // Synchronous GPU-owner reads also serve guest/fence invalidation.
+        // Invalidate older guest snapshots before gathering the current bytes;
+        // the original guest must retry rather than reuse a stale completion.
+        MarkReadbacksDirty(device_addr,size);
         // A callback during Flush can invalidate a snapshot. Keep the requested
         // pages protected and retry; never let an SRT read see stale backing.
         for(;;) {
