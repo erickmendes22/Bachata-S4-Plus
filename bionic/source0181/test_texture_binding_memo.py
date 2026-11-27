@@ -323,7 +323,7 @@ def run(root):
     code = preamble.replace('__RASTER_MEMBERS__',members)
     prepared = root / 'src/shader_recompiler/bachata_prepared_sharps.h'
     if prepared.is_file():
-        code = '#include "' + str(prepared) + '"\n' + code
+        code = '#include "' + str(prepared.resolve()) + '"\n' + code
         code = code.replace('namespace VideoCore {', 'namespace Shader { struct Info { std::vector<ImageResource> images; BachataPreparedSharps::Stage<AmdGpu::Image,AmdGpu::Image,AmdGpu::Image> order_sharps; }; }\nnamespace VideoCore {', 1)
     code += '\nnamespace VideoCore {\n'
     for signature in ('bool TextureCache::BindingMemoEnabled()', 'u64 TextureCache::MemoImageUid(',

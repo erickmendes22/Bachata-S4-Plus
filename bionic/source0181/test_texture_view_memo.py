@@ -500,7 +500,7 @@ def program(root):
     code = PREAMBLE
     prepared = src / 'shader_recompiler/bachata_prepared_sharps.h'
     if prepared.is_file():
-        code = '#include "' + str(prepared) + '"\n' + code
+        code = '#include "' + str(prepared.resolve()) + '"\n' + code
         code = code.replace('namespace vk {', 'namespace Shader { struct Info { std::vector<ImageResource> images; BachataPreparedSharps::Stage<AmdGpu::Image,AmdGpu::Image,AmdGpu::Image> order_sharps; }; }\nnamespace vk {', 1)
     if 'void RegisterAlias(ImageId image_id);' in header:
         # The view fixture has no image-memory aliases. Their independent gate
