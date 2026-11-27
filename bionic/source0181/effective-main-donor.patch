@@ -1,0 +1,638 @@
+--- a/src/core/libraries/kernel/file_system.cpp
++++ b/src/core/libraries/kernel/file_system.cpp
+@@ -911,4 +911,27 @@
+     }
+     return result;
++}
++
++s32 PS4_SYSV_ABI posix_truncate(const char* path, s64 length) {
++    auto* mnt = Common::Singleton<Core::FileSys::MntPoints>::Instance();
++    if (!path) { *__Error() = POSIX_EFAULT; return -1; }
++    if (length < 0) { *__Error() = POSIX_EINVAL; return -1; }
++    if (strlen(path) > 255) { *__Error() = POSIX_ENAMETOOLONG; return -1; }
++    if (!mnt->Exists(path)) { *__Error() = POSIX_ENOENT; return -1; }
++    if (mnt->IsDirectory(path)) { *__Error() = POSIX_EISDIR; return -1; }
++    const auto mount = mnt->GetMount(path);
++    if (!mount) { *__Error() = POSIX_EINVAL; return -1; }
++    if (mount->read_only) { *__Error() = POSIX_EROFS; return -1; }
++    auto file = mnt->Open(path, Common::FS::FileAccessMode::ReadWrite);
++    if (!file || !file->IsOpen()) { *__Error() = POSIX_EACCES; return -1; }
++    auto* host = file->GetHostFile();
++    if (file->IsReadOnly() || !host) { *__Error() = POSIX_EROFS; return -1; }
++    if (!host->SetSize(static_cast<u64>(length))) { *__Error() = POSIX_EIO; return -1; }
++    return ORBIS_OK;
++}
++
++s32 PS4_SYSV_ABI sceKernelTruncate(const char* path, s64 length) {
++    const s32 result = posix_truncate(path, length);
++    return result < 0 ? ErrnoToSceKernelError(*__Error()) : result;
+ }
+ 
+@@ -1668,4 +1691,7 @@
+     LIB_FUNCTION("ih4CD9-gghM", "libScePosix", 1, "libkernel", posix_ftruncate);
+     LIB_FUNCTION("VW3TVZiM4-E", "libkernel", 1, "libkernel", sceKernelFtruncate);
++    LIB_FUNCTION("WlyEA-sLDf0", "libkernel", 1, "libkernel", sceKernelTruncate);
++    LIB_FUNCTION("ayrtszI7GBg", "libkernel", 1, "libkernel", posix_truncate);
++    LIB_FUNCTION("ayrtszI7GBg", "libScePosix", 1, "libkernel", posix_truncate);
+     LIB_FUNCTION("NN01qLRhiqU", "libScePosix", 1, "libkernel", posix_rename);
+     LIB_FUNCTION("NN01qLRhiqU", "libkernel", 1, "libkernel", posix_rename);
+--- a/src/core/libraries/libc_internal/libc_internal_memory.cpp
++++ b/src/core/libraries/libc_internal/libc_internal_memory.cpp
+@@ -68,4 +68,12 @@
+ #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
+ void RegisterFexLibcMemoryAliases(Core::Loader::SymbolsResolver* sym) {
++    LIB_FUNCTION("-hn1tcVHq5Q", "libc", 1, "libc", internal_sceLibcMspaceCreate);
++    LIB_FUNCTION("W6SiVSiCDtI", "libc", 1, "libc", internal_sceLibcMspaceDestroy);
++    LIB_FUNCTION("OJjm-QOIHlI", "libc", 1, "libc", internal_sceLibcMspaceMalloc);
++    LIB_FUNCTION("Vla-Z+eXlxo", "libc", 1, "libc", internal_sceLibcMspaceFree);
++    LIB_FUNCTION("LYo3GhIlB38", "libc", 1, "libc", internal_sceLibcMspaceCalloc);
++    LIB_FUNCTION("gigoVHZvVPE", "libc", 1, "libc", internal_sceLibcMspaceRealloc);
++    LIB_FUNCTION("iF1iQHzxBJU", "libc", 1, "libc", internal_sceLibcMspaceMemalign);
++    LIB_FUNCTION("fEoW6BJsPt4", "libc", 1, "libc", internal_sceLibcMspaceMallocUsableSize);
+     LIB_FUNCTION("Q3VBxCXhUHs", "libc", 1, "libc", internal_memcpy);
+     LIB_FUNCTION("8zTFvBIAIN8", "libc", 1, "libc", internal_memset);
+--- a/src/core/libraries/np/np_manager.cpp
++++ b/src/core/libraries/np/np_manager.cpp
+@@ -551,4 +551,8 @@
+         user_id == Libraries::UserService::ORBIS_USER_SERVICE_USER_ID_INVALID) {
+         return ORBIS_NP_ERROR_INVALID_ARGUMENT;
++    }
++    const auto serial = Common::ElfInfo::Instance().GameSerial();
++    if (!g_shadnet_enabled && (serial == "CUSA00004" || serial == "CUSA00223" || serial == "CUSA00263")) {
++        return ORBIS_NP_ERROR_SIGNED_OUT;
+     }
+     *game_status =
+--- a/src/core/libraries/playgo/playgo.cpp
++++ b/src/core/libraries/playgo/playgo.cpp
+@@ -81,4 +81,9 @@
+         return ORBIS_PLAYGO_ERROR_BAD_HANDLE;
+     }
++    const auto serial = Common::ElfInfo::Instance().GameSerial();
++    if (playgo && playgo->GetPlaygoHeader().file_size && !playgo->chunks.empty() && outEta && (serial == "CUSA00004" || serial == "CUSA00223" || serial == "CUSA00263")) {
++        *outEta = 0;
++        return ORBIS_OK;
++    }
+     if (chunkIds == nullptr || outEta == nullptr) {
+         return ORBIS_PLAYGO_ERROR_BAD_POINTER;
+@@ -225,4 +230,9 @@
+     if (handle != PlaygoHandle) {
+         return ORBIS_PLAYGO_ERROR_BAD_HANDLE;
++    }
++    const auto serial = Common::ElfInfo::Instance().GameSerial();
++    if (playgo && playgo->GetPlaygoHeader().file_size && !playgo->chunks.empty() && outEntries && (serial == "CUSA00004" || serial == "CUSA00223" || serial == "CUSA00263")) {
++        *outEntries = 0;
++        return ORBIS_OK;
+     }
+     if (outTodoList == nullptr || outEntries == nullptr) {
+--- a/src/core/libraries/sysmodule/sysmodule_internal.cpp
++++ b/src/core/libraries/sysmodule/sysmodule_internal.cpp
+@@ -3,4 +3,7 @@
+ 
+ #include "core/libraries/fios2/fios2.h"
++#include "core/libraries/playgo/bachata_installed_package.h"
++#include <array>
++#include <algorithm>
+ #include "common/assert.h"
+ #include "common/elf_info.h"
+@@ -447,5 +450,29 @@
+     ASSERT_MSG(Kernel::sceKernelGetCompiledSdkVersion(&sdk_ver) == 0,
+                "Failed to get compiled SDK version");
+-    for (u32 module_index : g_preload_list_3) {
++    std::array<u32, std::size(g_preload_list_3)> preload{};
++    std::ranges::copy(g_preload_list_3, preload.begin());
++#ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
++    const auto serial = Common::ElfInfo::Instance().GameSerial();
++    if (BachataBoot::InstalledPackageTitle(serial)) {
++        auto* linker = Common::Singleton<Core::Linker>::Instance();
++        const auto dir = EmulatorSettings.GetSysModulesDir() / serial;
++        const auto staged = dir / "libSceFios2.sprx";
++        const bool use_hle = std::filesystem::exists(dir / "libSceFios2.use-hle");
++        const std::filesystem::path fios = std::filesystem::exists(staged) ? staged :
++            std::filesystem::path("/app0/sce_module/libSceFios2.prx");
++        const auto libc = linker->PrepareBootModule("/app0/sce_module/libc.prx");
++        const auto fios_handle = use_hle ? -1 : linker->PrepareBootModule(fios);
++        if (libc >= 0 || fios_handle >= 0) linker->RelocateAllImports();
++        if (libc >= 0) {
++            // The donor boot image links the two modules, then runs libc first.
++            // Use the original sysmodule bookkeeping for both initializers.
++            auto a = std::ranges::find(preload, 3u), b = std::ranges::find(preload, 4u);
++            if (a != preload.end() && b != preload.end() && a < b) std::iter_swap(a, b);
++        }
++        LOG_INFO(Lib_SysModule, "BACHATA_DONOR_LINKED_BOOT libc={} fios={} forced_hle={}",
++                 libc, fios_handle, use_hle);
++    }
++#endif
++    for (u32 module_index : preload) {
+         // As per usual, these are arrays of indexes for g_modules_array
+         // libSceDbg, libScePerf, libSceMat, and libSceRazorCpu_debug.
+--- a/src/core/linker.cpp
++++ b/src/core/linker.cpp
+@@ -615,21 +615,33 @@
+ }
+ 
++s32 Linker::PrepareBootModule(const std::filesystem::path& path) {
++    const u32 existing = FindByName(path);
++    if (existing != static_cast<u32>(-1)) return existing;
++    const s32 handle = LoadModule(path, true);
++    if (handle < 0) return handle;
++    auto* module = GetModule(handle);
++    if (module->tls.image_size != 0) AdvanceGenerationCounter();
++    m_prepared_boot_modules.push_back(static_cast<u32>(handle));
++    return handle;
++}
++
+ s32 Linker::LoadAndStartModule(const std::filesystem::path& path, u64 args, const void* argp,
+                                int* pRes) {
+     u32 handle = FindByName(path);
+-    if (handle != -1) {
+-        return handle;
+-    }
+-    handle = LoadModule(path, true);
+-    if (handle == -1) {
+-        return -1;
++    bool prepared = false;
++    if (handle != static_cast<u32>(-1)) {
++        auto it = std::ranges::find(m_prepared_boot_modules, handle);
++        if (it == m_prepared_boot_modules.end()) return handle;
++        m_prepared_boot_modules.erase(it);
++        prepared = true;
++    } else {
++        handle = LoadModule(path, true);
++        if (handle == static_cast<u32>(-1)) return -1;
+     }
+     auto* module = GetModule(handle);
+     RelocateAnyImports(module);
+ 
+-    // If the new module has a TLS image, trigger its load when TlsGetAddr is called.
+-    if (module->tls.image_size != 0) {
+-        AdvanceGenerationCounter();
+-    }
++    // Prepared modules published TLS before the paired relocation pass.
++    if (!prepared && module->tls.image_size != 0) AdvanceGenerationCounter();
+ 
+     // Retrieve and verify proc param according to libkernel.
+--- a/src/core/linker.h
++++ b/src/core/linker.h
+@@ -174,4 +174,5 @@
+ 
+     s32 LoadModule(const std::filesystem::path& elf_name, bool is_dynamic = false);
++    s32 PrepareBootModule(const std::filesystem::path& path);
+     s32 LoadAndStartModule(const std::filesystem::path& path, u64 args, const void* argp,
+                            int* pRes);
+@@ -205,4 +206,5 @@
+     AppHeapAPI heap_api{};
+     std::vector<std::unique_ptr<Module>> m_modules;
++    std::vector<u32> m_prepared_boot_modules;
+     Loader::SymbolsResolver m_hle_symbols{};
+ #ifdef SHADPS4_ENABLE_FEX_GUEST_CPU
+--- /dev/null
++++ b/src/core/loader/tlou_boot_groups.h
+@@ -0,0 +1,69 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// CUSA00552 verified boot profiles from tlou-remastered-android 62ea759.
++// Only worker and frame-timeout groups; no visual changes, watchdog suppression,
++// or donor absolute pointer-range assumption. All guards precede all writes.
++#pragma once
++#include <array>
++#include <cstdint>
++#include <span>
++#include <string_view>
++namespace BachataTlouBoot {
++struct Patch { std::size_t offset; std::string_view expected, replacement; };
++inline constexpr std::array<Patch, 14> v100{{
++    {0x99285A, "c5f82e05b6e47900", "c5f82e0526b55600"},
++    {0x992907, "c5fb100511e47900", "c5fb1005f1a16e00"},
++    {0xEFDD88, "0000a041", ""},
++    {0x107CB00, "0000000000003440", ""},
++    {0x992862, "775a", ""},
++    {0xAACA3A, "7504", "eb04"},
++    {0xAACA65, "7422", "9090"},
++    {0xAABF91, "742d", "9090"},
++    {0xAACA36, "807f5900", ""},
++    {0xAACA40, "4981f8e8030000", ""},
++    {0xAACA61, "80785900", ""},
++    {0xAACA75, "ba0a000000", ""},
++    {0xAABF8D, "807f5900", ""},
++    {0xAABFAF, "e86ca6ffff", ""},
++}};
++inline constexpr std::array<Patch, 7> v111{{
++    {0xB3D887, "c5f82e05819f6300", "c5f82e05194d5c00"},
++    {0xB3D92F, "c5fb1005f19e6300", "c5fb1005a13d5900"},
++    {0x11025A8, "0000a041", ""},
++    {0x10D16D8, "0000000000003440", ""},
++    {0xC87D63, "7304", "eb04"},
++    {0xC87D96, "741b", "9090"},
++    {0xC873E1, "742d", "9090"},
++}};
++inline constexpr int Profile(std::string_view digest) {
++    if (digest == "e5f0aa322f60bd90637cc10d83de08c77885b1921084021c630e04ed3d6febf7") return 100;
++    if (digest == "31f3b0d120803878d10a7184d139c545de334394dd7dd6ca6058a7c995e484a7" ||
++        digest == "3cfa475f88ca68485b6b9230e62b84e195cdbe19e6f7295c110b8dcf8f20884e") return 111;
++    return 0;
++}
++inline constexpr unsigned Nibble(char c) { return c <= '9' ? c - '0' : c - 'a' + 10; }
++inline constexpr std::uint8_t Byte(std::string_view hex, std::size_t i) {
++    return static_cast<std::uint8_t>((Nibble(hex[2*i]) << 4) | Nibble(hex[2*i+1]));
++}
++template<class Mapped>
++bool Apply(int profile, std::span<std::uint8_t> image, Mapped mapped) {
++    const std::span<const Patch> rows = profile == 100 ? std::span<const Patch>{v100} :
++        profile == 111 ? std::span<const Patch>{v111} : std::span<const Patch>{};
++    if (rows.empty()) return false;
++    for (const auto& row : rows) {
++        const auto n = row.expected.size()/2;
++        if (!n || row.offset > image.size() || n > image.size()-row.offset ||
++            (!row.replacement.empty() && row.replacement.size() != row.expected.size()) ||
++            !mapped(row.offset,n)) return false;
++        bool original=true, already=!row.replacement.empty();
++        for (std::size_t i=0;i<n;++i) {
++            original &= image[row.offset+i] == Byte(row.expected,i);
++            if (!row.replacement.empty()) already &= image[row.offset+i] == Byte(row.replacement,i);
++        }
++        if (!original && !already) return false;
++    }
++    for (const auto& row : rows)
++        for (std::size_t i=0;i<row.replacement.size()/2;++i)
++            image[row.offset+i] = Byte(row.replacement,i);
++    return true;
++}
++} // namespace BachataTlouBoot
+--- a/src/core/module.cpp
++++ b/src/core/module.cpp
+@@ -9,4 +9,10 @@
+ #include "common/memory_patcher.h"
+ #include "common/sha1.h"
++#include "common/sha256.h"
++#include <algorithm>
++#include <array>
++#include <span>
++#include "common/elf_info.h"
++#include "core/loader/tlou_boot_groups.h"
+ #include "common/singleton.h"
+ #include "common/string_util.h"
+@@ -92,7 +98,40 @@
+     // BACHATA_RELEASE026_MODULE_IFILE: never reopen a guest ELF via
+     // host files after the Android/SAF broker has opened its descriptor.
++    std::string tlou_digest;
++    if (name == "eboot.bin" && source &&
++        Common::ElfInfo::Instance().GameSerial() == "CUSA00552") {
++        const u64 old = source->Tell();
++        sha256::SHA256 sha;
++        std::array<u8, 64 * 1024> bytes{};
++        const u64 total = source->Size();
++        bool ok = total > 0 && source->Seek(0, Common::FS::SeekOrigin::SetOrigin);
++        for (u64 done = 0; ok && done < total;) {
++            const u64 ask = std::min<u64>(total - done, bytes.size());
++            const s64 n = source->Read(bytes.data(), ask);
++            if (n <= 0 || static_cast<u64>(n) > ask) { ok = false; break; }
++            sha.update(bytes.data(), static_cast<size_t>(n));
++            done += n;
++        }
++        const bool restored = source->Seek(old, Common::FS::SeekOrigin::SetOrigin);
++        if (ok && restored) tlou_digest = sha256::SHA256::Hex(sha.final());
++    }
+     elf.Open(std::move(source));
+     if (elf.IsElfFile()) {
+         LoadModuleToMemory(max_tls_index);
++        if (!tlou_digest.empty()) {
++            const auto profile = BachataTlouBoot::Profile(tlou_digest);
++            const auto mapped = [&](size_t offset, size_t length) {
++                for (const auto& ph : elf.GetProgramHeader()) {
++                    if (ph.p_type == PT_LOAD && offset >= ph.p_vaddr &&
++                        offset - ph.p_vaddr <= ph.p_filesz && length <= ph.p_filesz - (offset - ph.p_vaddr))
++                        return memory->ClampGpuRangeSize(base_virtual_addr + offset, length) == length;
++                }
++                return false;
++            };
++            const bool applied = BachataTlouBoot::Apply(profile,
++                std::span{reinterpret_cast<u8*>(base_virtual_addr), static_cast<size_t>(MemoryPatcher::g_eboot_image_size)}, mapped);
++            LOG_INFO(Loader, "BACHATA_TLOU_DONOR_BOOT profile={} applied={} sha256={}",
++                     profile, applied, tlou_digest);
++        }
+         LoadDynamicInfo();
+         LoadSymbols();
+--- /dev/null
++++ b/src/video_core/buffer_cache/bachata_copy_pool.h
+@@ -0,0 +1,69 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// Derived from Order c53cd01 ps4_copy.cpp ParallelFor. Unlike deferred jobs,
++// a synchronous join preserves the FEX region-tracker upload transaction.
++#pragma once
++#include <atomic>
++#include <condition_variable>
++#include <cstddef>
++#include <cstdint>
++#include <functional>
++#include <mutex>
++#include <span>
++#include <thread>
++namespace BachataCopy {
++struct Span { std::uint64_t source; std::uint8_t* destination; std::uint64_t size; };
++class Pool {
++public:
++    Pool() : worker([this]{ Loop(); }) {}
++    ~Pool() {
++        { std::lock_guard lock(mutex); stop=true; }
++        ready.notify_all();
++        worker.join();
++    }
++    void Run(std::size_t count, const std::function<void(std::size_t)>& fn) {
++        std::lock_guard serial(run_mutex);
++        {
++            std::lock_guard lock(mutex);
++            task=&fn; limit=count; next=0; done=false; ++generation;
++        }
++        ready.notify_one();
++        Work(fn,count);
++        std::unique_lock lock(mutex);
++        finished.wait(lock,[&]{return done;});
++        task=nullptr;
++    }
++private:
++    void Work(const std::function<void(std::size_t)>& fn,std::size_t count) {
++        for (;;) {
++            auto i=next.fetch_add(1,std::memory_order_relaxed);
++            if (i>=count) break;
++            fn(i);
++        }
++    }
++    void Loop() {
++        std::uint64_t seen=0;
++        for (;;) {
++            std::unique_lock lock(mutex);
++            ready.wait(lock,[&]{return stop || generation!=seen;});
++            if(stop) return;
++            seen=generation;
++            auto* fn=task; const auto count=limit;
++            lock.unlock(); Work(*fn,count); lock.lock();
++            done=true; finished.notify_one();
++        }
++    }
++    std::mutex run_mutex,mutex;
++    std::condition_variable ready,finished;
++    std::atomic_size_t next{0};
++    std::size_t limit{};
++    const std::function<void(std::size_t)>* task{};
++    bool stop{},done{};
++    std::uint64_t generation{};
++    std::thread worker;
++};
++template<class Fn> void Run(std::span<const Span> jobs, Fn fn) {
++    if(jobs.size()<2) {for(const auto& job:jobs) fn(job);return;}
++    static Pool pool;
++    pool.Run(jobs.size(),[&](std::size_t i){fn(jobs[i]);});
++}
++} // namespace BachataCopy
+--- a/src/video_core/buffer_cache/buffer_cache.cpp
++++ b/src/video_core/buffer_cache/buffer_cache.cpp
+@@ -4,4 +4,5 @@
+ 
+ #include <algorithm>
++#include "video_core/buffer_cache/bachata_copy_pool.h"
+ #include <magic_enum/magic_enum.hpp>
+ 
+@@ -494,6 +495,21 @@
+     if (!copies.empty()) {
+         staging = staging_pool.Request(total_size_bytes, MemoryType::HostUncached);
++        if (BachataCompat::Order1886() && total_size_bytes >= 2_MB) {
++            std::vector<BachataCopy::Span> jobs;
++            for (const auto& copy : copies) {
++                for (u64 off=0; off<copy.size;) {
++                    const u64 n=std::min<u64>(1_MB,copy.size-off);
++                    jobs.push_back({copy.dstOffset+off,staging.mapped+copy.srcOffset+off,n});
++                    off+=n;
++                }
++            }
++            BachataCopy::Run(jobs,[&](const auto& job) {
++                memory->CopySparseMemory(job.source,job.destination,job.size);
++            });
++        } else {
++            for (const auto& copy : copies)
++                memory->CopySparseMemory(copy.dstOffset,staging.mapped+copy.srcOffset,copy.size);
++        }
+         for (auto& copy : copies) {
+-            memory->CopySparseMemory(copy.dstOffset, staging.mapped + copy.srcOffset, copy.size);
+             copy.srcOffset += staging.offset;
+             copy.dstOffset -= arena->cpu_addr;
+--- /dev/null
++++ b/src/video_core/renderer_vulkan/order1886_image_mode.h
+@@ -0,0 +1,55 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++#pragma once
++
++#include <limits>
++#include "common/types.h"
++#include "shader_recompiler/resource.h"
++#include "shader_recompiler/runtime_info.h"
++
++namespace Vulkan {
++
++constexpr bool UsesOrderImageModeGuard(const auto& stage) {
++    return stage.pgm_hash == 0xa7b66f58 && stage.hw_stage == Shader::HwStage::Compute;
++}
++
++// shortcut: this contract covers the verified a7b66f58 shader only; require fresh IR/GCN
++// dominance evidence before extending it. Every image sample requires record mode == 3.
++bool IsOrderComputeImageInactive(const auto& stage, u32 image_index, auto&& read_coherent_mode,
++                                bool bound_ring_snapshot = false) {
++    if (bound_ring_snapshot || !UsesOrderImageModeGuard(stage) || image_index != 0 || stage.images.size() != 1 ||
++        stage.buffers.size() < 2) {
++        return false;
++    }
++    const auto& image = stage.images[0];
++    const auto& source = stage.buffers[1];
++    const auto flat = stage.flattened_ud_buf;
++    if (flat.size() <= 52 || image.is_written || image.is_atomic || image.is_depth ||
++        image.is_r128 || image.array_size || image.NumBindings(stage) != 1 ||
++        image.post_op != Shader::SharpFetchPostOp::None ||
++        image.mip_fallback_mode != Shader::MipStorageFallbackMode::None ||
++        image.sharp_fetch.load_mask != 0xff || source.sharp_fetch.load_mask != 0xf ||
++        source.IsSpecial() || source.is_written || source.buffer_type != Shader::BufferType::Guest ||
++        source.post_op != Shader::SharpFetchPostOp::None) {
++        return false;
++    }
++    for (u32 i = 0; i < 8; ++i) {
++        if (image.sharp_fetch.offsets[i] != 44 + i) return false;
++    }
++    for (u32 i = 0; i < 4; ++i) {
++        if (source.sharp_fetch.offsets[i] != 16 + i) return false;
++    }
++    const auto buffer = source.GetSharp(stage);
++    // Match the guest's 32-bit multiply/add before converting DWORDs to bytes.
++    const u32 word_offset = ((flat[52] * 1020u + 196u) >> 2) + 1u;
++    const u64 offset = u64(word_offset) * sizeof(u32);
++    const u64 size = buffer.GetSize();
++    const u64 base = buffer.base_address;
++    if (offset > size || size - offset < sizeof(u32) ||
++        base > std::numeric_limits<u64>::max() - offset - (sizeof(u32) - 1)) {
++        return false;
++    }
++    const auto mode = read_coherent_mode(base + offset);
++    return mode.has_value() && *mode != 3;
++}
++
++} // namespace Vulkan
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@ -23,4 +23,5 @@
+ #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
+ #include "video_core/renderer_vulkan/vk_rasterizer.h"
++#include "video_core/renderer_vulkan/order1886_image_mode.h"
+ #include "video_core/renderer_vulkan/indirect_submission_limits.h"
+ #include "video_core/renderer_vulkan/vk_shader_util.h"
+@@ -1714,5 +1715,25 @@
+     boost::container::small_vector<u32, 8> image_descriptor_array_sizes;
+ 
++    u32 order_image_index=0;
+     for (const auto& image_desc : stage.images) {
++        const u32 index=order_image_index++;
++        const bool inactive=BachataCompat::Order1886() &&
++            IsOrderComputeImageInactive(stage,index,[&](VAddr address)->std::optional<u32> {
++                if (memory->ClampGpuRangeSize(address,sizeof(u32))!=sizeof(u32) ||
++                    buffer_cache.IsRegionCpuModified(address,sizeof(u32)) ||
++                    buffer_cache.IsRegionGpuModified(address,sizeof(u32))) return std::nullopt;
++                u32 mode{};
++                if (!memory->TryReadBacking(address,&mode,sizeof(mode)) ||
++                    buffer_cache.IsRegionCpuModified(address,sizeof(u32)) ||
++                    buffer_cache.IsRegionGpuModified(address,sizeof(u32))) return std::nullopt;
++                return mode;
++            });
++        if (inactive) {
++            auto& [unused_id,null_desc]=image_bindings.emplace_back(
++                std::piecewise_construct,std::tuple{},std::tuple{});
++            null_desc.type=VideoCore::TextureCache::BindingType::Texture;
++            image_descriptor_array_sizes.push_back(1);
++            continue;
++        }
+         const auto tsharp = image_desc.GetSharp(stage);
+         if (image_desc.array_size != 0) {
+@@ -1729,6 +1750,11 @@
+                 const auto element_dfmt = element.GetDataFmt();
+                 const auto element_nfmt = element.GetNumberFmt();
++                const auto legal_select=[](u64 s){return s==0||s==1||(s>=4&&s<=7);};
++                const bool supported=std::ranges::any_of(LiverpoolToVK::SurfaceFormats(),
++                    [=](const auto& fmt){return fmt.data_format==element_dfmt&&fmt.number_format==element_nfmt;});
+                 const bool bindable =
+-                    element && element_dfmt != AmdGpu::DataFormat::FormatInvalid &&
++                    element && supported && legal_select(element.dst_sel_x) &&
++                    legal_select(element.dst_sel_y) && legal_select(element.dst_sel_z) &&
++                    legal_select(element.dst_sel_w) && element_dfmt != AmdGpu::DataFormat::FormatInvalid &&
+                     magic_enum::enum_contains(element_dfmt) &&
+                     magic_enum::enum_contains(element_nfmt) &&
+@@ -1738,6 +1764,9 @@
+                     element.GetNumberConversion() == tsharp.GetNumberConversion();
+                 if (!bindable) {
+-                    image_bindings.emplace_back(std::piecewise_construct, std::tuple{},
+-                                                std::tuple{});
++                    auto& [unused_id,null_desc]=image_bindings.emplace_back(
++                        std::piecewise_construct,std::tuple{},std::tuple{});
++                    null_desc.type=image_desc.is_written
++                        ? VideoCore::TextureCache::BindingType::Storage
++                        : VideoCore::TextureCache::BindingType::Texture;
+                     continue;
+                 }
+--- a/src/video_core/texture_cache/image.cpp
++++ b/src/video_core/texture_cache/image.cpp
+@@ -10,4 +10,5 @@
+ #include "video_core/texture_cache/blit_helper.h"
+ #include "video_core/texture_cache/image.h"
++#include "common/bachata_compat_profile.h"
+ #include "video_core/texture_cache/texture_view_memo_policy.h"
+ 
+@@ -237,4 +238,13 @@
+     auto& last_state = backing->state;
+     auto& subresource_states = backing->subresource_states;
++    const auto depth_source_scope=[&](const auto& old){
++        auto stage=old.pl_stage;
++        if (BachataCompat::Order1886() && info.props.is_depth &&
++            (old.layout==vk::ImageLayout::eDepthStencilAttachmentOptimal ||
++             old.layout==vk::ImageLayout::eDepthAttachmentOptimal) &&
++            (old.access_mask & vk::AccessFlagBits2::eDepthStencilAttachmentWrite))
++            stage|=vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
++        return stage;
++    };
+ 
+     const bool needs_partial_transition =
+@@ -277,5 +287,5 @@
+                 if (state.layout != dst_layout || state.access_mask != dst_mask || is_write) {
+                     barriers.emplace_back(vk::ImageMemoryBarrier2{
+-                        .srcStageMask = state.pl_stage,
++                        .srcStageMask = depth_source_scope(state),
+                         .srcAccessMask = state.access_mask,
+                         .dstStageMask = dst_stage,
+@@ -313,5 +323,5 @@
+         }
+         barriers.emplace_back(vk::ImageMemoryBarrier2{
+-            .srcStageMask = last_state.pl_stage,
++            .srcStageMask = depth_source_scope(last_state),
+             .srcAccessMask = last_state.access_mask,
+             .dstStageMask = dst_stage,
+--- a/src/video_core/texture_cache/texture_cache.cpp
++++ b/src/video_core/texture_cache/texture_cache.cpp
+@@ -1025,4 +1025,23 @@
+ 
+     std::scoped_lock lock{mutex};
++    const bool memo_on = BachataCompat::Order1886();
++    auto& memo = order_exact_images[((info.guest_address >> 8) ^ (info.guest_address >> 24) ^ info.guest_size) % order_exact_images.size()];
++    if (memo_on && memo.id && memo.generation == RegistryGeneration() &&
++        memo.address == info.guest_address && memo.size == info.guest_size &&
++        memo.extent == info.size && memo.format == info.pixel_format && memo.type == info.type &&
++        memo.resources == info.resources && memo.binding == desc.type && memo.exact_fmt == exact_fmt &&
++        slot_images.IsAllocated(memo.id)) {
++        auto& image = slot_images[memo.id];
++        if (True(image.flags & ImageFlagBits::Registered) &&
++            image.info.guest_address == info.guest_address && image.info.guest_size == info.guest_size &&
++            image.info.size == info.size && image.info.resources >= info.resources &&
++            IsVulkanFormatCompatible(image.info.pixel_format, info.pixel_format) &&
++            (image.info.type == info.type || info.size == Extent3D{1, 1, 1}) &&
++            (!exact_fmt || image.info.pixel_format == info.pixel_format)) {
++            image.tick_accessed_last = scheduler.CurrentTick();
++            TouchImage(image);
++            return memo.id;
++        }
++    }
+     ImageIds image_ids;
+     ForEachImageInRegion(info.guest_address, info.guest_size,
+@@ -1053,4 +1072,5 @@
+     }
+ 
++    const ImageId perfect_id = image_id;
+     // Try to resolve overlaps (if any)
+     int view_mip{-1};
+@@ -1102,10 +1122,15 @@
+     }
+ 
++    if (memo_on && perfect_id && perfect_id == image_id && view_mip < 0 && view_slice < 0) {
++        memo = {info.guest_address, info.guest_size, info.size, info.pixel_format,
++                info.type, info.resources, desc.type, exact_fmt, RegistryGeneration(), image_id};
++    }
+     return image_id;
+ }
+ 
+ ImageId TextureCache::FindImageFromRange(VAddr address, size_t size, bool ensure_valid) {
++    if (size == 0) return {};
+     ImageIds image_ids;
+-    ForEachImageInRegion(address, size, [&](ImageId image_id, Image& image) {
++    ForEachImageInRegion(address, 1, [&](ImageId image_id, Image& image) {
+         if (image.info.guest_address != address) {
+             return;
+--- a/src/video_core/texture_cache/texture_cache.h
++++ b/src/video_core/texture_cache/texture_cache.h
+@@ -429,4 +429,17 @@
+     const bool readback_linear_images;
+     std::atomic<u64> registry_generation{0};
++    struct OrderExactImageMemo {
++        VAddr address{};
++        u32 size{};
++        Extent3D extent{};
++        vk::Format format{};
++        AmdGpu::ImageType type{};
++        SubresourceExtent resources{};
++        BindingType binding{};
++        bool exact_fmt{};
++        u64 generation{};
++        ImageId id{};
++    };
++    std::array<OrderExactImageMemo, 256> order_exact_images{};
+     PageTable page_table;
+     struct AliasState {

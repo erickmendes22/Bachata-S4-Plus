@@ -54,6 +54,7 @@ struct ElfInfo {
 };
 template<class R,class... Args>using UniqueFunction=std::function<R(Args...)>;
 }
+namespace BachataCompat { inline bool Order1886() { return Common::ElfInfo::Instance().GameSerial()=="CUSA00785"; } }
 namespace vk {
 using ImageView=u64;
 using Image=u64;
@@ -227,7 +228,7 @@ struct Image {
         vk::AccessFlags2 access_mask=vk::AccessFlagBits2::eNone;vk::ImageLayout layout=vk::ImageLayout::eUndefined;};
     struct Backing {State state;std::vector<State>subresource_states;};
     Backing object;Backing*backing=&object;
-    struct {SubresourceExtent resources{};struct{u32 width=2,height=2;}size;struct{bool has_stencil=true;}props;}info;
+    struct {SubresourceExtent resources{};struct{u32 width=2,height=2;}size;struct{bool has_stencil=true,is_depth=false;}props;}info;
     struct{bool needs_rebind{},is_bound{},force_general{};}binding;
     struct{bool render_target{},depth_target{};}usage;
     vk::ImageAspectFlags aspect_mask=vk::ImageAspectFlagBits::eColor;
