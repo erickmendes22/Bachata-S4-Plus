@@ -81,6 +81,8 @@ def main() -> None:
             source_registry=reconcile(args.source.resolve())
             print("REAL_SHADPS4_0181_CMAKE_REGISTRY_RECONCILED",source_registry["changedGroups"])
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         error=repr(e)
     report={
         "target":"real shadPS4 0.18.1 ARM64 Bionic",

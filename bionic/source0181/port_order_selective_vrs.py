@@ -76,6 +76,19 @@ def one(s,a,b,label):
     if s.count(a)!=1: raise RuntimeError("Order VRS anchor "+label+": "+str(s.count(a)))
     return s.replace(a,b,1)
 
+def add_vrs_query_feature(s):
+    anchor="const vk::StructureChain feature_chain"
+    if s.count(anchor)!=1:
+        raise RuntimeError("Order VRS feature chain declaration drift")
+    first=s.index(anchor)
+    begin=s.index("getFeatures2<",first)
+    end=s.index(">();",begin)
+    query=s[begin:end]
+    if query.count("vk::PhysicalDeviceShaderClockFeaturesKHR")!=1 or \
+            "vk::PhysicalDeviceFragmentShadingRateFeaturesKHR" in query:
+        raise RuntimeError("Order VRS feature query type drift")
+    return s[:end]+", vk::PhysicalDeviceFragmentShadingRateFeaturesKHR"+s[end:]
+
 def apply(root:Path):
     d=Path(root)/"src/video_core/renderer_vulkan"
     (d/"order_vrs_parity.h").write_text(HEADER)
@@ -84,8 +97,10 @@ def apply(root:Path):
     s=inc+'#include <cstdlib>\n'+s
     if '#include "common/elf_info.h"' not in s: s='#include "common/elf_info.h"\n'+s
     s=one(s,"bool Instance::CreateDevice() {","bool Instance::CreateDevice() {\n    order_vrs_enabled.store(false,std::memory_order_relaxed);","reset device state")
-    s=one(s,"vk::PhysicalDeviceShaderClockFeaturesKHR>();",
-          "vk::PhysicalDeviceShaderClockFeaturesKHR, vk::PhysicalDeviceFragmentShadingRateFeaturesKHR>();","query feature")
+    # Scope the insertion to the getFeatures2 template list. The same
+    # shader-clock type also occurs in feature_chain.get<> and unlink<>.
+    # Editing those queries would alter a different Vulkan contract.
+    s=add_vrs_query_feature(s)
     s=one(s,"    boost::container::static_vector<const char*, 32> enabled_extensions;",
           "    boost::container::static_vector<const char*, 64> enabled_extensions;","extension capacity")
     s=one(s,"    const bool calibrated_timestamps =",r'''    bool order_vrs_supported=false;

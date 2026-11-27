@@ -1,6 +1,27 @@
 """Verify the actual selective VRS geometry policy and set-path integration."""
 import argparse,subprocess,tempfile
 from pathlib import Path
+from port_order_selective_vrs import add_vrs_query_feature
+
+# The failed revision matched three occurrences, including the unrelated
+# get and unlink APIs. Reproduce the collision before building native code.
+feature_fixture = """const vk::StructureChain feature_chain = physical_device.getFeatures2<
+    vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceShaderClockFeaturesKHR>();
+    const auto x = feature_chain.get<vk::PhysicalDeviceShaderClockFeaturesKHR>();
+    device_chain.unlink<vk::PhysicalDeviceShaderClockFeaturesKHR>();"""
+assert feature_fixture.count("vk::PhysicalDeviceShaderClockFeaturesKHR>();")==3
+feature_fixed = add_vrs_query_feature(feature_fixture)
+assert feature_fixed.count("vk::PhysicalDeviceFragmentShadingRateFeaturesKHR")==1
+assert "get<vk::PhysicalDeviceShaderClockFeaturesKHR>()" in feature_fixed
+assert "unlink<vk::PhysicalDeviceShaderClockFeaturesKHR>()" in feature_fixed
+assert "vk::PhysicalDeviceShaderClockFeaturesKHR, vk::PhysicalDeviceFragmentShadingRateFeaturesKHR>();" in feature_fixed
+try:
+    add_vrs_query_feature(feature_fixed)
+except RuntimeError:
+    pass
+else:
+    raise AssertionError("Duplicate feature insertion accepted")
+
 p=argparse.ArgumentParser();p.add_argument("--source",type=Path,required=True)
 root=p.parse_args().source/"src/video_core"
 r=(root/"renderer_vulkan/vk_rasterizer.cpp").read_text()
