@@ -1,0 +1,132 @@
+name: Export exact effective source trees for complete port transfer
+on:
+  push:
+    branches: [work/bionic-effective-port-transfer-20261127]
+    paths: ['.github/workflows/bachata-effective-port-transfer.yml']
+permissions:
+  contents: read
+jobs:
+  bachata:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: main
+            revision: ee2b7ef04f78172897ef51157f6590f498ede3f2
+          - name: sotc
+            revision: 95a2e3713e56245feee0b8ec4dc4d7c1bc8e7712
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.revision }}
+      - name: Reproduce exact Bionic FEX overlay tree of the tested APK
+        run: |
+          set -euo pipefail
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/zenithblue-oss/shadps4-arm64.git generic-upstream
+          git -C generic-upstream checkout --quiet be6bc2e9c60799e071dd2fafa6216e8d80ec619c
+          git -C generic-upstream config user.name 'Bachata Source Port CI'
+          git -C generic-upstream config user.email 'source-port@users.noreply.github.com'
+          git -C generic-upstream remote add shadps4 https://github.com/shadps4-emu/shadPS4.git
+          git -C generic-upstream fetch --quiet --filter=blob:none shadps4 3912336fdfffbd5c99b59d92e997ea6ebd62216c
+          python3 bionic/source0181/rebase_arm64.py --source generic-upstream --output out/source0181
+          python3 bionic/source0181/port_0181.py --source generic-upstream --report out/source0181/bionic-0181-parity.json
+          mkdir -p export
+          cp -a generic-upstream/src export/
+          cp generic-upstream/CMakeLists.txt export/
+          cp -a bionic export/overlay-source
+          cp out/source0181/bionic-0181-parity.json export/
+          git rev-parse HEAD > export/revision.txt
+          git -C generic-upstream status --short > export/effective-files.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: effective-bachata-${{ matrix.name }}
+          path: export/
+          if-no-files-found: error
+  order:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Exact Android Order assembly from validated PC base and active overlays
+        run: |
+          set -euo pipefail
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/erickmendes22/gow3_android_daedalus_fork.git order-android-source
+          git -C order-android-source checkout --quiet 524e74a3b3a67135e02a1b7e68d2b83359da9e96
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/JulioCacko/The-Order-1886_pc.git order-source
+          git -C order-source checkout --quiet c53cd01d032995fe622033623ab64b4cf6b02233
+          git -C order-source submodule update --init --depth 1 gpu/third_party/imgui
+          python3 order-android-source/the-order-1886-android/scripts/assemble.py --source order-source --output order-effective
+          mkdir -p export/gpu
+          cp -a order-effective/gpu/shadps4 order-effective/gpu/shim export/gpu/
+          cp -a order-effective/src export/
+          cp order-effective/ANDROID_PORT_MANIFEST.json export/
+          git -C order-android-source rev-parse HEAD > export/revision.txt
+          git -C order-source rev-parse HEAD > export/upstream.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: effective-order
+          path: export/
+          if-no-files-found: error
+  sotc:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Exact SotC PC renderer and complete Android staging
+        run: |
+          set -euo pipefail
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/erickmendes22/ShadowOfTheColossus-Android-Aot.git sotc-android-source
+          git -C sotc-android-source checkout --quiet 6556a9f15747395c13b48a058394b00866989b6e
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/AjncSystem/ShadowOfTheColossus-PC.git sotc-pc
+          git -C sotc-pc checkout --quiet 732cb37d3470d2dad2cc99da19283253c96b53fc
+          git -C sotc-pc submodule update --init --depth 1 gpu/third_party/imgui
+          python3 sotc-android-source/ports/sotc/android/stage_renderer.py --upstream sotc-pc --out sotc-effective
+          mkdir -p export/gpu
+          cp -a sotc-effective/shadps4 sotc-effective/shim sotc-effective/sotc export/gpu/
+          cp -a sotc-pc/src export/
+          cp -a sotc-android-source/ports/sotc/android export/android-staging
+          git -C sotc-android-source rev-parse HEAD > export/revision.txt
+          git -C sotc-pc rev-parse HEAD > export/upstream.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: effective-sotc
+          path: export/
+          if-no-files-found: error
+  boot:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: iss
+            repo: erickmendes22/iss_android
+            revision: 879fe3ce5a636321d8d578292ec9ea4c5c946082
+            source: port
+          - name: tlou
+            repo: erickmendes22/tlou-remastered-android
+            revision: 62ea7591d184f6b8d63a87983446d49bf72f0b92
+            source: gow3_pc
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Collect actual Android port boot paths, not documentation branch
+        env:
+          REPO: ${{ matrix.repo }}
+          REV: ${{ matrix.revision }}
+          SOURCE: ${{ matrix.source }}
+        run: |
+          set -euo pipefail
+          git clone --quiet --filter=blob:none --no-checkout "https://github.com/$REPO.git" donor
+          git -C donor checkout --quiet "$REV"
+          mkdir -p export/gpu
+          cp -a "donor/$SOURCE/src" export/
+          cp -a "donor/$SOURCE/scripts" export/
+          cp -a "donor/$SOURCE/gpu/shadps4" "donor/$SOURCE/gpu/shim" export/gpu/
+          for dir in android tools/android; do
+            if [ -d "donor/$dir" ]; then mkdir -p "export/$(dirname "$dir")"; cp -a "donor/$dir" "export/$dir"; fi
+          done
+          git -C donor rev-parse HEAD > export/revision.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: effective-${{ matrix.name }}
+          path: export/
+          if-no-files-found: error
