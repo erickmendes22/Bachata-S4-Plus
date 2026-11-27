@@ -75,7 +75,9 @@ for marker in ("void BufferCache::InvalidateMemory(", "void BufferCache::MarkGue
 download = block(cache, "void BufferCache::DownloadMemory(")
 # The exact SotC branch is the exercised implementation. The unrelated legacy
 # branch requires additional Vulkan APIs and is an explicit unreachable guard.
-download = download[:download.index("    MarkReadbacksDirty(device_addr,size);")]
+legacy_start = "\n    MarkReadbacksDirty(device_addr,size);"
+assert download.count(legacy_start) == 1, "expected one top-level legacy readback marker"
+download = download[:download.index(legacy_start) + 1]
 download += "    (void)arena; assert(false);\n}\n"
 methods += "\n" + download
 decl = header[header.index("    struct ReadbackItem {"):
