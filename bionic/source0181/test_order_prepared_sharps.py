@@ -3,6 +3,8 @@ import argparse,subprocess,tempfile
 from pathlib import Path
 p=argparse.ArgumentParser();p.add_argument('--source',type=Path,required=True);a=p.parse_args()
 src=a.source/'src'
+# libstdc++ can retain removed shared_ptr::unique() as an extension; Android libc++ cannot.
+assert '.unique(' not in (src/'video_core/amdgpu/bachata_draw_snapshot.h').read_text(), 'C++17-removed shared_ptr::unique() in production snapshot'
 code=r'''
 #include "video_core/amdgpu/bachata_draw_snapshot.h"
 #include <chrono>
@@ -50,7 +52,16 @@ int main(){
         assert(old.order_sharps.Hash(old,old.images[0],s)==BachataPreparedSharps::ImageHash(s,old.images[0]));
         assert(!old.order_sharps.Hash(old,old.images[0],Sharp{}));
     }
+    // Exclusive snapshots can reuse the allocation; leased snapshots must not.
+    const auto* reusable=packet.storage.get();
+    source.flattened_ud_buf[0]=789;
+    packet.Capture(std::span{&p,1},false);
+    assert(packet.storage.get()==reusable);
+    assert(packet.pointers[0]->flattened_ud_buf[0]==789);
+    auto second_lease=packet.storage;
     packet.Invalidate();
+    assert(!packet.storage&&!packet.pointers[0]);
+    assert(second_lease->pointers[0]->flattened_ud_buf[0]==789);
     assert(old.flattened_ud_buf[0]==123);
     Info copy=source;copy.order_sharps.Prepare(copy);
     Info replacement=copy;assert(!replacement.order_sharps.ready.load());
@@ -58,6 +69,6 @@ int main(){
 '''
 with tempfile.TemporaryDirectory() as d:
     d=Path(d);(d/'test.cpp').write_text(code)
-    subprocess.run(['c++','-std=c++20','-pthread','-Wall','-Wextra','-Werror','-I',str(src),str(d/'test.cpp'),'-o',str(d/'test')],check=True)
+    subprocess.run(['c++','-std=c++23','-pthread','-Wall','-Wextra','-Werror','-I',str(src),str(d/'test.cpp'),'-o',str(d/'test')],check=True)
     subprocess.run([str(d/'test')],check=True)
 print('ORDER_PREPARED_SHARPS_CONTRACT_OK')

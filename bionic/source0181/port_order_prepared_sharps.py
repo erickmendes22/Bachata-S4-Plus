@@ -152,14 +152,14 @@ template<class Info,std::size_t Count> struct Snapshots {
     std::shared_ptr<Storage> storage;
     std::array<const Info*,Count> pointers{};
     void Invalidate() {
-        if(storage && storage.unique())storage->origins.fill(nullptr);
+        if(storage && storage.use_count()==1)storage->origins.fill(nullptr);
         else storage.reset();
         pointers.fill(nullptr);
     }
     void Capture(std::span<const Info* const> stages,bool prepare=false) {
         // A helper may outlive the draw. Never reuse its storage until its
         // lease is gone; this also protects the spans into the UD vectors.
-        if(!storage||!storage.unique())storage=std::make_shared<Storage>();
+        if(!storage||storage.use_count()!=1)storage=std::make_shared<Storage>();
         auto& s=*storage;
         s.pointers.fill(nullptr);
         for(const Info* source:stages) {
