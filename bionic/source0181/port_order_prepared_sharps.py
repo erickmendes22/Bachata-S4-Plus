@@ -233,5 +233,7 @@ def apply(root):
     edit(v,'        const auto tsharp = image_desc.GetSharp(stage);',
          '        const auto tsharp = stage.order_sharps.GetImage(stage,image_desc,Shader::IsBachataMappedImageBase);')
     edit(v,'        auto ssharp = sampler.GetSharp(stage);','        auto ssharp = stage.order_sharps.GetSampler(stage,sampler);')
-    edit(v,'void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindings& binding) {',
-         'void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindings& binding) {\n    BachataPreparedSharps::Scope<Shader::Info> prepared_scope{stage};')
+    # Preserve the existing barrier provenance guard as the first statement.
+    bind_textures_scope = ('void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindings& binding) {\n'
+                           '    const OrderBarrierScope order_barrier_scope{&runtime,OrderBarrierOrigin::Texture};')
+    edit(v,bind_textures_scope,bind_textures_scope+'\n    BachataPreparedSharps::Scope<Shader::Info> prepared_scope{stage};')
